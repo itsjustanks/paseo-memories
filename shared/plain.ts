@@ -196,7 +196,8 @@ export function plainReadOnly(source: { kind: string; access: string; reason?: s
     case "claude-import":
       return "Another note pulls this in. Open it where it lives to change it.";
     default:
-      return "This can't be changed here.";
+      // No plain wording for this case: the host's own reason says why.
+      return source.reason || "This can't be changed here.";
   }
 }
 
@@ -331,7 +332,8 @@ export const PLAIN = {
     save: "Save",
     edit: "Change it",
     again: "Add another",
-    nothingNew: "Every place already has this note, so there is nothing to save.",
+    nothingNew: "There is nowhere left to save this note: every place already has it, or wouldn't read it.",
+    wontRead: "Won't be read there",
     skipped: "Not added for",
     privateNote: "Only you see this one; it isn't shared.",
     creates: "This will be the first note there.",
@@ -402,6 +404,7 @@ export function plainMessage(message: string): string {
   if (/^No change/.test(message)) return PLAIN.nothingChanged;
   if (/Codex hasn't finished|clean-up/i.test(message)) return PLAIN.codexPending;
   if (/replaces pi's whole base prompt/i.test(message)) return PLAIN.replacesPi;
+  if (/MEMORY\.md could not be updated/i.test(message)) return "Claude's list of notes couldn't be updated, so this note was taken back out.";
   if (/Codex reads AGENTS\.md as instructions/i.test(message)) return "Codex follows these as instructions; they don't become Codex's own notes.";
   if (/look like secrets/i.test(message)) return "Holds something that looks like a password or key; it is hidden here and saved as it is.";
   return message;

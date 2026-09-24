@@ -22,10 +22,8 @@ import {
 import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { MEMORY_TYPES, folderName, kindLabel, scopeLabel } from "../shared/labels";
-import { sectionText, splitSections } from "../shared/markdown";
-import { noteFromSection, sectionReplacement } from "../shared/notes";
+import { HIDDEN_TEXT, cardRemoval, cardReplacement, hasHiddenText, noteCards, planCardAdd, type Note } from "../shared/notes";
 import { PLAIN, PLAIN_MEMORY_TYPES, plainAgents, plainDetailWarning, plainMemoryType, plainMessage, plainReadOnly, plainWords } from "../shared/plain";
-import { MASK_FILL } from "../shared/secrets";
 import { KEY, QueryState, WriteReportView, useInvalidate, useSourceDetail } from "./data";
 import { edit, isDirty, keepEditing, receive, reload, type Draft } from "./draft";
 import { usePlain, useSourceNames } from "./mode";
@@ -490,7 +488,7 @@ function NoteCard({
   onRemove,
   onCopy,
 }: {
-  note: ReturnType<typeof noteFromSection>;
+  note: Note;
   editable: boolean;
   hidden: boolean;
   busy: boolean;
@@ -632,36 +630,38 @@ function NoteCards({ hostId, source, workspaceId, onCopy }: { hostId: string; so
   if (source.exists && !body.data) return <QueryState query={body} what="these notes" />;
   const text = body.data?.body ?? "";
   const stamp = body.data?.stamp;
-  const sections = splitSections(text);
+  const cards = noteCards(text);
+  const refuse = (message: string): WriteResult => ({ ok: false, message, reports: [], warnings: [] });
   const add = (note: { title: string; body: string }) =>
     run(async () => {
       const item = { id: "new", title: note.title, body: note.body, masked: false, format: "note", warnings: [] };
       const target = { kind: "append", path: source.path, ...where };
       const seen = await preview({ items: [item], target });
-      return apply({ items: [item], target, selected: ["new"], expected: seen.target.stamp });
+      // Saved against the file as shown here (a newer file is refused), skipped when the same note is there.
+      const plan = planCardAdd({ text: note.body, seen: stamp ?? null, preview: seen.items[0] ?? { duplicate: "none" } });
+      if ("skip" in plan) return refuse(plan.skip);
+      const outcome = await apply({ items: [item], target, selected: ["new"], expected: plan.expected });
+      return plan.warning ? { ...outcome, warnings: [plan.warning, ...outcome.warnings] } : outcome;
     });
+  const change = (card: (typeof cards)[number], next: { title: string; body: string }) =>
+    run(async () => (hasHiddenText(`${next.title}\n${next.body}`) ? refuse(HIDDEN_TEXT) : write({ path: source.path, ...where, text: cardReplacement(card, next), expected: stamp!, sectionKey: card.key })));
   return (
     <View style={{ gap: t.space.md }}>
       <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
-      {!editable && sections.length ? <Text style={t.text.caption}>{PLAIN.notes.readOnly}</Text> : null}
-      {sections.length === 0 ? <Text style={t.text.caption}>{source.exists && text.trim() ? text : PLAIN.notes.none}</Text> : null}
-      {sections.map((section) => {
-        const original = sectionText(text, section);
-        const headless = section.key === "0:";
-        const note = noteFromSection(original, headless);
-        return (
-          <NoteCard
-            key={`${section.key}:${original.length}`}
-            note={note}
-            editable={editable}
-            hidden={original.includes(MASK_FILL)}
-            busy={busy}
-            onSave={(next) => run(() => write({ path: source.path, ...where, text: sectionReplacement(original, next, headless), expected: stamp!, sectionKey: section.key }))}
-            onRemove={() => void run(() => write({ path: source.path, ...where, text: "", expected: stamp!, sectionKey: section.key, removeSection: true }))}
-            {...(headless ? {} : { onCopy: () => onCopy([{ sourceId: source.id, key: section.key }]) })}
-          />
-        );
-      })}
+      {!editable && cards.length ? <Text style={t.text.caption}>{PLAIN.notes.readOnly}</Text> : null}
+      {cards.length === 0 ? <Text style={t.text.caption}>{PLAIN.notes.none}</Text> : null}
+      {cards.map((card) => (
+        <NoteCard
+          key={`${card.key}:${card.original.length}`}
+          note={card.note}
+          editable={editable}
+          hidden={hasHiddenText(card.original)}
+          busy={busy}
+          onSave={(next) => change(card, next)}
+          onRemove={() => void run(() => write({ path: source.path, ...where, expected: stamp!, sectionKey: card.key, ...cardRemoval(card) }))}
+          {...(card.headless ? {} : { onCopy: () => onCopy([{ sourceId: source.id, key: card.key }]) })}
+        />
+      ))}
       {editable ? <AddToFile busy={busy} onAdd={add} /> : null}
       {result ? <WriteReportView result={result} /> : null}
     </View>

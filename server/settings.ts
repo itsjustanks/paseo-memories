@@ -8,9 +8,10 @@ import { readJsonCached } from "./files";
 /**
  * The SDK has no server-side settings read, so server modules read the
  * document the daemon persists: $PASEO_HOME/plugin-settings/<pluginId>/<settingsId>.json,
- * an envelope `{ version, values }`. Anything unreadable, from another schema
- * version, or invalid yields the defaults; a server module must never guess.
- * (paseo-mcp 0.11.0 `server/settings.ts`, made async.)
+ * an envelope `{ version, values }`. Anything unreadable or from another
+ * schema version yields the defaults; a server module must never guess. One
+ * invalid value resets only its own field, so a bad `technicalDetails` never
+ * turns `codexEdits` back on. (paseo-mcp 0.11.0 `server/settings.ts`, made async.)
  */
 export function settingsPath(settingsId: string, pluginId = "paseo-memories"): string {
   return join(paseoHome(), "plugin-settings", pluginId, `${settingsId}.json`);
@@ -24,11 +25,25 @@ export async function readSettingsDocument<Schema extends ZodType>(
   try {
     const envelope = (await readJsonCached(path)) as { version?: unknown; values?: unknown } | null;
     if (!envelope || envelope.version !== definition.version) return defaults;
-    const parsed = definition.schema.safeParse(envelope.values ?? {});
-    return parsed.success ? (parsed.data as ZodOutput<Schema>) : defaults;
+    const values = envelope.values ?? {};
+    const parsed = definition.schema.safeParse(values);
+    if (parsed.success) return parsed.data as ZodOutput<Schema>;
+    return perField(definition.schema, values, defaults);
   } catch {
     return defaults;
   }
+}
+
+/** Each field on its own: a valid value is kept, an invalid one takes that field's default. */
+function perField<Schema extends ZodType>(schema: Schema, values: unknown, defaults: ZodOutput<Schema>): ZodOutput<Schema> {
+  const shape = (schema as unknown as { shape?: Record<string, ZodType> }).shape;
+  if (!shape || !values || typeof values !== "object") return defaults;
+  const out: Record<string, unknown> = { ...(defaults as Record<string, unknown>) };
+  for (const [key, field] of Object.entries(shape)) {
+    const one = field.safeParse((values as Record<string, unknown>)[key]);
+    if (one.success) out[key] = one.data;
+  }
+  return out as ZodOutput<Schema>;
 }
 
 export function readMemoriesSettings(): Promise<MemoriesSettings> {

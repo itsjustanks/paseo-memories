@@ -189,6 +189,8 @@ function answer(name: string, input: any): unknown {
       const codex = project ? { id: `${APP}/AGENTS.md`, agent: "codex", kind: "append", label: `Project instructions · ${project} (shared with the team)`, path: `${APP}/AGENTS.md`, creates: false, shared: true, private: false, warnings: ["Everyone who works on this project will see this note."], duplicate: "none", stamp } : { id: `${H}/.codex/AGENTS.md`, agent: "codex", kind: "append", label: "Your instructions for Codex", path: `${H}/.codex/AGENTS.md`, creates: false, shared: false, private: true, warnings: [], duplicate: "none", stamp };
       // demo-api has no project file of Claude's own, so Claude reads its project instructions: one note is enough.
       const covered = input.who === "all" && project === "demo-api";
+      // demo-api, Codex only: its project instructions are already as long as Codex reads.
+      if (project === "demo-api" && input.who === "codex") Object.assign(codex, { blocked: "Codex only reads the start of this project's instructions, and this note would land past that point. Shorten them first: Worth a look shows how." });
       const targets = input.who === "claude" ? [claude] : input.who === "codex" || covered ? [codex] : [claude, codex];
       const skipped = covered ? [{ agent: "claude", reason: "Claude reads the project instructions too, so one note is enough.", covered: true }] : [];
       return { title: String(input.text).split("\n")[0]!.slice(0, 60), ...(project ? { project } : {}), targets, skipped, warnings: maskSecrets(input.text).count ? ["This note contains something that looks like a password or key. Anyone whose agent reads it can see it. Remove it?"] : [] };

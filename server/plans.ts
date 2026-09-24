@@ -51,6 +51,8 @@ export type PlanItem = {
   projectPath?: string;
   slug?: string;
   sourceLabel?: string;
+  /** Bytes of this file the agent reads at most; Codex project docs share one budget. Not sent to the app. */
+  readLimit?: number;
 };
 
 export type PlanCtx = {
@@ -565,6 +567,7 @@ export async function planCodex(ctx: PlanCtx, home: string, directory: string): 
         owner: "codex",
         projectPath: folder,
         when: budget > 0 ? "launch" : "skipped",
+        readLimit: Math.max(0, budget),
         note: budget <= 0 ? `Past project_doc_max_bytes (${config.projectDocMaxBytes.toLocaleString("en-US")} B), so not read.` : undefined,
         loaded: () => ({ bytes: loaded, truncated: loaded < stat.size, note: loaded < stat.size ? `Cut at project_doc_max_bytes (${config.projectDocMaxBytes.toLocaleString("en-US")} B for all project docs).` : undefined }),
       });
@@ -574,7 +577,7 @@ export async function planCodex(ctx: PlanCtx, home: string, directory: string): 
     }
   }
   if (!plan.items.some((item) => item.scope === "project")) {
-    const missing = await fileItem(ctx, join(directory, "AGENTS.md"), { kind: "agents-md", scope: "project", access: "editable", owner: "codex", projectPath: directory, showMissing: true });
+    const missing = await fileItem(ctx, join(directory, "AGENTS.md"), { kind: "agents-md", scope: "project", access: "editable", owner: "codex", projectPath: directory, showMissing: true, readLimit: Math.max(0, budget) });
     if (missing) plan.items.push(missing);
   }
   if (config.developerInstructions) {

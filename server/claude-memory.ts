@@ -151,8 +151,25 @@ export async function claudeCreate(
   const path = join(folder.dir, fileName);
   const reports = [await safeWrite(session, path, text, { newMode: 0o600, check: memoryParses(input.name) })];
   if (reports[0]!.ok) {
-    const line = await writeIndex(session, folder.dir, (index) => upsertIndexLine(index, fileName, input.name, input.hook ?? input.description), indexHas(fileName, true));
+    let line: WriteReport | null;
+    try {
+      line = await writeIndex(session, folder.dir, (index) => upsertIndexLine(index, fileName, input.name, input.hook ?? input.description), indexHas(fileName, true));
+    } catch (error) {
+      line = { target: join(folder.dir, "MEMORY.md"), ok: false, action: "refused", readBack: "skipped", error: fsError(error, join(folder.dir, "MEMORY.md")) };
+    }
     if (line) reports.push(line);
+    if (line && !line.ok) {
+      // Not in MEMORY.md, Claude never finds it: take the new file back out, as a failed rename does.
+      try {
+        await removeFile(path);
+        reports.push({ target: path, ok: true, action: "rolled back", readBack: "skipped" });
+      } catch (error) {
+        reports.push({ target: path, ok: false, action: "rolled back", readBack: "skipped", error: `Could not remove the new file: ${fsError(error, path)} Delete it by hand.` });
+      }
+      forgetDiscovery();
+      logWrite("claude-create", path, "rolled back");
+      return { ok: false, message: `${fileName} was not kept: MEMORY.md could not be updated, so Claude would never find it. The new file was taken back out.`, reports, warnings: [] };
+    }
   }
   forgetDiscovery();
   logWrite("claude-create", path, reports.every((report) => report.ok) ? "created" : "failed");

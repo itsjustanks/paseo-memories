@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { FINDING_KINDS, SOURCE_KINDS } from "../shared/contracts";
 import { PLAIN_GUIDES, PLAIN_GUIDE_TECHNICAL_HINT } from "../shared/guides";
-import { COVERED_BY_PROJECT, noteTargetWarning, planNote } from "../shared/notes";
+import { CLAUDE_FILE_TOO_BIG, CLAUDE_LIST_FULL, CLAUDE_LIST_TOO_BIG, CODEX_PAST_LIMIT, COVERED_BY_PROJECT, HIDDEN_TEXT, noteTargetWarning, planCardAdd, planNote } from "../shared/notes";
 import {
   JARGON,
   PLAIN,
@@ -158,7 +158,11 @@ test("Add a note labels and reasons are plain", () => {
       }
     }
   }
-  texts.push(COVERED_BY_PROJECT);
+  texts.push(COVERED_BY_PROJECT, CODEX_PAST_LIMIT, CLAUDE_LIST_FULL, CLAUDE_LIST_TOO_BIG, CLAUDE_FILE_TOO_BIG, HIDDEN_TEXT);
+  for (const preview of [{ duplicate: "exact", identical: true, duplicateOf: "Rules" }, { duplicate: "near", duplicateOf: "Rules" }]) {
+    const plan = planCardAdd({ text: "x", seen: null, preview });
+    texts.push("skip" in plan ? plan.skip : plan.warning ?? "");
+  }
   assertPlain(texts, "add a note");
   assert.equal(noteTargetWarning({ shared: true }), "Everyone who works on this project will see this note.");
 });

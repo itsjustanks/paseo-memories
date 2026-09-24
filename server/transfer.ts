@@ -5,6 +5,7 @@ import { tilde } from "../shared/agents";
 import type { FileStamp, ImportTarget, WriteReport, WriteResult } from "../shared/contracts";
 import { compactDiff, lineDiff, type DiffLine } from "../shared/diff";
 import { newMemoryFile, parseMemoryFile, readFields } from "../shared/frontmatter";
+import { parseIndex } from "../shared/memory-index";
 import { replaceSection, sectionText, splitSections } from "../shared/markdown";
 import { MASK_FILL, findSecrets, maskSecrets } from "../shared/secrets";
 import { jaccard, NEAR_DUPLICATE, normalizeText, shingles, type Unit } from "../shared/tidy";
@@ -54,7 +55,7 @@ export function importParse({ text, files, format }: { text?: string; files?: Ar
 // ------------------------------------------------------------------ targets and items
 
 type Target =
-  | { kind: "claude-memory"; sourceId: string; workspaceId?: string; path: string; label: string; exists: boolean; access: string; reason?: string; existing: Unit[]; names: Set<string> }
+  | { kind: "claude-memory"; sourceId: string; workspaceId?: string; path: string; label: string; exists: boolean; access: string; reason?: string; existing: Unit[]; names: Set<string>; listed: Set<string> }
   | { kind: "append"; path: string; workspaceId?: string; label: string; exists: boolean; access: string; reason?: string; existing: Unit[]; current: Current };
 
 async function resolveTarget(paseo: Paseo | null, target: ImportTarget): Promise<Target | { error: string }> {
@@ -66,6 +67,9 @@ async function resolveTarget(paseo: Paseo | null, target: ImportTarget): Promise
     if (!found || found.source.kind !== "claude-auto-memory") return { error: "That is not a Claude auto-memory folder." };
     const existing = found.source.exists ? await memoryFolderUnits(probe, found.source) : [];
     const names = new Set((await listDir(found.source.path)).map((entry) => entry.name));
+    // Only files MEMORY.md lists are ones Claude finds; an unlisted copy is not "already there".
+    const index = await readCurrent(join(found.source.path, "MEMORY.md")).catch(() => ({ exists: false, text: "" }) as Current);
+    const listed = new Set(parseIndex(index.text).map((line) => line.file));
     return {
       kind: "claude-memory",
       sourceId: found.source.id,
@@ -77,6 +81,7 @@ async function resolveTarget(paseo: Paseo | null, target: ImportTarget): Promise
       ...(found.source.reason ? { reason: found.source.reason } : {}),
       existing,
       names,
+      listed,
     };
   }
   if (target.kind === "append") {
@@ -172,9 +177,22 @@ function descriptionOf(item: ImportItem): string {
   return first.replace(/^[-*#>\s]+/, "").slice(0, 150);
 }
 
-function duplicateOf(item: ImportItem, existing: Unit[], earlier: ImportItem[]): { duplicate: string; duplicateOf?: string } {
+/** The same words: line endings and the blank space around them aside. Case and punctuation count. */
+function sameText(a: string, b: string): boolean {
+  return a.replace(/\r\n/g, "\n").trim() === b.replace(/\r\n/g, "\n").trim();
+}
+
+/**
+ * `exact` / `near` / `batch` as before (normalised text, a heuristic);
+ * `identical` only when the text is the same after line endings and outer
+ * whitespace, in a place the agent finds (`listed`, for Claude's notes).
+ */
+function duplicateOf(item: ImportItem, existing: Unit[], earlier: ImportItem[], listed?: Set<string>): { duplicate: string; duplicateOf?: string; identical?: boolean } {
   const normal = normalizeText(item.body);
   if (!normal) return { duplicate: "none" };
+  const found = (unit: Unit) => !listed || listed.has(unit.key);
+  const same = existing.find((unit) => found(unit) && sameText(unit.text, item.body));
+  if (same) return { duplicate: "exact", duplicateOf: same.title, identical: true };
   for (const unit of existing) if (normalizeText(unit.text) === normal) return { duplicate: "exact", duplicateOf: unit.title };
   const set = shingles(item.body);
   for (const unit of existing) {
@@ -184,7 +202,7 @@ function duplicateOf(item: ImportItem, existing: Unit[], earlier: ImportItem[]):
   return { duplicate: "none" };
 }
 
-function appendText(current: string, section: string): string {
+export function appendText(current: string, section: string): string {
   if (!current) return section;
   if (current.endsWith("\n\n")) return current + section;
   return current.endsWith("\n") ? `${current}\n${section}` : `${current}\n\n${section}`;
@@ -215,7 +233,7 @@ export async function importPreview(
   const shape = target.kind === "claude-memory" ? await usualShape(target.path) : "nested";
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]!;
-    const dup = duplicateOf(item, target.existing, items.slice(0, index));
+    const dup = duplicateOf(item, target.existing, items.slice(0, index), target.kind === "claude-memory" ? target.listed : undefined);
     const warnings = [...item.warnings];
     if (!reveal && findSecrets(item.body).length) warnings.push("Holds values that look like secrets; they are hidden here and saved as they are.");
     if (target.kind === "claude-memory") {

@@ -110,7 +110,8 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
     );
   }
 
-  const fresh = preview?.targets.filter((target) => target.duplicate !== "exact") ?? [];
+  // Saved on Save: places the agent reads the note from, without the same note already.
+  const fresh = preview?.targets.filter((target) => !target.blocked && target.duplicate !== "exact") ?? [];
   return (
     <Card>
       <View style={{ gap: t.space.md }}>
@@ -126,13 +127,14 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
                 <View key={target.id} style={{ gap: 2 }}>
                   <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "center", flexWrap: "wrap" }}>
                     <Text style={[t.text.body, { flexShrink: 1 }]}>{`•  ${target.label}`}</Text>
-                    {target.duplicate === "exact" ? <Tag label="Already there" tone="attention" /> : target.duplicate === "near" ? <Tag label="Almost the same is there" tone="attention" /> : null}
+                    {target.blocked ? <Tag label={A.wontRead} tone="attention" /> : target.duplicate === "exact" ? <Tag label="Already there" tone="attention" /> : target.duplicate === "near" ? <Tag label="Almost the same is there" tone="attention" /> : null}
                   </View>
+                  {target.blocked ? <Text style={[t.text.caption, { color: t.color.warning }]}>{target.blocked}</Text> : null}
                   {target.duplicate === "exact" ? <Text style={t.text.caption}>{`${A.alreadyThere} ${target.label}.`}</Text> : null}
                   {target.duplicate === "near" && target.duplicateOf ? <Text style={t.text.caption}>{`${A.almostSame} "${target.duplicateOf}".`}</Text> : null}
-                  {target.private ? <Text style={t.text.caption}>{A.privateNote}</Text> : null}
+                  {target.private && !target.blocked ? <Text style={t.text.caption}>{A.privateNote}</Text> : null}
                   {target.creates ? <Text style={t.text.caption}>{A.creates}</Text> : null}
-                  {target.warnings.map((warning) => (
+                  {(target.blocked ? [] : target.warnings).map((warning) => (
                     <Text key={warning} style={[t.text.caption, { color: t.color.warning }]}>
                       {warning}
                     </Text>

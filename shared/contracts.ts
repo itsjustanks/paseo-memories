@@ -510,6 +510,8 @@ export const importPreview = defineRpc({
         /** none | exact | near | batch (repeats another item in this import) */
         duplicate: z.string(),
         duplicateOf: z.string().optional(),
+        /** The same text is already there, word for word (line endings and outer blank space aside). */
+        identical: z.boolean().optional(),
         masked: z.boolean().default(false),
         warnings: z.array(z.string()).default([]),
       }),
@@ -580,9 +582,11 @@ export const NoteTargetSchema = z.object({
   shared: z.boolean().default(false),
   private: z.boolean().default(false),
   warnings: z.array(z.string()).default([]),
-  /** none | exact | near */
+  /** none | exact (the same text is already there: skipped) | near (almost the same: saved, with a warning) */
   duplicate: z.string().default("none"),
   duplicateOf: z.string().optional(),
+  /** Why this place won't get the note (the agent wouldn't read it there); not saved. */
+  blocked: z.string().optional(),
   /** Append targets: the file as the preview saw it (null when it does not exist yet). */
   stamp: FileStampSchema.nullable().default(null),
 });

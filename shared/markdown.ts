@@ -93,7 +93,8 @@ export function replaceSection(text: string, section: Section, replacement: stri
 /**
  * Take one section out entirely, lines and all. Everything above and below
  * stays byte for byte, except that removing the last section leaves the file
- * ending in one line break instead of the blank lines that sat before it.
+ * ending in one line break (the file's own: CRLF stays CRLF) instead of the
+ * blank lines that sat before it.
  */
 export function removeSection(text: string, section: Section): string {
   const lines = text.split("\n");
@@ -103,5 +104,5 @@ export function removeSection(text: string, section: Section): string {
   const out = lines.join("\n");
   if (!last) return out;
   const trimmed = out.replace(/\s+$/, "");
-  return trimmed ? `${trimmed}\n` : "";
+  return trimmed ? `${trimmed}${text.includes("\r\n") ? "\r\n" : "\n"}` : "";
 }
