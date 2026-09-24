@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { FINDING_KINDS, SOURCE_KINDS } from "../shared/contracts";
 import { PLAIN_GUIDES, PLAIN_GUIDE_TECHNICAL_HINT } from "../shared/guides";
-import { CLAUDE_FILE_TOO_BIG, CLAUDE_LIST_FULL, CLAUDE_LIST_TOO_BIG, CODEX_PAST_LIMIT, COVERED_BY_PROJECT, HIDDEN_TEXT, noteTargetWarning, planCardAdd, planNote } from "../shared/notes";
+import { CLAUDE_FILE_TOO_BIG, CLAUDE_LIST_FULL, CLAUDE_LIST_TOO_BIG, CLAUDE_OWN_NOTE, CODEX_PAST_LIMIT, COVERED_BY_PROJECT, HIDDEN_TEXT, noteTargetWarning, planCardAdd, planNote } from "../shared/notes";
 import {
   JARGON,
   PLAIN,
@@ -158,7 +158,7 @@ test("Add a note labels and reasons are plain", () => {
       }
     }
   }
-  texts.push(COVERED_BY_PROJECT, CODEX_PAST_LIMIT, CLAUDE_LIST_FULL, CLAUDE_LIST_TOO_BIG, CLAUDE_FILE_TOO_BIG, HIDDEN_TEXT);
+  texts.push(COVERED_BY_PROJECT, CLAUDE_OWN_NOTE, CODEX_PAST_LIMIT, CLAUDE_LIST_FULL, CLAUDE_LIST_TOO_BIG, CLAUDE_FILE_TOO_BIG, HIDDEN_TEXT);
   for (const preview of [{ duplicate: "exact", identical: true, duplicateOf: "Rules" }, { duplicate: "near", duplicateOf: "Rules" }]) {
     const plan = planCardAdd({ text: "x", seen: null, preview });
     texts.push("skip" in plan ? plan.skip : plan.warning ?? "");
@@ -167,10 +167,10 @@ test("Add a note labels and reasons are plain", () => {
   assert.equal(noteTargetWarning({ shared: true }), "Everyone who works on this project will see this note.");
 });
 
-test("Codex's own working files are internal; what it has learned and its instructions are not", () => {
+test("Codex's own working files are internal; what it has learned and every instruction it reads are not", () => {
   const codex = (kind: string, access = "read-only") => ({ kind, agent: "codex", access });
   assert.equal(isCodexInternal(codex("codex-generated")), true, "raw memories, rollout summaries, extensions, the diff, the database");
-  assert.equal(isCodexInternal(codex("codex-config")), true);
+  assert.equal(isCodexInternal(codex("codex-config")), false, "developer_instructions: Codex follows it, so it stays");
   assert.equal(isCodexInternal(codex("codex-memory")), false);
   assert.equal(isCodexInternal(codex("codex-memory", "editable")), false);
   assert.equal(isCodexInternal(codex("agents-md", "editable")), false);

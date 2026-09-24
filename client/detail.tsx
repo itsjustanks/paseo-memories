@@ -22,7 +22,7 @@ import {
 import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { MEMORY_TYPES, folderName, kindLabel, scopeLabel } from "../shared/labels";
-import { HIDDEN_TEXT, cardRemoval, cardReplacement, hasHiddenText, noteCards, planCardAdd, type Note } from "../shared/notes";
+import { HIDDEN_TEXT, cardRemoval, cardReplacement, hasHiddenText, noteCards, planCardAdd, usesFrontmatter, type Note } from "../shared/notes";
 import { PLAIN, PLAIN_MEMORY_TYPES, plainAgents, plainDetailWarning, plainMemoryType, plainMessage, plainReadOnly, plainWords } from "../shared/plain";
 import { KEY, QueryState, WriteReportView, useInvalidate, useSourceDetail } from "./data";
 import { edit, isDirty, keepEditing, receive, reload, type Draft } from "./draft";
@@ -630,7 +630,8 @@ function NoteCards({ hostId, source, workspaceId, onCopy }: { hostId: string; so
   if (source.exists && !body.data) return <QueryState query={body} what="these notes" />;
   const text = body.data?.body ?? "";
   const stamp = body.data?.stamp;
-  const cards = noteCards(text);
+  // A header (`paths:`, `applyTo:`) only in the kinds of file that have one.
+  const cards = noteCards(text, { frontmatter: usesFrontmatter(source) });
   const refuse = (message: string): WriteResult => ({ ok: false, message, reports: [], warnings: [] });
   const add = (note: { title: string; body: string }) =>
     run(async () => {

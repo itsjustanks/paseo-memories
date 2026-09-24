@@ -8,6 +8,7 @@ import {
   CLAUDE_FILE_TOO_BIG,
   CLAUDE_LIST_FULL,
   CLAUDE_LIST_TOO_BIG,
+  CLAUDE_OWN_NOTE,
   CODEX_PAST_LIMIT,
   HIDDEN_TEXT,
   NOTE_WHO,
@@ -16,6 +17,7 @@ import {
   noteTitle,
   planNote,
   type NoteFacts,
+  type NotePlan,
   type NoteTargetPlan,
   type NoteWho,
   type NoteWhere,
@@ -90,7 +92,8 @@ async function resolve(paseo: Paseo | null, input: Request) {
     directory = workspace.directory;
   }
   const agents: Array<"claude" | "codex"> = who === "all" ? ["claude", "codex"] : [who];
-  const plan = planNote(who, where, await gatherFacts(paseo, agents, directory));
+  const facts = await gatherFacts(paseo, agents, directory);
+  const planned = planNote(who, where, facts);
   const text = input.text.replace(/\r\n/g, "\n").trim();
   const title = noteTitle(text);
   const item: ImportItem = {
@@ -103,7 +106,27 @@ async function resolve(paseo: Paseo | null, input: Request) {
     format: "note",
     warnings: [],
   };
-  return { plan, item, where, title };
+  const { plan, ownNote } = await settle(paseo, { who, where, facts, planned, item }, input.workspaceId);
+  return { plan, item, where, title, ownNote };
+}
+
+/**
+ * "One note is enough" holds only if the shared project file is read that
+ * far. When Codex's budget stops before the note, Claude (which has no such
+ * cut) keeps its own note instead, so the note still reaches someone.
+ */
+async function settle(
+  paseo: Paseo | null,
+  r: { who: NoteWho; where: NoteWhere; facts: NoteFacts; planned: NotePlan; item: ImportItem },
+  workspaceId?: string,
+): Promise<{ plan: NotePlan; ownNote?: string }> {
+  if (!r.planned.skipped.some((entry) => entry.covered)) return { plan: r.planned };
+  const shared = r.planned.targets.find((target) => target.agent === "codex");
+  const blocked = shared ? await blockedReason(shared, r.item).catch(() => undefined) : undefined;
+  if (!blocked) return { plan: r.planned };
+  const full = planNote(r.who, r.where, r.facts, { oneNote: false });
+  const own = full.targets.find((target) => target.agent === "claude")?.path;
+  return { plan: full, ...(own ? { ownNote: own } : {}) };
 }
 
 function importTarget(target: NoteTargetPlan, workspaceId?: string) {
@@ -131,10 +154,11 @@ async function blockedReason(target: NoteTargetPlan, item: ImportItem, fileName?
 }
 
 /** One target as the preview shows it and the save decides from it. */
-async function inspect(paseo: Paseo | null, target: NoteTargetPlan, item: ImportItem, workspaceId?: string): Promise<NoteTarget> {
+async function inspect(paseo: Paseo | null, target: NoteTargetPlan, item: ImportItem, workspaceId?: string, ownNote?: string): Promise<NoteTarget> {
   const preview = await importPreview(paseo, { items: [item], target: importTarget(target, workspaceId) });
   const row = preview.items[0]!;
   const warning = noteTargetWarning(target);
+  const why = target.path === ownNote ? [CLAUDE_OWN_NOTE] : [];
   const blocked = await blockedReason(target, item, "fileName" in row ? row.fileName : undefined);
   // "Already there" only for the same text; a normalised match (">=" vs "<=") is near: warned, still saved.
   const duplicate = row.identical ? "exact" : row.duplicate === "exact" || row.duplicate === "near" ? "near" : "none";
@@ -147,7 +171,7 @@ async function inspect(paseo: Paseo | null, target: NoteTargetPlan, item: Import
     creates: target.creates,
     shared: target.shared,
     private: target.private,
-    warnings: warning ? [warning] : [],
+    warnings: [...why, ...(warning ? [warning] : [])],
     duplicate,
     ...(row.duplicateOf && duplicate !== "none" ? { duplicateOf: row.duplicateOf } : {}),
     ...(blocked ? { blocked } : {}),
@@ -156,9 +180,9 @@ async function inspect(paseo: Paseo | null, target: NoteTargetPlan, item: Import
 }
 
 export async function notePreview(paseo: Paseo | null, input: Request) {
-  const { plan, item, where, title } = await resolve(paseo, input);
+  const { plan, item, where, title, ownNote } = await resolve(paseo, input);
   const targets: NoteTarget[] = [];
-  for (const target of plan.targets) targets.push(await inspect(paseo, target, item, input.workspaceId));
+  for (const target of plan.targets) targets.push(await inspect(paseo, target, item, input.workspaceId, ownNote));
   return {
     title,
     ...(where.kind === "project" ? { project: where.name } : {}),
@@ -184,13 +208,13 @@ export async function noteAdd(paseo: Paseo | null, input: Request & { expected: 
   const warnings: string[] = [];
   const saved: string[] = [];
   const already: string[] = [];
-  const notSaved: string[] = [];
+  const notSaved: Array<{ label: string; reason: string }> = [];
   // Each target on its own: one that fails or won't be read never stops the others, and each is reported.
   for (const target of plan.targets) {
     try {
       const state = await inspect(paseo, target, item, input.workspaceId);
       if (state.blocked) {
-        notSaved.push(`${target.label} (${state.blocked.replace(/\.$/, "")})`);
+        notSaved.push({ label: target.label, reason: state.blocked });
         continue;
       }
       if (state.duplicate === "exact") {
@@ -205,18 +229,31 @@ export async function noteAdd(paseo: Paseo | null, input: Request & { expected: 
         saved.push(target.label);
         const warning = noteTargetWarning(target);
         if (warning) warnings.push(warning);
-      } else notSaved.push(`${target.label} (${plainMessage(result.message).replace(/\.$/, "")})`);
+      } else notSaved.push({ label: target.label, reason: failureReason(result) });
     } catch (error) {
-      notSaved.push(`${target.label} (${plainError(error).replace(/\.$/, "")})`);
+      notSaved.push({ label: target.label, reason: plainError(error) });
     }
   }
   logWrite("note-add", plan.targets.map((target) => target.path).join(", "), `${saved.length} saved, ${already.length} already there, ${notSaved.length} not saved`);
+  // One plain sentence per place: what was saved, and why each other place wasn't.
   const parts: string[] = [];
   if (saved.length && !notSaved.length) parts.push(PLAIN.saved);
-  else if (saved.length) parts.push(`Saved to ${saved.join(" and ")}, but not to ${notSaved.join("; ")}. New agents will follow what was saved.`);
-  else if (notSaved.length) parts.push(`Not saved to ${notSaved.join("; ")}.`);
+  else if (saved.length) parts.push(`Saved to ${saved.join(" and ")}. New agents will follow it there.`);
+  for (const entry of notSaved) parts.push(`Couldn't save to ${entry.label}: ${sentence(entry.reason)}`);
   if (already.length) parts.push(`${already.join(" and ")} already had this note, so it wasn't added again.`);
   return { ok: notSaved.length === 0, message: parts.join(" "), reports, warnings: [...new Set(warnings)] };
+}
+
+function sentence(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+/** Why one place's save failed, in plain words: the rollback when there was one, else the file's own error. */
+function failureReason(result: WriteResult): string {
+  if (result.reports.some((report) => report.action === "rolled back")) return "Claude's list of notes couldn't be updated, so this note was taken back out.";
+  const failed = result.reports.find((report) => !report.ok && report.error);
+  return plainMessage(failed?.error ?? result.message);
 }
 
 type Ctx = PluginHandlerContext;

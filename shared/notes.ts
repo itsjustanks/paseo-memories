@@ -69,17 +69,39 @@ export function sectionReplacement(original: string, note: { title: string; body
 
 // ------------------------------------------------------------------ note cards
 
-/** A leading `---` block: Claude's `paths:`, Copilot's `applyTo:`, any other header. Never a card; kept byte for byte. */
-const HEADER = /^(\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$))/;
+/** A leading `---` … `---` block. A header only where the file kind uses one, and only when it reads as key: value lines. */
+const HEADER = /^(\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$))/;
+
+/** Frontmatter lines: `key: value`, then indented or `- ` continuation lines, `#` comments and blank lines. */
+function isFrontmatter(body: string): boolean {
+  const lines = body.split("\n").map((line) => line.replace(/\r$/, ""));
+  const first = lines.find((line) => line.trim() !== "");
+  if (!first || !/^[A-Za-z_][\w.-]*\s*:(\s|$)/.test(first)) return false;
+  return lines.every((line) => line.trim() === "" || /^[A-Za-z_][\w.-]*\s*:(\s|$)/.test(line) || /^\s+\S/.test(line) || /^-\s/.test(line) || /^\s*#/.test(line));
+}
+
+/**
+ * File kinds whose leading `---` block is a header: Claude rules (`paths:`),
+ * Copilot `*.instructions.md` (`applyTo:`), Claude's memory files and Cursor
+ * `.mdc` rules. In a CLAUDE.md or AGENTS.md, `---` is a divider in the text.
+ */
+export function usesFrontmatter(source: { kind: string; path: string }): boolean {
+  if (source.kind === "claude-rule" || source.kind === "claude-auto-memory") return true;
+  return /\.instructions\.md$|\.mdc$/i.test(source.path);
+}
 
 export type NoteCard = { key: string; headless: boolean; header: string; original: string; note: Note };
 
-/** An instruction file as cards: one per section, without the file's header, and none for a header on its own. */
-export function noteCards(text: string): NoteCard[] {
+/**
+ * An instruction file as cards: one per section, without the file's header
+ * (where it has one), and none for a header on its own.
+ */
+export function noteCards(text: string, { frontmatter = false }: { frontmatter?: boolean } = {}): NoteCard[] {
   return splitSections(text).flatMap((section) => {
     const original = sectionText(text, section);
     const headless = section.key === "0:";
-    const header = headless ? HEADER.exec(original)?.[1] ?? "" : "";
+    const match = headless && frontmatter ? HEADER.exec(original) : null;
+    const header = match && isFrontmatter(match[2]!) ? match[1]! : "";
     const note = noteFromSection(original.slice(header.length), headless);
     if (headless && !note.body.trim()) return [];
     return [{ key: section.key, headless, header, original, note }];
@@ -91,15 +113,21 @@ export function cardReplacement(card: NoteCard, next: { title: string; body: str
   return card.header + sectionReplacement(card.original.slice(card.header.length), next, card.headless);
 }
 
-/** What to send to remove a card: the whole section, or everything after the header when the file has one. */
+/**
+ * What to send to remove a card: the whole section, or everything after the
+ * header when the file has one. The blank lines before the next heading stay,
+ * in the file's own line endings.
+ */
 export function cardRemoval(card: NoteCard): { text: string; removeSection?: boolean } {
   if (!card.header) return { text: "", removeSection: true };
   const rest = card.original.slice(card.header.length).split("\n");
   let trailing = 0;
   for (let index = rest.length - 1; index >= 0 && rest[index]!.trim() === ""; index -= 1) trailing += 1;
   const cr = card.header.includes("\r\n") ? "\r" : "";
-  // The header ends in a line break, so it already makes the first blank line.
-  return { text: `${card.header}${Array<string>(Math.max(0, trailing - 1)).fill(cr).join("\n")}${trailing > 1 ? "\n" : ""}\n` };
+  const lines = card.header.replace(/\n$/, "").split("\n");
+  const kept = [...lines, ...Array<string>(trailing).fill(cr)];
+  // replaceSection drops one final line break from what it is given.
+  return { text: `${kept.join("\n")}\n` };
 }
 
 export const HIDDEN_TEXT = "This note contains hidden characters (••••). Press Show on the original note to copy the real text.";
@@ -173,6 +201,7 @@ export type NoteTargetPlan = {
 export type NotePlan = { targets: NoteTargetPlan[]; skipped: Array<{ agent: string; reason: string; covered?: boolean }> };
 
 export const COVERED_BY_PROJECT = "Claude reads the project instructions too, so one note is enough.";
+export const CLAUDE_OWN_NOTE = "Claude gets its own note, because Codex won't read the project instructions this far.";
 
 const READ = new Set(["launch", "missing"]);
 
@@ -226,7 +255,7 @@ function forCodex(items: NoteFact[], where: NoteWhere, account?: string): NoteTa
  * For all agents in one project, when Claude already reads the project's
  * instructions at launch, the Claude note is left out: one note is enough.
  */
-export function planNote(who: NoteWho, where: NoteWhere, facts: NoteFacts): NotePlan {
+export function planNote(who: NoteWho, where: NoteWhere, facts: NoteFacts, { oneNote = true }: { oneNote?: boolean } = {}): NotePlan {
   const agents: Array<"claude" | "codex"> = who === "all" ? ["claude", "codex"] : [who];
   const plan: NotePlan = { targets: [], skipped: [] };
   for (const agent of agents) {
@@ -245,7 +274,8 @@ export function planNote(who: NoteWho, where: NoteWhere, facts: NoteFacts): Note
   }
   const shared = plan.targets.find((target) => target.agent === "codex");
   const claude = facts.claude && "items" in facts.claude ? facts.claude.items : [];
-  if (who === "all" && where.kind === "project" && shared && claude.some((item) => item.kind === "agents-md" && item.path === shared.path && item.when === "launch")) {
+  // `oneNote: false` when the shared file turns out not to be read that far (the host checks): Claude keeps its own.
+  if (oneNote && who === "all" && where.kind === "project" && shared && claude.some((item) => item.kind === "agents-md" && item.path === shared.path && item.when === "launch")) {
     plan.targets = plan.targets.filter((target) => target.agent !== "claude");
     plan.skipped.push({ agent: "claude", reason: COVERED_BY_PROJECT, covered: true });
   }

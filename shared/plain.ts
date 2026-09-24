@@ -125,15 +125,26 @@ export function plainPlanItemName(item: { kind: string; scope?: string; path?: s
 }
 
 /**
- * Codex's own working files: raw memories, rollout summaries, extensions, the
- * working diff, its database, and anything else read-only that Codex owns
- * (instructions in its settings file). Plain mode leaves them out of lists,
- * counts and search; they show with technical details on. "What Codex has
- * learned" is not one of them.
+ * Codex's own generated working files: raw memories, rollout summaries,
+ * extensions and the working diff in its `memories/` folder, and its
+ * database. Plain mode leaves them out of lists, counts and search (they show
+ * with technical details on). Decided by kind or by that place only, never by
+ * read-only status: a read-only file Codex reads as instructions (a fallback
+ * name, `developer_instructions`) stays, with its plain reason.
  */
-export function isCodexInternal(source: { kind: string; agent?: string; access?: string }): boolean {
-  if (source.kind === "codex-generated" || source.kind === "codex-config") return true;
-  return source.agent === "codex" && source.access === "read-only" && source.kind !== "codex-memory";
+const CODEX_WORKING = /\/memories\/(raw_memories\.md|rollout_summaries|extensions|phase2_workspace_diff\.md)(\/|$)|\/memories_\d+\.sqlite$/;
+
+export function isCodexInternal(source: { kind: string; path?: string; agent?: string; access?: string }): boolean {
+  return source.kind === "codex-generated" || CODEX_WORKING.test(source.path ?? "");
+}
+
+/**
+ * Findings to show in plain mode: all of them, except those only about
+ * Codex's working files. A secret warning is never left out.
+ */
+export function plainFindings<F extends { kind: string; sourceIds: string[] }>(findings: F[], sources: Array<{ id: string; kind: string; path?: string }>): F[] {
+  const internal = new Set(sources.filter(isCodexInternal).map((source) => source.id));
+  return findings.filter((finding) => finding.kind === "secret" || !finding.sourceIds.length || finding.sourceIds.some((id) => !internal.has(id)));
 }
 
 // ------------------------------------------------------------------ sizes

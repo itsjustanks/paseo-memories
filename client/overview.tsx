@@ -7,7 +7,7 @@ import { search, type Finding, type FindingAction } from "../shared/contracts";
 import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, scopeLabel } from "../shared/labels";
-import { PLAIN, isCodexInternal, plainAgent, plainFinding, plainNextStep, plainWords } from "../shared/plain";
+import { PLAIN, isCodexInternal, plainAgent, plainFinding, plainFindings, plainNextStep, plainWords } from "../shared/plain";
 import { KEY, QueryState, useFindings, useInventory } from "./data";
 import { usePlain, useSourceNames } from "./mode";
 import { Button, Card, Disclosure, EmptyState, ErrorText, Facts, Field, Loading, PathText, Row, Section, Tag, useTokens, type Status } from "./ui";
@@ -134,8 +134,7 @@ function PlainOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: 
     })
     .filter((row) => row.account.exists && row.files > 0);
   const projectFiles = count(listed.filter((source) => source.scope === "project" && !source.accountId));
-  const internal = new Set(inv.sources.filter(isCodexInternal).map((source) => source.id));
-  const shown = (tidy?.findings ?? []).filter((finding) => !finding.sourceIds.length || finding.sourceIds.some((id) => !internal.has(id)));
+  const shown = plainFindings(tidy?.findings ?? [], inv.sources);
   const next = tidy ? plainNextStep(tidy.nextStep, shown[0], shown.length, names.byId) : null;
   const notes = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
   return (

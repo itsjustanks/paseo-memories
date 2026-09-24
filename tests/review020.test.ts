@@ -93,7 +93,8 @@ test("review 1: with one target blocked, the other is still saved and the messag
   assert.equal(preview.targets.filter((target) => target.blocked).length, 1);
   const saved = await noteAdd(paseo, { text: "Invoices go out on the 1st.", who: "all", workspaceId: "ws-app", expected: expectedOf(preview) });
   assert.match(readFileSync(override, "utf8"), /Invoices go out on the 1st\./);
-  assert.match(saved.message, /Saved to Project instructions · app \(shared with the team\), but not to Claude's notes for app \(Claude's list of notes for this project is full/);
+  assert.match(saved.message, /Saved to Project instructions · app \(shared with the team\)\./);
+  assert.match(saved.message, /Couldn't save to Claude's notes for app: Claude's list of notes for this project is full/);
 });
 
 // ------------------------------------------------------------------ 2. dedupe
@@ -132,7 +133,7 @@ test("review 3: a failed list update rolls the Claude note back, and the Codex t
   const saved = await noteAdd(paseo, { text: "Invoices go out on the 1st.", who: "all", workspaceId: "ws-app", expected: expectedOf(preview) });
   assert.equal(saved.ok, false);
   assert.match(saved.message, /Saved to Project instructions · app/);
-  assert.match(saved.message, /not to Claude's notes for app/);
+  assert.match(saved.message, /Couldn't save to Claude's notes for app/);
   assert.deepEqual(readdirSync(sb.appMemory).sort(), names, "the unlisted note file was removed");
   assert.match(readFileSync(override, "utf8"), /Invoices go out on the 1st\./);
 });
@@ -167,13 +168,14 @@ test("review 4: card saves refuse hidden characters before writing", () => {
 
 // ------------------------------------------------------------------ 5. headers are never cards
 
+const FM = { frontmatter: true };
 const RULE = '---\npaths:\n  - "src/**/*.tsx"\n---\n\nIntro for components.\n\n# Frontend\n\nUse React.\n';
 const COPILOT = "---\napplyTo: \"**/*.go\"\n---\n# Go\n\nUse gofmt.\n\n## Tests\n\nTable tests.\n";
 
 test("review 5: a rule's paths: header and Copilot's applyTo: are never a card", () => {
-  assert.deepEqual(noteCards(RULE).map((card) => card.note.title || card.note.body), ["Intro for components.", "Frontend"]);
-  assert.deepEqual(noteCards(COPILOT).map((card) => card.note.title), ["Go", "Tests"]);
-  assert.deepEqual(noteCards("---\npaths: x\n---\n# Only\n\nText.\n").map((card) => card.note.title), ["Only"]);
+  assert.deepEqual(noteCards(RULE, FM).map((card) => card.note.title || card.note.body), ["Intro for components.", "Frontend"]);
+  assert.deepEqual(noteCards(COPILOT, FM).map((card) => card.note.title), ["Go", "Tests"]);
+  assert.deepEqual(noteCards("---\npaths: x\n---\n# Only\n\nText.\n", FM).map((card) => card.note.title), ["Only"]);
 });
 
 test("review 5: every card action keeps the header byte for byte", async () => {
@@ -184,25 +186,25 @@ test("review 5: every card action keeps the header byte for byte", async () => {
   forgetAllFiles();
   forgetDiscovery();
   const header = '---\npaths:\n  - "src/**/*.tsx"\n---\n';
-  const [intro] = noteCards(RULE);
+  const [intro] = noteCards(RULE, FM);
   const edited = await instructionWrite(paseo, { path, text: cardReplacement(intro!, { title: "", body: "New intro." }), expected: stampOf(path), sectionKey: intro!.key });
   assert.equal(edited.ok, true, edited.message);
   assert.ok(readFileSync(path, "utf8").startsWith(`${header}\nNew intro.\n`));
   const now = readFileSync(path, "utf8");
-  const removal = cardRemoval(noteCards(now)[0]!);
-  const removed = await instructionWrite(paseo, { path, expected: stampOf(path), sectionKey: noteCards(now)[0]!.key, ...removal });
+  const removal = cardRemoval(noteCards(now, FM)[0]!);
+  const removed = await instructionWrite(paseo, { path, expected: stampOf(path), sectionKey: noteCards(now, FM)[0]!.key, ...removal });
   assert.equal(removed.ok, true, removed.message);
   assert.ok(readFileSync(path, "utf8").startsWith(header), "header kept after removing the intro card");
-  assert.deepEqual(noteCards(readFileSync(path, "utf8")).map((card) => card.note.title), ["Frontend"]);
+  assert.deepEqual(noteCards(readFileSync(path, "utf8"), FM).map((card) => card.note.title), ["Frontend"]);
   const copilot = join(sb.home, ".copilot", "instructions", "go.instructions.md");
   writeFileSync(copilot, COPILOT);
   forgetAllFiles();
   forgetDiscovery();
-  const go = noteCards(COPILOT)[0]!;
+  const go = noteCards(COPILOT, FM)[0]!;
   const changed = await instructionWrite(paseo, { path: copilot, text: cardReplacement(go, { title: "Go", body: "Use gofmt and vet." }), expected: stampOf(copilot), sectionKey: go.key });
   assert.equal(changed.ok, true, changed.message);
   assert.equal(readFileSync(copilot, "utf8"), COPILOT.replace("Use gofmt.", "Use gofmt and vet."));
-  const goNow = noteCards(readFileSync(copilot, "utf8"))[0]!;
+  const goNow = noteCards(readFileSync(copilot, "utf8"), FM)[0]!;
   const gone = await instructionWrite(paseo, { path: copilot, expected: stampOf(copilot), sectionKey: goNow.key, ...cardRemoval(goNow) });
   assert.equal(gone.ok, true, gone.message);
   assert.ok(readFileSync(copilot, "utf8").startsWith('---\napplyTo: "**/*.go"\n---\n'));
