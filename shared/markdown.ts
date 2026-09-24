@@ -25,12 +25,36 @@ function slugify(raw: string): string {
     .slice(0, 60);
 }
 
-/** ATX headings outside fenced code split the file; text before the first heading is section 0 when not blank. */
+/** A leading `---` … `---` block. */
+const HEADER_BLOCK = /^(\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$))/;
+const KEY_LINE = /^[A-Za-z_][\w.-]*\s*:(\s|$)/;
+
+/** Frontmatter lines: `key: value` first, then key lines, indented or `- ` continuations, `#` comments and blank lines. */
+export function isFrontmatter(body: string): boolean {
+  const lines = body.split("\n").map((line) => line.replace(/\r$/, ""));
+  const first = lines.find((line) => line.trim() !== "" && !/^\s*#/.test(line));
+  if (!first || !KEY_LINE.test(first)) return false;
+  return lines.every((line) => line.trim() === "" || KEY_LINE.test(line) || /^\s+\S/.test(line) || /^-\s/.test(line) || /^\s*#/.test(line));
+}
+
+/** The file's leading header block, exactly as written, when it reads as key: value lines; else "". */
+export function leadingHeader(text: string): string {
+  const match = HEADER_BLOCK.exec(text);
+  return match && isFrontmatter(match[2]!) ? match[1]! : "";
+}
+
+/**
+ * ATX headings outside fenced code split the file; text before the first
+ * heading is section 0 when not blank. A `#` comment inside a leading
+ * key: value header block is part of the header, not a heading.
+ */
 export function splitSections(text: string): Section[] {
   const lines = text.split("\n");
   const heads: Array<{ line: number; level: number; title: string }> = [];
   let fence: string | null = null;
+  const headerLines = leadingHeader(text).split("\n").length - 1;
   lines.forEach((raw, line) => {
+    if (line < headerLines) return;
     const t = raw.replace(/\r$/, "");
     const fenceMatch = /^\s{0,3}(`{3,}|~{3,})/.exec(t);
     if (fenceMatch) {

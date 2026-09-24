@@ -5,7 +5,7 @@
  * server gathers the facts and does the writing through the usual safe path.
  */
 
-import { sectionText, splitSections } from "./markdown";
+import { leadingHeader, sectionText, splitSections } from "./markdown";
 import { MASK_FILL } from "./secrets";
 
 // ------------------------------------------------------------------ sections as notes
@@ -69,17 +69,6 @@ export function sectionReplacement(original: string, note: { title: string; body
 
 // ------------------------------------------------------------------ note cards
 
-/** A leading `---` … `---` block. A header only where the file kind uses one, and only when it reads as key: value lines. */
-const HEADER = /^(\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$))/;
-
-/** Frontmatter lines: `key: value`, then indented or `- ` continuation lines, `#` comments and blank lines. */
-function isFrontmatter(body: string): boolean {
-  const lines = body.split("\n").map((line) => line.replace(/\r$/, ""));
-  const first = lines.find((line) => line.trim() !== "");
-  if (!first || !/^[A-Za-z_][\w.-]*\s*:(\s|$)/.test(first)) return false;
-  return lines.every((line) => line.trim() === "" || /^[A-Za-z_][\w.-]*\s*:(\s|$)/.test(line) || /^\s+\S/.test(line) || /^-\s/.test(line) || /^\s*#/.test(line));
-}
-
 /**
  * File kinds whose leading `---` block is a header: Claude rules (`paths:`),
  * Copilot `*.instructions.md` (`applyTo:`), Claude's memory files and Cursor
@@ -100,8 +89,7 @@ export function noteCards(text: string, { frontmatter = false }: { frontmatter?:
   return splitSections(text).flatMap((section) => {
     const original = sectionText(text, section);
     const headless = section.key === "0:";
-    const match = headless && frontmatter ? HEADER.exec(original) : null;
-    const header = match && isFrontmatter(match[2]!) ? match[1]! : "";
+    const header = headless && frontmatter ? leadingHeader(original) : "";
     const note = noteFromSection(original.slice(header.length), headless);
     if (headless && !note.body.trim()) return [];
     return [{ key: section.key, headless, header, original, note }];

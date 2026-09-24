@@ -149,3 +149,25 @@ test("#3: a failed Claude note says so in plain words, per place", async () => {
   assert.match(saved.message, /Couldn't save to Claude's notes for app: Claude's list of notes couldn't be updated, so this note was taken back out\./);
   assert.doesNotMatch(saved.message, /0 of 1|see the report/);
 });
+
+// ------------------------------------------------------------------ headers with comments
+
+test("a rule header with a # comment and a blank line is still a header, and survives removing the top card", async () => {
+  await fresh();
+  const { instructionWrite } = await import("../server/instructions");
+  const { sha256 } = await import("../server/files");
+  const { statSync } = await import("node:fs");
+  const header = '---\n# Only for components\npaths:\n\n  - "src/**/*.tsx"\n---\n';
+  const text = `${header}\nIntro for components.\n\n# Frontend\n\nUse React.\n`;
+  const cards = noteCards(text, { frontmatter: true });
+  assert.equal(cards[0]!.header, header, "the comment does not end the header");
+  assert.deepEqual(cards.map((card) => card.note.title || card.note.body), ["Intro for components.", "Frontend"]);
+  const path = join(sb.claude, "rules", "components.md");
+  writeFileSync(path, text);
+  forgetAllFiles();
+  forgetDiscovery();
+  const stamp = () => ({ size: statSync(path).size, mtimeMs: statSync(path).mtimeMs, hash: sha256(readFileSync(path)) });
+  const removed = await instructionWrite(fakePaseo(sb).api, { path, expected: stamp(), sectionKey: cards[0]!.key, ...cardRemoval(cards[0]!) });
+  assert.equal(removed.ok, true, removed.message);
+  assert.equal(readFileSync(path, "utf8"), `${header}\n# Frontend\n\nUse React.\n`);
+});
