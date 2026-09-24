@@ -1,0 +1,14 @@
+model = "gpt-5"
+developer_instructions = """
+Be brief.
+Cite files."""
+project_doc_fallback_filenames = ["TEAM.md"]
+
+[features]
+memories = true
+
+[memories]
+use_memories = true
+
+[projects."/tmp/whatever"]
+trust_level = "trusted"
