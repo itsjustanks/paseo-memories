@@ -8,7 +8,7 @@ import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, scopeLabel } from "../shared/labels";
 import { KEY, QueryState, useFindings, useInventory } from "./data";
-import { Button, Card, Disclosure, EmptyState, ErrorText, Facts, Field, Loading, Row, Section, Tag, useTokens, type Status } from "./ui";
+import { Button, Card, Disclosure, EmptyState, ErrorText, Facts, Field, Loading, PathText, Row, Section, Tag, useTokens, type Status } from "./ui";
 
 /**
  * "What do my agents remember, and what needs tidying?" Totals per agent and
@@ -39,7 +39,7 @@ function SearchBox({ hostId, onOpen }: { hostId: string; onOpen: (sourceId: stri
   return (
     <Section title="Search">
       <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-end" }}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <Field value={draft} onChangeText={setDraft} placeholder="Search every memory and instruction file, e.g. webhooks" />
         </View>
         <Button label="Search" onPress={() => setQuery(draft.trim())} disabled={!draft.trim()} />
@@ -114,7 +114,7 @@ export function Overview({ hostId, onOpen }: { hostId: string; onOpen: (sourceId
               key={row.account.id}
               first={index === 0}
               title={`${AGENT_LABELS[row.account.agent] ?? row.account.agent}${row.account.email ? ` · ${row.account.email}` : ""}`}
-              subtitle={row.account.dir}
+              subtitle={<PathText path={row.account.dir} />}
               meta={<Facts items={[{ value: plural(row.files, "file") }, { value: formatBytes(row.bytes) }, { value: `${formatTokens(row.tokens)} at launch` }]} />}
               trailing={row.account.origin === "default" ? null : <Tag label={row.account.origin === "agent-link" ? "AgentLink" : row.account.origin === "provider-env" ? "Provider" : "Slot"} />}
             />

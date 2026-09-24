@@ -42,6 +42,26 @@ export function shortPath(path: string): string {
   return parts.slice(-2).join("/");
 }
 
+/**
+ * A path cut in the middle to at most `max` characters: its start (`~`, or the
+ * first folder) and its last two parts stay, e.g. `~/…/acme-web/CLAUDE.md`.
+ * When even that is too long, the characters in the middle go instead.
+ */
+export function middlePath(path: string, max: number): string {
+  if (path.length <= max) return path;
+  const parts = path.split("/");
+  const head = parts[0] === "" ? `/${parts[1] ?? ""}` : parts[0]!;
+  const rest = parts.slice(parts[0] === "" ? 2 : 1);
+  let tail = rest.slice(-2).join("/");
+  // More of the end when it fits: the end is what tells two paths apart.
+  for (let count = 3; count < rest.length && `${head}/…/${rest.slice(-count).join("/")}`.length <= max; count += 1) tail = rest.slice(-count).join("/");
+  const short = rest.length > 2 ? `${head}/…/${tail}` : path;
+  if (short.length <= max) return short;
+  const keep = Math.max(2, max - 1);
+  const end = Math.ceil(keep * 0.6);
+  return `${short.slice(0, keep - end)}…${short.slice(-end)}`;
+}
+
 export function folderName(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? path;
 }

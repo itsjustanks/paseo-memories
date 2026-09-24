@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 (2026-09-24)
+
+- Long paths, URLs, tokens and code lines no longer make the page scroll sideways: text breaks anywhere it has to, and nothing in a row can push the page wider.
+- Paths in lists, group headers and load plans are shortened in the middle (`~/…/acme-web/CLAUDE.md`), so the start and the file name both show. The file view's header shows the whole path, wrapped, with a Copy link.
+- The import preview's diff wraps long lines under their own text, keeping the +/- column.
+- Buttons and segmented choices with long labels wrap instead of running off the edge. The export's download button is now just "Download", with the file name shown above it.
+- Preview: `?long` fills the fixtures with real-world lengths.
+
 ## 0.1.0 (2026-09-24)
 
 The v1 spec (`docs/SPEC.md`), phases A to D.

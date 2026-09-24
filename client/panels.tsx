@@ -9,7 +9,7 @@ import { formatBytes, formatTokens } from "../shared/format";
 import { folderName, whenLabel } from "../shared/labels";
 import { KEY, QueryState } from "./data";
 import { canOpenMemories, openMemories } from "./navigate";
-import { Button, Card, EmptyState, Facts, Header, Row, Screen, Section, Tag, useTokens, useUi } from "./ui";
+import { Button, Card, EmptyState, Facts, Header, PathText, Row, Screen, Section, Tag, useTokens, useUi } from "./ui";
 
 /**
  * What an agent started here loads, in the order it loads it, with sizes and
@@ -34,7 +34,7 @@ function PlanCard({ plan, showMissing }: { plan: LoadPlan; showMissing?: boolean
             <Row
               key={`${item.order}:${item.path ?? item.label}`}
               first={index === 0}
-              title={item.label}
+              title={<PathText path={item.label} style={t.text.bodyStrong} />}
               subtitle={item.note || undefined}
               meta={
                 <Facts

@@ -10,7 +10,7 @@ import { folderName, targetTitle } from "../shared/labels";
 import { moveBlocker, type ImportItem } from "../shared/transfer";
 import { QueryState, WriteReportView, useInvalidate, useInventory } from "./data";
 import type { Destination } from "./navigate";
-import { Button, Card, CodeBlock, ComboBox, ErrorText, Field, Notice, Row, Section, Segmented, Tag, Toggle, copyToClipboard, useTokens, type Status } from "./ui";
+import { Button, Card, CodeBlock, ComboBox, ErrorText, Field, Notice, PathText, Row, Section, Segmented, Tag, Toggle, copyToClipboard, useTokens, type Status } from "./ui";
 import { canDownload, canPickFiles, downloadText, pickTextFiles } from "./web";
 
 /**
@@ -54,7 +54,7 @@ function TargetPicker({ targets, accounts, value, onChange, hint }: { targets: S
       <Card padded={false}>
         {shown.length ? (
           shown.map((source, index) => (
-            <Row key={source.id} first={index === 0} selected={source.id === value} title={title(source)} subtitle={source.path} onPress={() => onChange(source.id)} />
+            <Row key={source.id} first={index === 0} selected={source.id === value} title={title(source)} subtitle={<PathText path={source.path} />} onPress={() => onChange(source.id)} />
           ))
         ) : (
           <View style={{ padding: t.space.md }}>
@@ -67,19 +67,22 @@ function TargetPicker({ targets, accounts, value, onChange, hint }: { targets: S
   );
 }
 
+/** Long lines wrap under their own text, the +/- gutter stays on its own column. */
 function DiffView({ lines }: { lines: Array<{ op: string; text: string }> }) {
   const t = useTokens();
   return (
     <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.sm, padding: t.space.sm }}>
-      {lines.map((line, index) => (
-        <Text
-          key={index}
-          selectable
-          style={[t.text.mono, { color: line.op === "+" ? t.color.success : line.op === "-" ? t.color.danger : t.color.muted }]}
-        >
-          {`${line.op === " " ? " " : line.op} ${line.text}`}
-        </Text>
-      ))}
+      {lines.map((line, index) => {
+        const color = line.op === "+" ? t.color.success : line.op === "-" ? t.color.danger : t.color.muted;
+        return (
+          <View key={index} style={{ flexDirection: "row", alignItems: "flex-start" }}>
+            <Text style={[t.text.mono, { color, width: 14, flexShrink: 0 }]}>{line.op === " " ? " " : line.op}</Text>
+            <Text selectable style={[t.text.mono, { color, flex: 1, minWidth: 0 }]}>
+              {line.text || " "}
+            </Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -274,7 +277,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
               </View>
             </Card>
           ))}
-          <View style={{ flexDirection: "row", gap: t.space.sm }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
             <Button label={`Save ${plural(selected.size, "item")}`} variant="primary" onPress={() => void save()} loading={busy === "save"} disabled={!selected.size || preview.target.access !== "editable"} />
             <Button label="Cancel" variant="ghost" onPress={() => setPreview(null)} />
           </View>
@@ -330,9 +333,10 @@ function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolea
         <Card>
           <View style={{ gap: t.space.sm }}>
             <Text style={t.text.bodyStrong}>{`${plural(out.count, "item")} · ${formatBytes(out.text.length)}${out.masked ? ` · ${plural(out.masked, "item")} with hidden values` : ""}`}</Text>
-            <View style={{ flexDirection: "row", gap: t.space.sm }}>
+            {canDownload() ? <PathText path={`Saves as ${out.fileName}`} /> : null}
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
               <Button label="Copy" variant="primary" onPress={() => (copyToClipboard(out.text) ? toast.show("Copied the export.", { variant: "success" }) : toast.error("This app cannot copy; select the text instead."))} />
-              {canDownload() ? <Button label={`Download ${out.fileName}`} variant="ghost" onPress={() => downloadText(out.fileName, out.text, format === "bundle" ? "application/json" : "text/markdown")} /> : null}
+              {canDownload() ? <Button label="Download" variant="ghost" onPress={() => downloadText(out.fileName, out.text, format === "bundle" ? "application/json" : "text/markdown")} /> : null}
             </View>
             <CodeBlock copy={false}>{out.text.length > 6000 ? `${out.text.slice(0, 6000)}\n… ${formatBytes(out.text.length - 6000)} more` : out.text}</CodeBlock>
           </View>

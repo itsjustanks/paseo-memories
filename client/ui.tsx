@@ -1,6 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import React, { createContext, useContext, useMemo, useState } from "react";
-import { ActivityIndicator, Clipboard, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Clipboard, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
+import { middlePath } from "../shared/labels";
 
 /**
  * The plugin's design system.
@@ -75,6 +76,16 @@ export function isDarkSurface(color: string): boolean {
 const SUCCESS = { dark: "#3ecf8e", light: "#12855a" };
 const WARNING = { dark: "#e0a33e", light: "#a16207" };
 
+// ------------------------------------------------------------------ wrapping
+
+/**
+ * Long unbroken text (paths, URLs, hashes, code) breaks anywhere on the web.
+ * The browser's default `break-word` still counts the whole token as the
+ * text's narrowest width, so one path could set the width of the page. Native
+ * Text already breaks such tokens, so this is web-only.
+ */
+export const wrapAnywhere = (Platform.OS === "web" ? { overflowWrap: "anywhere", wordBreak: "break-word" } : {}) as TextStyle;
+
 // -------------------------------------------------------------------- tokens
 
 export type Tokens = ReturnType<typeof tokens>;
@@ -129,18 +140,19 @@ export function tokens(theme: PluginTheme, compact: boolean) {
     // Compact means narrow, not cramped: type grows a point and padding grows,
     // because a phone is held further from nobody's face than a monitor.
     text: {
-      display: { fontSize: 20, fontWeight: "700" as const, lineHeight: 26, color: fg },
-      value: { fontSize: compact ? 24 : 28, fontWeight: "700" as const, lineHeight: compact ? 30 : 34, color: fg },
-      heading: { fontSize: 15, fontWeight: "600" as const, lineHeight: 20, color: fg },
-      body: { fontSize: compact ? 14 : 13, fontWeight: "400" as const, lineHeight: compact ? 20 : 18, color: fg },
-      bodyStrong: { fontSize: compact ? 14 : 13, fontWeight: "600" as const, lineHeight: compact ? 20 : 18, color: fg },
-      label: { fontSize: 12, fontWeight: "500" as const, lineHeight: 16, color: muted },
-      caption: { fontSize: compact ? 12 : 11, fontWeight: "400" as const, lineHeight: 16, color: muted },
+      display: { fontSize: 20, fontWeight: "700" as const, lineHeight: 26, color: fg, ...wrapAnywhere },
+      value: { fontSize: compact ? 24 : 28, fontWeight: "700" as const, lineHeight: compact ? 30 : 34, color: fg, ...wrapAnywhere },
+      heading: { fontSize: 15, fontWeight: "600" as const, lineHeight: 20, color: fg, ...wrapAnywhere },
+      body: { fontSize: compact ? 14 : 13, fontWeight: "400" as const, lineHeight: compact ? 20 : 18, color: fg, ...wrapAnywhere },
+      bodyStrong: { fontSize: compact ? 14 : 13, fontWeight: "600" as const, lineHeight: compact ? 20 : 18, color: fg, ...wrapAnywhere },
+      label: { fontSize: 12, fontWeight: "500" as const, lineHeight: 16, color: muted, ...wrapAnywhere },
+      caption: { fontSize: compact ? 12 : 11, fontWeight: "400" as const, lineHeight: 16, color: muted, ...wrapAnywhere },
       mono: {
         fontSize: compact ? 12 : 11,
         lineHeight: 17,
         color: muted,
         fontFamily: compact ? "monospace" : "Menlo",
+        ...wrapAnywhere,
       },
     },
     space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, indent: 18 },
@@ -281,12 +293,12 @@ export function Toolbar({
         }}
       >
         {title || subtitle ? (
-          <View style={{ gap: 2, flexShrink: 1 }}>
+          <View style={{ gap: 2, flexShrink: 1, minWidth: 0 }}>
             {title ? <Text style={t.text.display}>{title}</Text> : null}
             {subtitle ? <Text style={t.text.caption}>{subtitle}</Text> : null}
           </View>
         ) : null}
-        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm, flexShrink: 1 }}>{actions}</View> : null}
+        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm, flexShrink: 1, minWidth: 0 }}>{actions}</View> : null}
       </View>
       {below}
     </View>
@@ -299,7 +311,7 @@ export function Section({ title, trailing, children }: { title?: string; trailin
     <View style={{ gap: t.space.sm }}>
       {title ? (
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: t.space.sm }}>
-          <Text style={t.text.label}>{title.toUpperCase()}</Text>
+          <Text style={[t.text.label, { flexShrink: 1 }]}>{title.toUpperCase()}</Text>
           {trailing}
         </View>
       ) : null}
@@ -438,7 +450,7 @@ export function Facts({ items }: { items: Array<{ value: string; tone?: Status }
       {list.map((item, index) => (
         <React.Fragment key={`${item.value}-${index}`}>
           {index > 0 ? <Text style={[t.text.caption, { opacity: 0.5 }]}>·</Text> : null}
-          <Text style={[t.text.caption, item.tone ? { color: statusColor(t, item.tone) } : null]}>{item.value}</Text>
+          <Text style={[t.text.caption, { flexShrink: 1 }, item.tone ? { color: statusColor(t, item.tone) } : null]}>{item.value}</Text>
         </React.Fragment>
       ))}
     </View>
@@ -515,9 +527,11 @@ export function Tag({ label, tone }: { label: string; tone?: Status }) {
         borderRadius: t.radius.sm,
         paddingVertical: 2,
         paddingHorizontal: 7,
+        flexShrink: 1,
+        minWidth: 0,
       }}
     >
-      <Text style={{ fontSize: 11, lineHeight: 15, fontWeight: "600", color }}>{label}</Text>
+      <Text style={[{ fontSize: 11, lineHeight: 15, fontWeight: "600", color }, wrapAnywhere]}>{label}</Text>
     </View>
   );
 }
@@ -557,6 +571,10 @@ export function Button({
       hitSlop={t.control.hit}
       style={({ pressed }) => ({
         flexGrow: grow ? 1 : 0,
+        // A long label wraps inside the button instead of pushing past the edge.
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: "100%",
         minHeight: t.control.min,
         paddingHorizontal: variant === "ghost" ? 8 : 12,
         borderRadius: t.radius.sm,
@@ -571,7 +589,7 @@ export function Button({
       })}
     >
       {loading ? <ActivityIndicator size="small" color={off ? t.color.disabled : palette.fg} /> : null}
-      <Text style={{ fontSize: t.compact ? 13 : 12, fontWeight: "600", color: off ? t.color.disabled : palette.fg }}>
+      <Text style={[{ fontSize: t.compact ? 13 : 12, fontWeight: "600", color: off ? t.color.disabled : palette.fg, flexShrink: 1, textAlign: "center" }, wrapAnywhere]}>
         {label}
       </Text>
     </Pressable>
@@ -672,6 +690,8 @@ export function Segmented<T extends string>({
         borderRadius: t.radius.sm,
         padding: 2,
         alignSelf: "flex-start",
+        maxWidth: "100%",
+        flexShrink: 1,
       }}
     >
       {options.map((option) => {
@@ -692,14 +712,20 @@ export function Segmented<T extends string>({
               justifyContent: "center",
               borderRadius: t.radius.sm - 2,
               backgroundColor: active ? t.color.surface0 : "transparent",
+              flexShrink: 1,
+              minWidth: 0,
             }}
           >
             <Text
-              style={{
-                fontSize: t.compact ? 13 : 12,
-                fontWeight: "600",
-                color: option.disabled ? t.color.disabled : active ? t.color.fg : t.color.muted,
-              }}
+              style={[
+                {
+                  fontSize: t.compact ? 13 : 12,
+                  fontWeight: "600",
+                  textAlign: "center",
+                  color: option.disabled ? t.color.disabled : active ? t.color.fg : t.color.muted,
+                },
+                wrapAnywhere,
+              ]}
             >
               {option.label}
             </Text>
@@ -757,6 +783,8 @@ export function Field({
           minHeight: minHeight ?? (multiline ? 120 : t.control.min),
           textAlignVertical: multiline ? "top" : "center",
           ...(mono ? { fontFamily: t.compact ? "monospace" : "Menlo", fontSize: t.compact ? 12 : 11.5 } : { fontSize: t.compact ? 14 : 13 }),
+          // Soft-wrap long lines in the editor; a textarea would otherwise scroll sideways on some engines.
+          ...(multiline ? { ...wrapAnywhere, ...(Platform.OS === "web" ? ({ whiteSpace: "pre-wrap" } as object) : {}) } : {}),
         }}
       />
       {hint ? <Text style={t.text.caption}>{hint}</Text> : null}
@@ -862,9 +890,30 @@ export function copyToClipboard(text: string): boolean {
   }
 }
 
-export function CodeBlock({ children, tone, copy = true }: { children: string; tone?: Status; copy?: boolean }) {
+/** "Copy" as a small link that says "Copied" for a moment; nothing when the host has no clipboard. */
+export function CopyLink({ text, label = "Copy" }: { text: string; label?: string }) {
   const t = useTokens();
   const [copied, setCopied] = useState(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={copied ? "Copied to clipboard" : `${label} to clipboard`}
+      hitSlop={t.control.hit}
+      style={{ flexShrink: 0 }}
+      onPress={() => {
+        if (!copyToClipboard(text)) return;
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+    >
+      <Text style={[t.text.caption, { fontWeight: "600", color: copied ? t.color.success : t.color.accent }]}>{copied ? "Copied" : label}</Text>
+    </Pressable>
+  );
+}
+
+/** Long lines wrap (the mono token breaks anywhere); nothing scrolls sideways. */
+export function CodeBlock({ children, tone, copy = true }: { children: string; tone?: Status; copy?: boolean }) {
+  const t = useTokens();
   return (
     <View
       style={{
@@ -881,22 +930,40 @@ export function CodeBlock({ children, tone, copy = true }: { children: string; t
       <Text selectable style={[t.text.mono, { flex: 1, minWidth: 0 }]}>
         {children}
       </Text>
-      {copy ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={copied ? "Copied to clipboard" : "Copy to clipboard"}
-          hitSlop={t.control.hit}
-          onPress={() => {
-            if (!copyToClipboard(children)) return;
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-        >
-          <Text style={[t.text.caption, { fontWeight: "600", color: copied ? t.color.success : t.color.accent }]}>
-            {copied ? "Copied" : "Copy"}
-          </Text>
-        </Pressable>
-      ) : null}
+      {copy ? <CopyLink text={children} /> : null}
+    </View>
+  );
+}
+
+/**
+ * A path on one line, cut in the middle so its start and its file name both
+ * show (`~/…/acme-web/CLAUDE.md`), sized to the room it has. Screen readers
+ * get the whole path. `full` is for where the path is the point: all of it,
+ * wrapped, selectable, with a Copy link.
+ */
+export function PathText({ path, style, full }: { path: string; style?: StyleProp<TextStyle>; full?: boolean }) {
+  const t = useTokens();
+  const [width, setWidth] = useState(0);
+  if (full) {
+    return (
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.sm, minWidth: 0 }}>
+        <Text selectable style={[t.text.mono, { flex: 1, minWidth: 0 }, style]}>
+          {path}
+        </Text>
+        <CopyLink text={path} label="Copy path" />
+      </View>
+    );
+  }
+  const flat = StyleSheet.flatten([t.text.caption, style]);
+  const mono = /mono|menlo|courier/i.test(String(flat.fontFamily ?? ""));
+  // A rough character width: enough to pick how much to cut; the one-line clip catches the rest.
+  const perChar = (flat.fontSize ?? 12) * (mono ? 0.62 : 0.55);
+  const max = width > 0 ? Math.max(16, Math.floor(width / perChar)) : 48;
+  return (
+    <View style={{ minWidth: 0, alignSelf: "stretch" }} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
+      <Text numberOfLines={1} accessibilityLabel={path} style={[t.text.caption, style]}>
+        {middlePath(path, max)}
+      </Text>
     </View>
   );
 }

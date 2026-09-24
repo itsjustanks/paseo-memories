@@ -22,7 +22,7 @@ import { formatBytes, formatTokens, plural } from "../shared/format";
 import { MEMORY_TYPES, folderName, kindLabel, scopeLabel } from "../shared/labels";
 import { KEY, QueryState, WriteReportView, useInvalidate, useSourceDetail } from "./data";
 import { edit, isDirty, keepEditing, receive, reload, type Draft } from "./draft";
-import { Button, Card, CodeBlock, ConfirmButton, Facts, Field, Loading, Notice, Row, Section, Segmented, Tag, useTokens } from "./ui";
+import { Button, Card, CodeBlock, ConfirmButton, Facts, Field, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
 
 /**
  * One source: what it is, who reads it, and a viewer or editor. Read-only
@@ -48,14 +48,12 @@ function SourceHeader({ source }: { source: Source }) {
     <Card>
       <View style={{ gap: t.space.xs }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
-          <Text style={t.text.heading}>{source.kind === "claude-auto-memory" ? `Claude memory · ${source.projectPath ? folderName(source.projectPath) : "project path unknown"}` : kindLabel(source.kind)}</Text>
+          <Text style={[t.text.heading, { flexShrink: 1 }]}>{source.kind === "claude-auto-memory" ? `Claude memory · ${source.projectPath ? folderName(source.projectPath) : "project path unknown"}` : kindLabel(source.kind)}</Text>
           <Tag label={scopeLabel(source.scope)} />
           {source.access === "editable" ? null : <Tag label={source.access === "online" ? "Stored online" : "Read-only"} tone="neutral" />}
           {source.exists ? null : <Tag label="Not there yet" tone="attention" />}
         </View>
-        <Text selectable style={t.text.mono}>
-          {source.path}
-        </Text>
+        <PathText path={source.path} full />
         <Facts
           items={[
             source.exists ? { value: source.isDirectory ? plural(source.files ?? 0, "file") : `${formatBytes(source.bytes)} · ${plural(source.lines, "line")}` } : null,
@@ -193,8 +191,8 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
   return (
     <Card>
       <View style={{ gap: t.space.md }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <Text style={t.text.heading}>{creating ? "New memory" : form.name || entryKey}</Text>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: t.space.sm }}>
+          <Text style={[t.text.heading, { flexShrink: 1 }]}>{creating ? "New memory" : form.name || entryKey}</Text>
           <Button label="Back to the list" variant="ghost" onPress={() => onDone(null)} />
         </View>
         {!creating ? <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} /> : null}

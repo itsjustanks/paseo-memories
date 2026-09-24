@@ -5,7 +5,7 @@ import type { Account, Source } from "../shared/contracts";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, kindLabel, shortPath } from "../shared/labels";
 import { SourceDetail } from "./detail";
-import { Card, EmptyState, Facts, Row, Section, Tag, useTokens } from "./ui";
+import { Card, EmptyState, Facts, PathText, Row, Section, Tag, useTokens } from "./ui";
 
 /**
  * User and Projects: a list of sources on the left, the chosen one on the
@@ -14,7 +14,7 @@ import { Card, EmptyState, Facts, Row, Section, Tag, useTokens } from "./ui";
  * Claude memory for projects whose path is unknown.
  */
 
-type Group = { key: string; title: string; caption?: string; sources: Source[] };
+type Group = { key: string; title: string; caption?: string; path?: string; sources: Source[] };
 
 function accountTitle(account: Account | undefined, agent: string): string {
   const name = AGENT_LABELS[agent] ?? agent;
@@ -29,7 +29,7 @@ export function userGroups(sources: Source[], accounts: Account[]): Group[] {
     const account = accounts.find((entry) => entry.id === source.accountId);
     const key = source.scope === "managed" ? "managed" : source.scope === "host" ? "host" : source.accountId ?? source.agent;
     const title = source.scope === "managed" ? "Managed by your organisation" : source.scope === "host" ? "Paseo (every agent on this host)" : accountTitle(account, source.agent);
-    const group = groups.get(key) ?? { key, title, ...(account ? { caption: account.dir } : {}), sources: [] };
+    const group = groups.get(key) ?? { key, title, ...(account ? { path: account.dir } : {}), sources: [] };
     group.sources.push(source);
     groups.set(key, group);
   }
@@ -44,7 +44,7 @@ export function projectGroups(sources: Source[], workspaces: Array<{ name: strin
     const key = path ?? "unknown";
     const workspace = path ? workspaces.find((entry) => entry.path === path || path.startsWith(`${entry.path}/`) || entry.path.startsWith(`${path}/`)) : undefined;
     const rank = workspace ? 0 : path ? 1 : 2;
-    const group = groups.get(key) ?? { key, rank, title: path ? (workspace ? workspace.name : folderName(path)) : "Other projects (path unknown)", ...(path ? { caption: path } : { caption: "Claude keeps these by a folder name that cannot be turned back into a path." }), sources: [] };
+    const group = groups.get(key) ?? { key, rank, title: path ? (workspace ? workspace.name : folderName(path)) : "Other projects (path unknown)", ...(path ? { path } : { caption: "Claude keeps these by a folder name that cannot be turned back into a path." }), sources: [] };
     group.rank = Math.min(group.rank, rank);
     group.sources.push(source);
     groups.set(key, group);
@@ -53,13 +53,14 @@ export function projectGroups(sources: Source[], workspaces: Array<{ name: strin
 }
 
 function SourceRow({ source, first, selected, onPress }: { source: Source; first: boolean; selected: boolean; onPress: () => void }) {
+  const t = useTokens();
   const title = source.kind === "claude-auto-memory" ? (source.projectPath ? `Claude memory` : `Claude memory · ${source.slug ?? ""}`) : source.path.startsWith("paseo:") ? "Appended system prompt" : source.path.startsWith("copilot:") ? "Copilot Memory" : shortPath(source.path);
   return (
     <Row
       first={first}
       selected={selected}
       onPress={onPress}
-      title={title}
+      title={<PathText path={title} style={t.text.bodyStrong} />}
       subtitle={kindLabel(source.kind)}
       meta={
         <Facts
@@ -100,7 +101,7 @@ export function SourcesTab({
     <View style={{ gap: t.space.lg }}>
       {groups.map((group) => (
         <Section key={group.key} title={group.title} trailing={<Tag label={String(group.sources.length)} />}>
-          {group.caption ? <Text numberOfLines={2} style={t.text.caption}>{group.caption}</Text> : null}
+          {group.path ? <PathText path={group.path} /> : group.caption ? <Text style={t.text.caption}>{group.caption}</Text> : null}
           <Card padded={false}>
             {group.sources.map((source, index) => (
               <SourceRow key={source.id} source={source} first={index === 0} selected={source.id === selected} onPress={() => onSelect(source.id)} />
