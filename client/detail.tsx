@@ -29,7 +29,7 @@ import { MASK_FILL } from "../shared/secrets";
 import { KEY, QueryState, WriteReportView, useInvalidate, useSourceDetail } from "./data";
 import { edit, isDirty, keepEditing, receive, reload, type Draft } from "./draft";
 import { usePlain, useSourceNames } from "./mode";
-import { Button, Card, CodeBlock, ConfirmButton, Disclosure, Facts, Field, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
+import { Button, Card, CodeBlock, ConfirmButton, ConfirmLink, Disclosure, Facts, Field, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
 
 /**
  * One source: what it is, who reads it, and a viewer or editor. Read-only
@@ -212,6 +212,7 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
           });
         });
   if (!creating && !body.data) return <QueryState query={body} what="this memory" />;
+  const removeNote = () => void run(() => remove({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp! }), () => onDone(null));
   const renameRow = (
     <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-end", flexWrap: "wrap" }}>
       <View style={{ flexGrow: 1, minWidth: 200 }}>
@@ -255,7 +256,8 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
           <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap", alignItems: "center" }}>
             <Button label={creating ? (plain ? M.saveNew : "Save memory") : "Save"} variant="primary" onPress={() => void save()} loading={busy} disabled={!form.name.trim()} />
             {!creating ? <Button label={M.copy} variant="ghost" onPress={() => onCopy([{ sourceId: source.id, key: entryKey }])} /> : null}
-            {!creating ? <ConfirmButton label={plain ? M.delete : "Delete"} confirmLabel={plain ? M.deleteConfirm : "Delete this memory and its MEMORY.md line"} onConfirm={() => void run(() => remove({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp! }), () => onDone(null))} /> : null}
+            {!creating && plain ? <ConfirmLink label={M.delete} question={PLAIN.notes.removeQuestion} yes={M.deleteConfirm} no={PLAIN.notes.keep} onConfirm={removeNote} /> : null}
+            {!creating && !plain ? <ConfirmButton label="Delete" confirmLabel="Delete this memory and its MEMORY.md line" onConfirm={removeNote} /> : null}
           </View>
         ) : null}
         {editable && !locked && !creating ? (plain ? <Disclosure title={PLAIN.technical}>{renameRow}</Disclosure> : renameRow) : null}
@@ -537,8 +539,9 @@ function NoteCard({
         {editable ? (
           <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap", alignItems: "center" }}>
             <Button label={N.change} variant="ghost" onPress={() => setEditing(true)} disabled={hidden} />
-            <ConfirmButton label={N.remove} confirmLabel={N.removeConfirm} onConfirm={onRemove} />
             {onCopy ? <Button label={N.copy} variant="ghost" onPress={onCopy} /> : null}
+            {/* Last in the row, so its question opens below the everyday actions. */}
+            <ConfirmLink label={N.remove} question={N.removeQuestion} yes={N.removeConfirm} no={N.keep} onConfirm={onRemove} />
           </View>
         ) : null}
       </View>

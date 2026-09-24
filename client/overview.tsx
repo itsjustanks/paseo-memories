@@ -7,7 +7,7 @@ import { search, type Finding, type FindingAction } from "../shared/contracts";
 import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, scopeLabel } from "../shared/labels";
-import { PLAIN, plainAgent, plainFinding, plainNextStep, plainWords } from "../shared/plain";
+import { PLAIN, isCodexInternal, plainAgent, plainFinding, plainNextStep, plainWords } from "../shared/plain";
 import { KEY, QueryState, useFindings, useInventory } from "./data";
 import { usePlain, useSourceNames } from "./mode";
 import { Button, Card, Disclosure, EmptyState, ErrorText, Facts, Field, Loading, PathText, Row, Section, Tag, useTokens, type Status } from "./ui";
@@ -50,10 +50,14 @@ function SearchBox({ hostId, onOpen }: { hostId: string; onOpen: (sourceId: stri
   const t = useTokens();
   const plain = usePlain();
   const names = useSourceNames(hostId);
+  const inventory = useInventory(hostId);
   const call = useRpc(search);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const results = useQuery({ queryKey: [KEY, hostId, "search", query], queryFn: () => call({ query, limit: 30 }), enabled: query.length > 0, retry: 1 });
+  // Plain mode leaves out hits in Codex's own working files.
+  const internal = new Set((inventory.data?.sources ?? []).filter(isCodexInternal).map((source) => source.id));
+  const hits = (results.data?.results ?? []).filter((hit) => !plain || !internal.has(hit.sourceId));
   return (
     <Section title={plain ? PLAIN.search.title : "Search"}>
       <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-end" }}>
@@ -66,10 +70,10 @@ function SearchBox({ hostId, onOpen }: { hostId: string; onOpen: (sourceId: stri
       {results.error ? <ErrorText>{plainError(results.error)}</ErrorText> : null}
       {results.data ? (
         <View style={{ gap: t.space.sm }}>
-          {plain ? (results.data.results.length ? null : <Text style={t.text.caption}>{`No note mentions "${results.data.query}".`}</Text>) : <Text style={t.text.caption}>{results.data.checked}</Text>}
-          {results.data.results.length ? (
+          {plain ? (hits.length ? null : <Text style={t.text.caption}>{`No note mentions "${results.data.query}".`}</Text>) : <Text style={t.text.caption}>{results.data.checked}</Text>}
+          {hits.length ? (
             <Card padded={false}>
-              {results.data.results.map((hit, index) => (
+              {hits.map((hit, index) => (
                 <Row
                   key={`${hit.sourceId}#${hit.key}`}
                   first={index === 0}
@@ -120,29 +124,33 @@ function PlainOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: 
   if (!inv) return <QueryState query={inventory} what="what your agents remember" />;
   if (inv.counts.sources === 0) return <View style={{ gap: t.space.lg }}>{add}<EmptyState title={PLAIN.nothingYet.title} body={PLAIN.nothingYet.body} /></View>;
   const openAction = (action: FindingAction) => action.sourceId && onOpen(action.sourceId, action.key === "MEMORY.md" ? undefined : action.key);
+  // Counted from the sources, leaving out Codex's own working files.
+  const listed = inv.sources.filter((source) => !isCodexInternal(source));
+  const count = (sources: typeof listed) => sources.reduce((sum, source) => sum + (source.isDirectory ? source.files ?? 0 : source.exists ? 1 : 0), 0);
   const accountRows = inv.accounts
     .map((account) => {
-      const groups = inv.groups.filter((group) => group.accountId === account.id);
-      return { account, files: groups.reduce((sum, group) => sum + group.files, 0), tokens: groups.reduce((sum, group) => sum + group.loadedTokens, 0) };
+      const own = listed.filter((source) => source.accountId === account.id);
+      return { account, files: count(own), tokens: own.reduce((sum, source) => sum + source.loaded.tokens, 0) };
     })
     .filter((row) => row.account.exists && row.files > 0);
-  const projectGroups = inv.groups.filter((group) => group.scope === "project" && !group.accountId);
-  const projectFiles = projectGroups.reduce((sum, group) => sum + group.files, 0);
-  const next = tidy ? plainNextStep(tidy.nextStep, tidy.findings[0], tidy.findings.length, names.byId) : null;
+  const projectFiles = count(listed.filter((source) => source.scope === "project" && !source.accountId));
+  const internal = new Set(inv.sources.filter(isCodexInternal).map((source) => source.id));
+  const shown = (tidy?.findings ?? []).filter((finding) => !finding.sourceIds.length || finding.sourceIds.some((id) => !internal.has(id)));
+  const next = tidy ? plainNextStep(tidy.nextStep, shown[0], shown.length, names.byId) : null;
   const notes = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
   return (
     <View style={{ gap: t.space.lg }}>
       <QueryState query={inventory} what="what your agents remember" />
       {add}
-      <Card tone={tidy?.findings.length ? "attention" : "ok"}>
+      <Card tone={shown.length ? "attention" : "ok"}>
         <Text style={t.text.label}>{O.nextStep}</Text>
         {tidy && next ? (
           <>
             <Text style={t.text.heading}>{next.title}</Text>
             <Text style={t.text.body}>{next.detail}</Text>
-            {tidy.nextStep.action?.sourceId ? (
+            {shown[0]?.action?.sourceId ? (
               <View style={{ flexDirection: "row" }}>
-                <Button label={PLAIN.tidy.show} variant="primary" onPress={() => openAction(tidy.nextStep.action!)} />
+                <Button label={PLAIN.tidy.show} variant="primary" onPress={() => openAction(shown[0]!.action!)} />
               </View>
             ) : null}
           </>
@@ -163,19 +171,19 @@ function PlainOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: 
           <Row first={accountRows.length === 0} title={O.projectNotes} subtitle={O.projectNotesHint} meta={<Facts items={[{ value: notes(projectFiles) }]} />} />
         </Card>
       </Section>
-      <Section title={PLAIN.tidy.title} trailing={tidy ? <Tag label={String(tidy.findings.length)} tone={tidy.findings.length ? "attention" : "ok"} /> : null}>
+      <Section title={PLAIN.tidy.title} trailing={tidy ? <Tag label={String(shown.length)} tone={shown.length ? "attention" : "ok"} /> : null}>
         {tidy ? (
-          tidy.findings.length ? (
+          shown.length ? (
             <>
               <Card padded={false}>
-                {tidy.findings.slice(0, 5).map((finding, index) => (
+                {shown.slice(0, 5).map((finding, index) => (
                   <FindingRow key={finding.id} finding={finding} first={index === 0} onOpen={openAction} />
                 ))}
               </Card>
-              {tidy.findings.length > 5 ? (
-                <Disclosure title={PLAIN.tidy.more(tidy.findings.length - 5)}>
+              {shown.length > 5 ? (
+                <Disclosure title={PLAIN.tidy.more(shown.length - 5)}>
                   <Card padded={false}>
-                    {tidy.findings.slice(5, 100).map((finding, index) => (
+                    {shown.slice(5, 100).map((finding, index) => (
                       <FindingRow key={finding.id} finding={finding} first={index === 0} onOpen={openAction} />
                     ))}
                   </Card>

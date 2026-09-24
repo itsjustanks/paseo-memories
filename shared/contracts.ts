@@ -595,7 +595,8 @@ export const notePreview = defineRpc({
     title: z.string(),
     project: z.string().optional(),
     targets: z.array(NoteTargetSchema),
-    skipped: z.array(z.object({ agent: z.string(), reason: z.string() })).default([]),
+    /** `covered`: left out because that agent already reads another target ("one note is enough"). */
+    skipped: z.array(z.object({ agent: z.string(), reason: z.string(), covered: z.boolean().optional() })).default([]),
     warnings: z.array(z.string()).default([]),
   }),
 });

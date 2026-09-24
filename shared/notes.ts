@@ -91,7 +91,10 @@ export type NoteTargetPlan = {
   private: boolean;
 };
 
-export type NotePlan = { targets: NoteTargetPlan[]; skipped: Array<{ agent: string; reason: string }> };
+/** `covered`: not needed, because the agent already reads another target (said as it is, not as a problem). */
+export type NotePlan = { targets: NoteTargetPlan[]; skipped: Array<{ agent: string; reason: string; covered?: boolean }> };
+
+export const COVERED_BY_PROJECT = "Claude reads the project instructions too, so one note is enough.";
 
 const READ = new Set(["launch", "missing"]);
 
@@ -137,6 +140,8 @@ function forCodex(items: NoteFact[], where: NoteWhere, account?: string): NoteTa
  * project's instructions for Codex (shared through git when it is in one).
  * Only files the agent's load plan says it reads (or will, once written);
  * never Codex's own generated notes and never Paseo's prompt for every agent.
+ * For all agents in one project, when Claude already reads the project's
+ * instructions at launch, the Claude note is left out: one note is enough.
  */
 export function planNote(who: NoteWho, where: NoteWhere, facts: NoteFacts): NotePlan {
   const agents: Array<"claude" | "codex"> = who === "all" ? ["claude", "codex"] : [who];
@@ -155,10 +160,16 @@ export function planNote(who: NoteWho, where: NoteWhere, facts: NoteFacts): Note
     if (typeof picked === "string") plan.skipped.push({ agent, reason: picked });
     else if (!plan.targets.some((target) => target.path === picked.path)) plan.targets.push(picked);
   }
+  const shared = plan.targets.find((target) => target.agent === "codex");
+  const claude = facts.claude && "items" in facts.claude ? facts.claude.items : [];
+  if (who === "all" && where.kind === "project" && shared && claude.some((item) => item.kind === "agents-md" && item.path === shared.path && item.when === "launch")) {
+    plan.targets = plan.targets.filter((target) => target.agent !== "claude");
+    plan.skipped.push({ agent: "claude", reason: COVERED_BY_PROJECT, covered: true });
+  }
   return plan;
 }
 
 /** The one-line warning for a target, in plain words. */
 export function noteTargetWarning(target: Pick<NoteTargetPlan, "shared">): string | undefined {
-  return target.shared ? "This is shared with your team through git." : undefined;
+  return target.shared ? "Everyone who works on this project will see this note." : undefined;
 }

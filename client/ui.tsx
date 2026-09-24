@@ -536,7 +536,8 @@ export function Tag({ label, tone }: { label: string; tone?: Status }) {
   );
 }
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+/** `quiet-danger`: a text link in the danger colour, for a destructive action that sits beside everyday ones. */
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "quiet-danger";
 
 export function Button({
   label,
@@ -560,7 +561,9 @@ export function Button({
     secondary: { bg: t.color.surface2, border: t.color.border, fg: t.color.fg },
     ghost: { bg: "transparent", border: "transparent", fg: t.color.accent },
     danger: { bg: t.color.dangerWash, border: t.color.dangerLine, fg: t.color.danger },
+    "quiet-danger": { bg: "transparent", border: "transparent", fg: t.color.danger },
   }[variant];
+  const quiet = variant === "ghost" || variant === "quiet-danger";
   return (
     <Pressable
       accessibilityRole="button"
@@ -576,10 +579,10 @@ export function Button({
         minWidth: 0,
         maxWidth: "100%",
         minHeight: t.control.min,
-        paddingHorizontal: variant === "ghost" ? 8 : 12,
+        paddingHorizontal: quiet ? 8 : 12,
         borderRadius: t.radius.sm,
         borderWidth: 1,
-        borderColor: off && variant !== "ghost" ? t.color.borderSubtle : palette.border,
+        borderColor: off && !quiet ? t.color.borderSubtle : palette.border,
         backgroundColor: off && variant === "primary" ? alpha(t.color.accent, 0.25) : palette.bg,
         alignItems: "center",
         justifyContent: "center",
@@ -668,6 +671,32 @@ export function ConfirmButton({
         }}
       />
       <Button label="Cancel" variant="ghost" onPress={() => setArmed(false)} />
+    </View>
+  );
+}
+
+/**
+ * A quiet text link in the danger colour; pressed, it asks `question` in the
+ * row and only acts on "yes". For Remove beside Change on every card.
+ */
+export function ConfirmLink({ label, question, yes, no = "Keep it", onConfirm }: { label: string; question: string; yes: string; no?: string; onConfirm: () => void }) {
+  const t = useTokens();
+  const [armed, setArmed] = useState(false);
+  if (!armed) return <Button label={label} variant="quiet-danger" onPress={() => setArmed(true)} />;
+  return (
+    <View style={{ flexBasis: "100%", gap: t.space.sm, paddingTop: t.space.xs }}>
+      <Text style={t.text.body}>{question}</Text>
+      <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
+        <Button
+          label={yes}
+          variant="danger"
+          onPress={() => {
+            setArmed(false);
+            onConfirm();
+          }}
+        />
+        <Button label={no} variant="ghost" onPress={() => setArmed(false)} />
+      </View>
     </View>
   );
 }

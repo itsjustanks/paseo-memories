@@ -4,7 +4,7 @@
  * thing has the same name everywhere. Pure; the jargon test reads it.
  *
  * Rule for every string here: no file names, paths, "tokens", "frontmatter",
- * "slug", "scope", "repo", "config" or "markdown". Plain words throughout.
+ * "slug", "scope", "repo", "config", "markdown", "git" or "commit". Plain words throughout.
  */
 
 import { AGENT_LABELS } from "./agents";
@@ -124,6 +124,18 @@ export function plainPlanItemName(item: { kind: string; scope?: string; path?: s
   return inner ? `${name} · ${inner} folder` : name;
 }
 
+/**
+ * Codex's own working files: raw memories, rollout summaries, extensions, the
+ * working diff, its database, and anything else read-only that Codex owns
+ * (instructions in its settings file). Plain mode leaves them out of lists,
+ * counts and search; they show with technical details on. "What Codex has
+ * learned" is not one of them.
+ */
+export function isCodexInternal(source: { kind: string; agent?: string; access?: string }): boolean {
+  if (source.kind === "codex-generated" || source.kind === "codex-config") return true;
+  return source.agent === "codex" && source.access === "read-only" && source.kind !== "codex-memory";
+}
+
 // ------------------------------------------------------------------ sizes
 
 function roundTo(value: number, step: number): number {
@@ -200,8 +212,8 @@ export const PLAIN = {
   tabLabels: { overview: "Overview", user: "Everywhere", projects: "Projects", transfer: "Import & Export", guide: "Guide" },
   checking: "Checking",
   refresh: "Refresh",
-  shared: "This is shared with your team through git: a change here reaches everyone who works on the project.",
-  sharedShort: "This is shared with your team through git.",
+  shared: "Everyone who works on this project will see these notes.",
+  sharedShort: "Everyone who works on this project will see this note.",
   codexRewrites: "Codex rewrites these notes in its own words when it next runs, so the wording may change.",
   codexPending: "Codex is still tidying its notes. Changes you make now will be folded in when it finishes.",
   codexBusy: "Codex is tidying its notes right now, so saving is paused. Try again in a few minutes.",
@@ -261,7 +273,9 @@ export const PLAIN = {
     add: "Add a note",
     change: "Change",
     remove: "Remove",
-    removeConfirm: "Yes, remove this note",
+    removeQuestion: "Remove this note? A copy of the old version is kept, so it can be put back.",
+    removeConfirm: "Yes, remove it",
+    keep: "Keep it",
     copy: "Copy to another agent",
     save: "Save",
     cancel: "Cancel",
@@ -285,7 +299,7 @@ export const PLAIN = {
     saveNew: "Save note",
     copy: "Copy or move…",
     delete: "Remove",
-    deleteConfirm: "Yes, remove this note",
+    deleteConfirm: "Yes, remove it",
     back: "Back to the list",
     fileName: "File name",
     rename: "Rename",
@@ -450,10 +464,16 @@ export function plainNextStep(step: NextStep, first: Pick<Finding, "kind" | "mes
 
 // ------------------------------------------------------------------ jargon
 
-/** Words that must not reach a person in plain mode. Substrings, case-insensitive. */
-export const JARGON = ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "frontmatter", "token", "slug", "scope", "sqlite", "consolidation", "markdown", "repo", "config"] as const;
+/**
+ * Words that must not reach a person in plain mode, case-insensitive.
+ * Substrings, except "git" and "commit", which are whole words ("GitHub" and
+ * "committee" are fine).
+ */
+export const JARGON = ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "frontmatter", "token", "slug", "scope", "sqlite", "consolidation", "markdown", "repo", "config", "git", "commit"] as const;
+
+const WHOLE_WORD: Record<string, RegExp> = { git: /\bgit\b/i, commit: /\bcommit(s|ted|ting)?\b/i };
 
 export function jargonIn(text: string): string[] {
   const lower = text.toLowerCase();
-  return JARGON.filter((word) => lower.includes(word.toLowerCase()));
+  return JARGON.filter((word) => (WHOLE_WORD[word] ? WHOLE_WORD[word]!.test(text) : lower.includes(word.toLowerCase())));
 }

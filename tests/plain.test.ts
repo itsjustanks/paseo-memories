@@ -8,10 +8,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { FINDING_KINDS, SOURCE_KINDS } from "../shared/contracts";
 import { PLAIN_GUIDES, PLAIN_GUIDE_TECHNICAL_HINT } from "../shared/guides";
-import { noteTargetWarning, planNote } from "../shared/notes";
+import { COVERED_BY_PROJECT, noteTargetWarning, planNote } from "../shared/notes";
 import {
   JARGON,
   PLAIN,
+  isCodexInternal,
   PLAIN_AGENT,
   PLAIN_MEMORY_TYPES,
   jargonIn,
@@ -65,8 +66,10 @@ const PATHS: Record<string, string> = {
 };
 
 test("the jargon list is the one in the brief", () => {
-  assert.deepEqual([...JARGON], ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "frontmatter", "token", "slug", "scope", "sqlite", "consolidation", "markdown", "repo", "config"]);
+  assert.deepEqual([...JARGON], ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "frontmatter", "token", "slug", "scope", "sqlite", "consolidation", "markdown", "repo", "config", "git", "commit"]);
   assert.deepEqual(jargonIn("Your repository config"), ["repo", "config"]);
+  assert.deepEqual(jargonIn("Shared through git; commit it"), ["git", "commit"]);
+  assert.deepEqual(jargonIn("GitHub keeps it online"), []);
 });
 
 test("plain string tables and guides have no jargon", () => {
@@ -155,5 +158,17 @@ test("Add a note labels and reasons are plain", () => {
       }
     }
   }
+  texts.push(COVERED_BY_PROJECT);
   assertPlain(texts, "add a note");
+  assert.equal(noteTargetWarning({ shared: true }), "Everyone who works on this project will see this note.");
+});
+
+test("Codex's own working files are internal; what it has learned and its instructions are not", () => {
+  const codex = (kind: string, access = "read-only") => ({ kind, agent: "codex", access });
+  assert.equal(isCodexInternal(codex("codex-generated")), true, "raw memories, rollout summaries, extensions, the diff, the database");
+  assert.equal(isCodexInternal(codex("codex-config")), true);
+  assert.equal(isCodexInternal(codex("codex-memory")), false);
+  assert.equal(isCodexInternal(codex("codex-memory", "editable")), false);
+  assert.equal(isCodexInternal(codex("agents-md", "editable")), false);
+  assert.equal(isCodexInternal({ kind: "claude-managed", agent: "claude", access: "read-only" }), false);
 });

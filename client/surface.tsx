@@ -1,7 +1,7 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import React, { useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
-import { PLAIN } from "../shared/plain";
+import { PLAIN, isCodexInternal } from "../shared/plain";
 import { AddNote } from "./add-note";
 import { QueryState, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
 import { ModeProvider, usePlain } from "./mode";
@@ -73,6 +73,8 @@ function MemoriesBody({ host }: PluginSurfaceProps) {
   const copy = (from: Array<{ sourceId: string; key?: string }>) => go({ tab: "transfer", from });
 
   const sources = inventory.data?.sources ?? [];
+  // Plain mode leaves Codex's own working files out of the lists.
+  const listed = plain ? sources.filter((source) => !isCodexInternal(source)) : sources;
   const accounts = inventory.data?.accounts ?? [];
   // A project's workspace, so Add a note from Projects starts in that project.
   const workspaceFor = (id: string | null) => {
@@ -108,7 +110,7 @@ function MemoriesBody({ host }: PluginSurfaceProps) {
         inventory.data ? (
           <SourcesTab
             hostId={hostId}
-            groups={tab === "user" ? userGroups(sources, accounts, plain) : projectGroups(sources, workspaces.data ?? [], plain)}
+            groups={tab === "user" ? userGroups(listed, accounts, plain) : projectGroups(listed, workspaces.data ?? [], plain)}
             selected={sourceId && sources.some((source) => source.id === sourceId && (tab === "projects") === (source.scope === "project")) ? sourceId : null}
             entryKey={entryKey}
             onSelect={(id) => {

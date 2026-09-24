@@ -11,7 +11,7 @@ export const PLAIN_GUIDES: PlainGuide[] = [
     steps: [
       "Open the Overview tab. Under \"What your agents remember\" you can see each agent and roughly how many words it reads when it starts.",
       "Your own instructions go with you into every project. You'll find them under Everywhere.",
-      "Each project can add its own. Open Projects and pick one: \"Claude's notes\" for a project are private to you, while \"Project instructions\" are shared with your team through git.",
+      "Each project can add its own. Open Projects and pick one: \"Claude's notes\" for a project are private to you, while everyone who works on the project sees its \"Project instructions\".",
       "\"Instructions for every agent on this computer\" apply to everyone who uses this Paseo computer.",
       "In a workspace, open the Memories panel to see what an agent started there reads, in order.",
     ],

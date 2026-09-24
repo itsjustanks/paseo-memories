@@ -11,7 +11,7 @@ const { resetDaemonCache } = await import("../server/daemon");
 const { notePreview, noteAdd } = await import("../server/add-note");
 const { instructionWrite } = await import("../server/instructions");
 const { readMemoriesSettings } = await import("../server/settings");
-const { planNote, noteFromSection, sectionReplacement, noteTitle } = await import("../shared/notes");
+const { COVERED_BY_PROJECT, planNote, noteFromSection, sectionReplacement, noteTitle } = await import("../shared/notes");
 const { splitSections, sectionText } = await import("../shared/markdown");
 const { memoriesSettings, MEMORIES_DEFAULTS } = await import("../shared/settings");
 
@@ -85,6 +85,23 @@ test("add a note: the override wins for Codex when it has text; disabled or miss
   assert.match(planNote("codex", project, full).skipped[0]!.reason, /already as long/);
 });
 
+test("add a note: all agents in a project where Claude already reads the project instructions get one note", () => {
+  const shared = `${HOME}/code/plain/AGENTS.md`;
+  const covered = {
+    claude: { items: [{ kind: "agents-md", scope: "project", path: shared, when: "launch", access: "editable" }, { kind: "claude-auto-memory", scope: "project", path: "/m/memory", when: "launch", access: "editable" }] },
+    codex: { items: [{ kind: "agents-md", scope: "project", path: shared, when: "launch", access: "editable" }] },
+  };
+  const plan = planNote("all", { kind: "project", name: "plain" }, covered);
+  assert.deepEqual(plan.targets.map((target) => target.path), [shared]);
+  assert.deepEqual(plan.skipped, [{ agent: "claude", reason: COVERED_BY_PROJECT, covered: true }]);
+  assert.equal(COVERED_BY_PROJECT, "Claude reads the project instructions too, so one note is enough.");
+  // Just Claude still gets its own note; and when Claude skips the file (it has its own), both get one.
+  assert.deepEqual(planNote("claude", { kind: "project", name: "plain" }, covered).targets.map((target) => target.path), ["/m/memory"]);
+  const skippedByClaude = { ...covered, claude: { items: covered.claude.items.map((item) => (item.kind === "agents-md" ? { ...item, when: "skipped" } : item)) } };
+  assert.equal(planNote("all", { kind: "project", name: "plain" }, skippedByClaude).targets.length, 2);
+  assert.equal(planNote("all", { kind: "everywhere" }, covered).skipped.some((entry) => entry.covered), false);
+});
+
 // ------------------------------------------------------------------ server: preview and save
 
 test("add a note everywhere: both user files get it, the rest of each file byte-identical, then it dedupes", async () => {
@@ -116,7 +133,7 @@ test("add a note everywhere: both user files get it, the rest of each file byte-
   assert.equal(readFileSync(claudeFile, "utf8").split("## Use the metric system").length - 1, 1, "not written twice");
 });
 
-test("add a note to one project: a private Claude note plus the project's Codex file, with the git warning", async () => {
+test("add a note to one project: a private Claude note plus the project's Codex file, with the shared-with-everyone warning", async () => {
   await fresh();
   const paseo = fakePaseo(sb).api;
   const override = join(sb.app, "AGENTS.override.md");
@@ -126,10 +143,10 @@ test("add a note to one project: a private Claude note plus the project's Codex 
   assert.equal(preview.project, "app");
   assert.deepEqual(preview.targets.map((target) => [target.agent, target.kind, target.path]), [["claude", "claude-memory", sb.appMemory], ["codex", "append", override]]);
   assert.equal(preview.targets[1]!.shared, true);
-  assert.deepEqual(preview.targets[1]!.warnings, ["This is shared with your team through git."]);
+  assert.deepEqual(preview.targets[1]!.warnings, ["Everyone who works on this project will see this note."]);
   const saved = await noteAdd(paseo, { text, who: "all", workspaceId: "ws-app", expected: preview.targets.map((target) => ({ id: target.id, stamp: target.stamp })) });
   assert.equal(saved.ok, true, saved.message);
-  assert.ok(saved.warnings.includes("This is shared with your team through git."));
+  assert.ok(saved.warnings.includes("Everyone who works on this project will see this note."));
   assert.ok(readFileSync(override, "utf8").startsWith(before));
   const created = readdirSync(sb.appMemory).find((name) => name.startsWith("invoices"));
   assert.ok(created, "a new Claude note file");
@@ -149,6 +166,18 @@ test("add a note to a project without an AGENTS.md creates it; Claude-only never
   const saved = await noteAdd(paseo, { text: "Use the staging database for demos.", who: "codex", workspaceId: "ws-long", expected: preview.targets.map((target) => ({ id: target.id, stamp: target.stamp })) });
   assert.equal(saved.ok, true, saved.message);
   assert.equal(readFileSync(agents, "utf8"), "## Use the staging database for demos\n\nUse the staging database for demos.\n");
+});
+
+test("add a note to a project whose instructions Claude already reads: one note, and the preview says why", async () => {
+  await fresh();
+  const paseo = fakePaseo(sb).api;
+  const shared = join(sb.plain, "AGENTS.md");
+  const preview = await notePreview(paseo, { text: "Demos use the staging account.", who: "all", workspaceId: "ws-plain" });
+  assert.deepEqual(preview.targets.map((target) => [target.agent, target.path]), [["codex", shared]]);
+  assert.deepEqual(preview.skipped, [{ agent: "claude", reason: "Claude reads the project instructions too, so one note is enough.", covered: true }]);
+  const saved = await noteAdd(paseo, { text: "Demos use the staging account.", who: "all", workspaceId: "ws-plain", expected: preview.targets.map((target) => ({ id: target.id, stamp: target.stamp })) });
+  assert.equal(saved.ok, true, saved.message);
+  assert.match(readFileSync(shared, "utf8"), /Demos use the staging account\.\n$/);
 });
 
 test("add a note follows the account Paseo's Claude provider uses (its own config folder)", async () => {

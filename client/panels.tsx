@@ -7,7 +7,7 @@ import { AGENT_LABELS } from "../shared/agents";
 import { agentPlan, workspacePlan, type LoadPlan } from "../shared/contracts";
 import { formatBytes, formatTokens } from "../shared/format";
 import { folderName, whenLabel } from "../shared/labels";
-import { PLAIN, plainAgent, plainPlanItemName, plainWhen, plainWords } from "../shared/plain";
+import { PLAIN, isCodexInternal, plainAgent, plainPlanItemName, plainWhen, plainWords } from "../shared/plain";
 import { KEY, QueryState } from "./data";
 import { ModeProvider, usePlain } from "./mode";
 import { canOpenMemories, openMemories } from "./navigate";
@@ -24,11 +24,11 @@ function openItem(item: LoadPlan["items"][number]) {
   return item.sourceId && canOpenMemories() ? { onPress: () => openMemories({ tab: item.scope === "user" || item.kind === "paseo-prompt" ? "user" : "projects", sourceId: item.sourceId! }) } : {};
 }
 
-/** Plain: what an agent reads, in order, by name, with about how many words; Codex's own working files are left out. */
+/** Plain: what an agent reads, in order, by name, with about how many words; Codex's own working files are left out (they show with technical details). */
 function PlainPlanCard({ plan, showMissing }: { plan: LoadPlan; showMissing?: boolean }) {
   const t = useTokens();
   const P = PLAIN.panel;
-  const shown = plan.items.filter((item) => (showMissing || item.when !== "missing") && item.kind !== "codex-generated" && item.kind !== "copilot-memory");
+  const shown = plan.items.filter((item) => (showMissing || item.when !== "missing") && !isCodexInternal(item) && item.kind !== "copilot-memory");
   return (
     <Section title={`${plainAgent(plan.agent)} · ${P.readAtStart(plainWords(plan.total.tokens))}`}>
       <Card padded={false}>

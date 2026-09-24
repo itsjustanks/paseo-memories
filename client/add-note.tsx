@@ -140,7 +140,7 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
                 </View>
               ))}
               {preview.skipped.map((entry) => (
-                <Text key={entry.agent} style={t.text.caption}>{`${A.skipped} ${plainAgent(entry.agent)}: ${entry.reason}`}</Text>
+                <Text key={entry.agent} style={t.text.caption}>{entry.covered ? entry.reason : `${A.skipped} ${plainAgent(entry.agent)}: ${entry.reason}`}</Text>
               ))}
             </View>
             <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.sm, padding: t.space.md }}>
