@@ -1,6 +1,8 @@
 import * as HostRN from "@getpaseo/plugin/client/react-native";
 import React from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { PLAIN } from "../shared/plain";
+import { usePlain } from "./mode";
 import { useTokens } from "./ui";
 
 /**
@@ -28,15 +30,17 @@ const HostIcon = (HostRN as unknown as { Icon?: React.ComponentType<{ name: stri
  */
 export function TabBar({ active, onSelect }: { active: SectionId; onSelect: (id: SectionId) => void }) {
   const t = useTokens();
+  const plain = usePlain();
   const iconsOnly = t.compact && Boolean(HostIcon);
   const items = TABS.map((tab) => {
     const selected = tab.id === active;
+    const label = plain ? PLAIN.tabLabels[tab.id] : tab.label;
     const color = selected ? t.color.accent : t.color.muted;
     return (
       <Pressable
         key={tab.id}
         accessibilityRole="tab"
-        accessibilityLabel={tab.label}
+        accessibilityLabel={label}
         accessibilityState={{ selected }}
         // react-native-web 0.21 ignores accessibilityState; say it the web way too.
         aria-selected={selected}
@@ -58,7 +62,7 @@ export function TabBar({ active, onSelect }: { active: SectionId; onSelect: (id:
         {HostIcon ? <HostIcon name={tab.icon} size={16} color={color} /> : null}
         {!iconsOnly || selected ? (
           <Text numberOfLines={1} style={{ color: selected ? t.color.accent : t.color.fg, fontSize: 13, fontWeight: selected ? "700" : "500" }}>
-            {tab.label}
+            {label}
           </Text>
         ) : null}
       </Pressable>
@@ -85,6 +89,7 @@ export function TabBar({ active, onSelect }: { active: SectionId; onSelect: (id:
 /** One line under the tabs saying what the section is for. */
 export function SectionHeading({ section }: { section: SectionId }) {
   const t = useTokens();
+  const plain = usePlain();
   const tab = TABS.find((entry) => entry.id === section)!;
-  return <Text style={[t.text.body, { color: t.color.muted, maxWidth: 760 }]}>{tab.heading}</Text>;
+  return <Text style={[t.text.body, { color: t.color.muted, maxWidth: 760 }]}>{plain ? PLAIN.tabs[section] : tab.heading}</Text>;
 }

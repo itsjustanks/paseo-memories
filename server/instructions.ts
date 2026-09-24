@@ -2,7 +2,7 @@ import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import fs from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { FileStamp, WriteResult } from "../shared/contracts";
-import { replaceSection, splitSections } from "../shared/markdown";
+import { removeSection, replaceSection, splitSections } from "../shared/markdown";
 import { hasNewMask } from "../shared/secrets";
 import { workspaceDirectory, type Paseo } from "./daemon";
 import { discover, forgetDiscovery } from "./discover";
@@ -50,7 +50,7 @@ async function newRuleTarget(paseo: Paseo | null, path: string, workspaceId?: st
 
 export async function instructionWrite(
   paseo: Paseo | null,
-  input: { path: string; workspaceId?: string; text: string; expected: FileStamp | null; sectionKey?: string },
+  input: { path: string; workspaceId?: string; text: string; expected: FileStamp | null; sectionKey?: string; removeSection?: boolean },
   /** Imports may carry masked values on purpose; the caller warns. */
   { allowMasked = false } = {},
 ): Promise<WriteResult> {
@@ -77,8 +77,8 @@ export async function instructionWrite(
     if (!current.exists) return refuse("That file does not exist yet, so it has no sections.");
     const section = splitSections(current.text).find((entry) => entry.key === input.sectionKey);
     if (!section) return refuse("That section is no longer in the file. Reload it; nothing was saved.");
-    text = replaceSection(current.text, section, input.text);
-  }
+    text = input.removeSection ? removeSection(current.text, section) : replaceSection(current.text, section, input.text);
+  } else if (input.removeSection) return refuse("Say which section to remove.");
   if (!allowMasked && hasNewMask(text, current.text)) return refuse("The text still has hidden (masked) values in it. Reveal them before editing, so they are not replaced by dots. Nothing was saved.");
   if (!current.exists) {
     const parent = dirname(path);

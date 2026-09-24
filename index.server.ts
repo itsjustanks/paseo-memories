@@ -1,6 +1,7 @@
 import type { PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
+import { handleNoteAdd, handleNotePreview } from "./server/add-note";
 import { handleClaudeCreate, handleClaudeDelete, handleClaudeUpdate } from "./server/claude-memory";
 import { handleCodexWrite } from "./server/codex-memory";
 import { handleInstructionWrite } from "./server/instructions";
@@ -26,6 +27,8 @@ import {
   importPreview,
   instructionWrite,
   inventory,
+  noteAdd,
+  notePreview,
   promptGet,
   promptSet,
   search,
@@ -91,6 +94,8 @@ export default function contribute(server: PluginServerContext) {
   handle(importPreview, handleImportPreview);
   handle(importApply, handleImportApply);
   handle(exportMemories, handleExport, { maskOutput: false });
+  handle(notePreview, handleNotePreview);
+  handle(noteAdd, handleNoteAdd);
 
   runStart();
   return runShutdown;

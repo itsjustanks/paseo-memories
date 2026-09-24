@@ -379,6 +379,8 @@ export const instructionWrite = defineRpc({
     expected: FileStampSchema.nullable(),
     /** Replace one section only (`Entry.key`); the rest of the file is kept. */
     sectionKey: z.string().optional(),
+    /** With `sectionKey`: take that section out entirely (`text` is ignored). */
+    removeSection: z.boolean().optional(),
   }),
   output: WriteResultSchema,
 });
@@ -554,4 +556,55 @@ export const exportMemories = defineRpc({
     masked: z.number(),
     units: z.array(z.object({ id: z.string(), title: z.string(), sourceId: z.string(), secrets: z.number(), masked: z.boolean() })),
   }),
+});
+
+// ------------------------------------------------------------------ Add a note (0.2.0)
+
+/** all | claude | codex */
+const NoteRequest = z.object({
+  text: z.string().min(1).max(20_000),
+  who: z.string(),
+  /** A Paseo workspace for "Only in <project>"; omitted for "Everywhere". */
+  workspaceId: z.string().optional(),
+});
+
+export const NoteTargetSchema = z.object({
+  /** The file or folder written; also what `note-add` checks the preview against. */
+  id: z.string(),
+  agent: z.string(),
+  /** claude-memory | append */
+  kind: z.string(),
+  label: z.string(),
+  path: z.string(),
+  creates: z.boolean().default(false),
+  shared: z.boolean().default(false),
+  private: z.boolean().default(false),
+  warnings: z.array(z.string()).default([]),
+  /** none | exact | near */
+  duplicate: z.string().default("none"),
+  duplicateOf: z.string().optional(),
+  /** Append targets: the file as the preview saw it (null when it does not exist yet). */
+  stamp: FileStampSchema.nullable().default(null),
+});
+export type NoteTarget = z.infer<typeof NoteTargetSchema>;
+
+export const notePreview = defineRpc({
+  name: "paseo-memories.note-preview",
+  input: NoteRequest,
+  output: z.object({
+    title: z.string(),
+    project: z.string().optional(),
+    targets: z.array(NoteTargetSchema),
+    skipped: z.array(z.object({ agent: z.string(), reason: z.string() })).default([]),
+    warnings: z.array(z.string()).default([]),
+  }),
+});
+
+export const noteAdd = defineRpc({
+  name: "paseo-memories.note-add",
+  input: NoteRequest.extend({
+    /** What the preview showed, per target: saves are refused when the places or the files changed since. */
+    expected: z.array(z.object({ id: z.string(), stamp: FileStampSchema.nullable() })),
+  }),
+  output: WriteResultSchema,
 });

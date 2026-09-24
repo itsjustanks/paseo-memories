@@ -4,7 +4,9 @@ import React from "react";
 import { Text, View } from "react-native";
 import { findings, inventory, sourceDetail, type WriteResult } from "../shared/contracts";
 import { plainError } from "../shared/errors";
+import { PLAIN, plainMessage } from "../shared/plain";
 import { clockTime } from "../shared/schedule";
+import { usePlain } from "./plain-context";
 import { ErrorText, Loading, Notice, StaleNote, Tag, useTokens } from "./ui";
 
 /**
@@ -77,6 +79,23 @@ export function QueryState({ query, what, empty }: { query: UseQueryResult<unkno
 /** What a save did, per file: backup, read-back, errors. */
 export function WriteReportView({ result }: { result: WriteResult }) {
   const t = useTokens();
+  const plain = usePlain();
+  if (plain) {
+    // The outcome in plain words; what was written where stays under technical details.
+    return (
+      <Notice tone={result.ok ? "ok" : result.needsConfirm ? "attention" : "error"}>
+        <View style={{ gap: t.space.xs }}>
+          <Text style={t.text.bodyStrong}>{plainMessage(result.message)}</Text>
+          {[...new Set(result.warnings.map(plainMessage))].map((warning) => (
+            <Text key={warning} style={t.text.caption}>
+              {warning}
+            </Text>
+          ))}
+          {result.ok && result.reports.some((report) => report.backupPath) ? <Text style={t.text.caption}>{PLAIN.backupNote}</Text> : null}
+        </View>
+      </Notice>
+    );
+  }
   return (
     <Notice tone={result.ok ? "ok" : result.needsConfirm ? "attention" : "error"}>
       <View style={{ gap: t.space.xs }}>

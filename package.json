@@ -2,7 +2,7 @@
   "name": "paseo-memories",
   "private": true,
   "type": "module",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",

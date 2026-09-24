@@ -2,6 +2,17 @@
 
 A Paseo plugin that shows, edits, imports, exports and tidies what your coding agents remember on a host: Claude Code, Codex, Paseo's own appended prompt, OpenCode, pi, Oh My Pi and Copilot CLI. It works at user and project level, per agent and per account. The spec is `docs/SPEC.md`.
 
+## For everyone
+
+Memories shows what your AI agents remember and follow, in plain words, and lets you change it.
+
+- **Add a note** (on the Overview) teaches your agents something once: write it, choose who follows it and where, check it, save it. New agents follow it straight away.
+- **Everywhere** holds the notes that go with you into every project; **Projects** holds the notes for one project. Open one to change or remove a note.
+- **Worth a look** on the Overview points out notes with passwords in them, notes that say the same thing twice, and notes that mention things that are gone.
+- **Guide** has short how-tos, including moving your notes to another Paseo computer.
+
+Nothing technical shows unless you ask for it: turn on **Show technical details** in Settings → Memories for file names, paths, sizes and whole-file editing. The rest of this page is the technical side.
+
 ## Install
 
 Needs Paseo 0.8.0 or later. On the daemon host:
@@ -51,7 +62,7 @@ Reads use async fs only, cache by file stat, and start no process. The code-name
 
 ## Settings
 
-Under **Settings → Memories** (host scope, `$PASEO_HOME/plugin-settings/paseo-memories/memories.json`): show other agents, check for stale mentions, hide secrets, allow Codex memory edits, backups kept per file.
+Under **Settings → Memories** (host scope, `$PASEO_HOME/plugin-settings/paseo-memories/memories.json`): show technical details (off by default: plain names and note cards), show other agents, check for stale mentions, hide secrets, allow Codex memory edits, backups kept per file.
 
 ## Development and checks
 
@@ -63,7 +74,7 @@ npm run smoke       # read-only inventory, findings and export of your real HOME
 npm run preview:ui  # fixture preview at 127.0.0.1:43299 (PREVIEW_PORT to change)
 ```
 
-Preview parameters: `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`.
+Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`.
 
 Client bundle check (Paseo's esbuild; no `node:` import may be reachable from `client/`):
 

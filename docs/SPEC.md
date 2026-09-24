@@ -79,3 +79,9 @@ No blocking calls on the RPC path (async fs only; timeouts on daemon calls); pan
 - Never write to the real HOME's memory files, CLAUDE.md, AGENTS.md or Paseo config. Tests use a sandbox HOME fixture copied into a temp dir; HOME and every env var are set before importing server code.
 - A read-only smoke script against the real HOME may print counts/sizes only, never memory text.
 - No GitHub repo, no push, no `paseo plugin install/add` anywhere (including the Mac) without the user's OK.
+
+## 0.2.0: plain mode (added 2026-09-24)
+- Setting `technicalDetails` (default `false`, added to the v1 document). Off: plain names (`shared/plain.ts`), "about N words" (≈tokens × 0.75), note cards for instruction files, plain Claude-note fields, task guides (`shared/guides.ts`), plain panels. On: the 0.1 view unchanged.
+- Note cards edit one section through `instruction-write` `sectionKey` (`removeSection` takes one out); additions go through the import path. The whole-file editor stays, folded.
+- "Add a note" (`note-preview`, `note-add`): `planNote` in `shared/notes.ts` maps Who × Where to files from each agent's load plan for the provider Paseo starts it with. Everywhere: user CLAUDE.md and the user AGENTS.md Codex reads (override when non-empty). One workspace: a new Claude auto-memory note for that project, and the project AGENTS.md Codex reads (created when missing; git warning). Never Codex generated memory, never the Paseo prompt. Saves use import-apply per target, skip exact duplicates, and refuse if the targets or files changed since the preview.
+- A test fails when a plain string contains CLAUDE.md, AGENTS.md, MEMORY.md, frontmatter, token, slug, scope, sqlite, consolidation, markdown, repo or config.

@@ -9,6 +9,8 @@ import {
   claudeMemoryUpdate,
   codexMemoryWrite,
   entryBody,
+  importApply,
+  importPreview,
   instructionWrite,
   promptGet,
   promptSet,
@@ -20,9 +22,14 @@ import {
 import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { MEMORY_TYPES, folderName, kindLabel, scopeLabel } from "../shared/labels";
+import { sectionText, splitSections } from "../shared/markdown";
+import { noteFromSection, sectionReplacement } from "../shared/notes";
+import { PLAIN, PLAIN_MEMORY_TYPES, plainAgents, plainDetailWarning, plainMemoryType, plainMessage, plainReadOnly, plainWords } from "../shared/plain";
+import { MASK_FILL } from "../shared/secrets";
 import { KEY, QueryState, WriteReportView, useInvalidate, useSourceDetail } from "./data";
 import { edit, isDirty, keepEditing, receive, reload, type Draft } from "./draft";
-import { Button, Card, CodeBlock, ConfirmButton, Facts, Field, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
+import { usePlain, useSourceNames } from "./mode";
+import { Button, Card, CodeBlock, ConfirmButton, Disclosure, Facts, Field, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
 
 /**
  * One source: what it is, who reads it, and a viewer or editor. Read-only
@@ -87,7 +94,21 @@ function Notes({ source, warnings, codex }: { source: Source; warnings: string[]
 
 function RevealBar({ secrets, revealed, onReveal }: { secrets: number; revealed: boolean; onReveal: (value: boolean) => void }) {
   const t = useTokens();
+  const plain = usePlain();
   if (!secrets) return null;
+  if (plain) {
+    return (
+      <Notice tone="attention">
+        <View style={{ gap: t.space.sm }}>
+          <Text style={t.text.body}>{revealed ? PLAIN.secretShown(secrets) : PLAIN.secretHidden(secrets)}</Text>
+          {revealed ? null : <Text style={t.text.caption}>{PLAIN.secretWarning}</Text>}
+          <View style={{ flexDirection: "row" }}>
+            <Button label={revealed ? "Hide" : "Show"} variant="ghost" onPress={() => onReveal(!revealed)} />
+          </View>
+        </View>
+      </Notice>
+    );
+  }
   return (
     <Notice tone="attention">
       <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
@@ -103,10 +124,11 @@ function RevealBar({ secrets, revealed, onReveal }: { secrets: number; revealed:
 /** The file changed on disk under an unsaved draft. */
 function ChangedOnDisk({ onReload, onKeep }: { onReload: () => void; onKeep: () => void }) {
   const t = useTokens();
+  const plain = usePlain();
   return (
     <Notice tone="attention">
       <View style={{ gap: t.space.sm }}>
-        <Text style={t.text.body}>Changed on disk since you opened it. Reload to see the new version (your changes here are dropped), or keep editing; saving will then ask you to reload first.</Text>
+        <Text style={t.text.body}>{plain ? PLAIN.changedElsewhere : "Changed on disk since you opened it. Reload to see the new version (your changes here are dropped), or keep editing; saving will then ask you to reload first."}</Text>
         <View style={{ flexDirection: "row", gap: t.space.sm }}>
           <Button label="Reload" variant="primary" onPress={onReload} />
           <Button label="Keep editing" variant="ghost" onPress={onKeep} />
@@ -122,6 +144,8 @@ type MemoryForm = { name: string; description: string; type: string; body: strin
 
 function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }: { hostId: string; source: Source; entryKey: string; workspaceId?: string; onDone: (key: string | null) => void; onCopy: Props["onCopy"] }) {
   const t = useTokens();
+  const plain = usePlain();
+  const M = PLAIN.memory;
   const creating = entryKey === "__new__";
   const [revealed, setRevealed] = useState(false);
   const read = useRpc(entryBody);
@@ -188,19 +212,35 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
           });
         });
   if (!creating && !body.data) return <QueryState query={body} what="this memory" />;
+  const renameRow = (
+    <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-end", flexWrap: "wrap" }}>
+      <View style={{ flexGrow: 1, minWidth: 200 }}>
+        <Field label={M.fileName} value={fileName} onChangeText={setFileName} />
+      </View>
+      <Button label={M.rename} onPress={() => void run(() => update({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp!, rename: fileName }), (outcome) => outcome.ok && onDone(fileName))} disabled={!fileName || fileName === entryKey} />
+    </View>
+  );
   return (
     <Card>
       <View style={{ gap: t.space.md }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: t.space.sm }}>
-          <Text style={[t.text.heading, { flexShrink: 1 }]}>{creating ? "New memory" : form.name || entryKey}</Text>
-          <Button label="Back to the list" variant="ghost" onPress={() => onDone(null)} />
+          <Text style={[t.text.heading, { flexShrink: 1 }]}>{creating ? (plain ? M.newTitle : "New memory") : form.name || entryKey}</Text>
+          <Button label={M.back} variant="ghost" onPress={() => onDone(null)} />
         </View>
         {!creating ? <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} /> : null}
         {draft?.newer ? <ChangedOnDisk onReload={() => setDraft(reload(draft))} onKeep={() => setDraft(keepEditing(draft))} /> : null}
         {locked || !editable ? (
           <View style={{ gap: t.space.sm }}>
-            <Facts items={[{ value: form.name }, { value: form.type }, { value: form.description }]} />
-            <CodeBlock copy={false}>{form.body}</CodeBlock>
+            <Facts items={[{ value: form.name }, { value: plain ? plainMemoryType(form.type) : form.type }, { value: form.description }]} />
+            {plain ? <Text style={t.text.body}>{form.body.trim()}</Text> : <CodeBlock copy={false}>{form.body}</CodeBlock>}
+          </View>
+        ) : plain ? (
+          <View style={{ gap: t.space.sm }}>
+            <Field label={M.title} value={form.name} onChangeText={(name) => setForm({ ...form, name })} placeholder={M.titlePlaceholder} />
+            <Field label={M.summary} value={form.description} onChangeText={(description) => setForm({ ...form, description })} hint={M.summaryHint} />
+            <Text style={t.text.label}>{M.kind}</Text>
+            <Segmented options={MEMORY_TYPES.map((value) => ({ value, label: PLAIN_MEMORY_TYPES[value]! }))} value={(MEMORY_TYPES as readonly string[]).includes(form.type) ? (form.type as (typeof MEMORY_TYPES)[number]) : "project"} onChange={(type) => setForm({ ...form, type })} />
+            <Field label={M.body} value={form.body} onChangeText={(text) => setForm({ ...form, body: text })} multiline minHeight={220} />
           </View>
         ) : (
           <View style={{ gap: t.space.sm }}>
@@ -213,19 +253,12 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
         )}
         {editable && !locked ? (
           <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap", alignItems: "center" }}>
-            <Button label={creating ? "Save memory" : "Save"} variant="primary" onPress={() => void save()} loading={busy} disabled={!form.name.trim()} />
-            {!creating ? <Button label="Copy or move…" variant="ghost" onPress={() => onCopy([{ sourceId: source.id, key: entryKey }])} /> : null}
-            {!creating ? <ConfirmButton label="Delete" confirmLabel="Delete this memory and its MEMORY.md line" onConfirm={() => void run(() => remove({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp! }), () => onDone(null))} /> : null}
+            <Button label={creating ? (plain ? M.saveNew : "Save memory") : "Save"} variant="primary" onPress={() => void save()} loading={busy} disabled={!form.name.trim()} />
+            {!creating ? <Button label={M.copy} variant="ghost" onPress={() => onCopy([{ sourceId: source.id, key: entryKey }])} /> : null}
+            {!creating ? <ConfirmButton label={plain ? M.delete : "Delete"} confirmLabel={plain ? M.deleteConfirm : "Delete this memory and its MEMORY.md line"} onConfirm={() => void run(() => remove({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp! }), () => onDone(null))} /> : null}
           </View>
         ) : null}
-        {editable && !locked && !creating ? (
-          <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-end", flexWrap: "wrap" }}>
-            <View style={{ flexGrow: 1, minWidth: 200 }}>
-              <Field label="File name" value={fileName} onChangeText={setFileName} />
-            </View>
-            <Button label="Rename" onPress={() => void run(() => update({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp!, rename: fileName }), (outcome) => outcome.ok && onDone(fileName))} disabled={!fileName || fileName === entryKey} />
-          </View>
-        ) : null}
+        {editable && !locked && !creating ? (plain ? <Disclosure title={PLAIN.technical}>{renameRow}</Disclosure> : renameRow) : null}
         {result ? <WriteReportView result={result} /> : null}
       </View>
     </Card>
@@ -234,10 +267,12 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
 
 function MemoryList({ entries, index, onOpen, editable }: { entries: Entry[]; index?: { missingFiles: string[]; unindexedFiles: string[]; truncated: boolean; loadedLines: number }; onOpen: (key: string) => void; editable: boolean }) {
   const t = useTokens();
+  const plain = usePlain();
+  const M = PLAIN.memory;
   return (
-    <Section title={plural(entries.length, "memory", "memories")} trailing={editable ? <Button label="New memory" onPress={() => onOpen("__new__")} /> : null}>
+    <Section title={plain ? M.heading(entries.length) : plural(entries.length, "memory", "memories")} trailing={editable ? <Button label={plain ? M.new : "New memory"} onPress={() => onOpen("__new__")} /> : null}>
       {entries.length === 0 ? (
-        <Text style={t.text.caption}>No memory files in this folder yet.</Text>
+        <Text style={t.text.caption}>{plain ? PLAIN.notes.none : "No memory files in this folder yet."}</Text>
       ) : (
         <Card padded={false}>
           {entries.map((entry, i) => (
@@ -245,14 +280,21 @@ function MemoryList({ entries, index, onOpen, editable }: { entries: Entry[]; in
               key={entry.key}
               first={i === 0}
               title={entry.title}
-              subtitle={entry.description ?? entry.key}
+              subtitle={entry.description ?? (plain ? undefined : entry.key)}
               onPress={() => onOpen(entry.key)}
-              meta={<Facts items={[entry.type ? { value: entry.type } : null, { value: formatBytes(entry.bytes) }, entry.indexed ? null : { value: "not in MEMORY.md", tone: "attention" }, entry.secrets ? { value: "looks like a secret", tone: "error" } : null]} />}
+              meta={
+                plain ? (
+                  <Facts items={[{ value: plainMemoryType(entry.type) }, entry.indexed ? null : { value: M.notListed, tone: "attention" }, entry.secrets ? { value: M.secret, tone: "error" } : null]} />
+                ) : (
+                  <Facts items={[entry.type ? { value: entry.type } : null, { value: formatBytes(entry.bytes) }, entry.indexed ? null : { value: "not in MEMORY.md", tone: "attention" }, entry.secrets ? { value: "looks like a secret", tone: "error" } : null]} />
+                )
+              }
             />
           ))}
         </Card>
       )}
-      {index?.missingFiles.length ? <Text style={t.text.caption}>{`MEMORY.md lists ${index.missingFiles.join(", ")}, which ${index.missingFiles.length === 1 ? "does" : "do"} not exist.`}</Text> : null}
+      {index?.missingFiles.length && plain ? <Text style={t.text.caption}>{PLAIN.missingNotes}</Text> : null}
+      {index?.missingFiles.length && !plain ? <Text style={t.text.caption}>{`MEMORY.md lists ${index.missingFiles.join(", ")}, which ${index.missingFiles.length === 1 ? "does" : "do"} not exist.`}</Text> : null}
     </Section>
   );
 }
@@ -261,6 +303,7 @@ function MemoryList({ entries, index, onOpen, editable }: { entries: Entry[]; in
 
 function FileEditor({ hostId, source, workspaceId, stamp, codexLock }: { hostId: string; source: Source; workspaceId?: string; stamp?: FileStamp; codexLock?: { lock: string; lockReason: string } }) {
   const t = useTokens();
+  const plain = usePlain();
   const [revealed, setRevealed] = useState(false);
   const read = useRpc(entryBody);
   const body = useQuery({
@@ -315,13 +358,13 @@ function FileEditor({ hostId, source, workspaceId, stamp, codexLock }: { hostId:
         ) : (
           <CodeBlock copy={false}>{text || "(empty)"}</CodeBlock>
         )}
-        {source.kind === "codex-memory" && source.path.endsWith("memory_summary.md") ? <Text style={t.text.caption}>Keep "v1" as the first line, or Codex rebuilds this file from scratch.</Text> : null}
+        {source.kind === "codex-memory" && source.path.endsWith("memory_summary.md") ? <Text style={t.text.caption}>{plain ? PLAIN.codexKeepFirstLine : 'Keep "v1" as the first line, or Codex rebuilds this file from scratch.'}</Text> : null}
         {editable && !locked ? (
           <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
             <Button label={source.exists ? "Save" : "Create file"} variant="primary" onPress={() => void save()} loading={busy} disabled={codexBlocked || (source.exists && !isDirty(draft))} />
           </View>
         ) : null}
-        {codexBlocked ? <Text style={t.text.caption}>{`Saving is off for now: ${codexLock!.lockReason}`}</Text> : null}
+        {codexBlocked ? <Text style={t.text.caption}>{plain ? (codexLock!.lock === "locked" ? PLAIN.codexBusy : PLAIN.codexUnsure) : `Saving is off for now: ${codexLock!.lockReason}`}</Text> : null}
         {result ? <WriteReportView result={result} /> : null}
         {result?.needsConfirm ? (
           <View style={{ flexDirection: "row" }}>
@@ -335,6 +378,7 @@ function FileEditor({ hostId, source, workspaceId, stamp, codexLock }: { hostId:
 
 function PromptEditor({ hostId }: { hostId: string }) {
   const t = useTokens();
+  const plain = usePlain();
   const get = useRpc(promptGet);
   const set = useRpc(promptSet);
   const invalidate = useInvalidate(hostId);
@@ -348,14 +392,14 @@ function PromptEditor({ hostId }: { hostId: string }) {
   }, [query.data]);
   const text = draft?.value ?? "";
   const setText = (value: string) => setDraft((current) => (current ? edit(current, value) : current));
-  if (!query.data) return <QueryState query={query} what="Paseo's appended prompt" />;
+  if (!query.data) return <QueryState query={query} what={plain ? "these instructions" : "Paseo's appended prompt"} />;
   return (
     <Card>
       <View style={{ gap: t.space.md }}>
-        <Text style={t.text.caption}>{query.data.note}</Text>
+        <Text style={t.text.caption}>{plain ? PLAIN.prompt.note : query.data.note}</Text>
         <RevealBar secrets={query.data.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
         {draft?.newer ? <ChangedOnDisk onReload={() => setDraft(reload(draft))} onKeep={() => setDraft(keepEditing(draft))} /> : null}
-        {query.data.masked ? <CodeBlock copy={false}>{text}</CodeBlock> : <Field value={text} onChangeText={setText} multiline mono minHeight={200} placeholder="Nothing is appended today." />}
+        {query.data.masked ? <CodeBlock copy={false}>{text}</CodeBlock> : <Field value={text} onChangeText={setText} multiline mono={!plain} minHeight={200} placeholder={plain ? PLAIN.prompt.placeholder : "Nothing is appended today."} />}
         <View style={{ flexDirection: "row" }}>
           <Button
             label="Save"
@@ -384,18 +428,258 @@ function PromptEditor({ hostId }: { hostId: string }) {
   );
 }
 
+// ------------------------------------------------------------------ plain: notes instead of files
+
+/** Kinds whose sections can be changed one at a time through the instruction-write path. */
+const NOTE_KINDS = new Set(["claude-md", "claude-local", "claude-rule", "agents-md", "opencode-md", "pi-md", "omp-md", "copilot-md"]);
+
+function PlainHeader({ source, name }: { source: Source; name: string }) {
+  const t = useTokens();
+  return (
+    <Card>
+      <View style={{ gap: t.space.xs }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
+          <Text style={[t.text.heading, { flexShrink: 1 }]}>{name}</Text>
+          {source.access === "editable" ? null : <Tag label={source.access === "online" ? "Kept online" : "Can't be changed here"} tone="neutral" />}
+          {source.exists ? null : <Tag label="Not written yet" tone="attention" />}
+        </View>
+        <Facts
+          items={[
+            source.exists && !source.isDirectory ? { value: plainWords(Math.ceil(source.bytes / 4)) } : null,
+            source.loaded.tokens ? { value: PLAIN.overview.readAtStart(plainWords(source.loaded.tokens)) } : { value: "Not read at the start" },
+            source.readBy.length ? { value: `Followed by ${plainAgents(source.readBy)}` } : null,
+          ]}
+        />
+        {source.path.startsWith("paseo:") || source.path.startsWith("copilot:") ? null : (
+          <Disclosure title={PLAIN.whereSaved}>
+            <PathText path={source.path} full />
+          </Disclosure>
+        )}
+      </View>
+    </Card>
+  );
+}
+
+function PlainNotices({ source, warnings, codex }: { source: Source; warnings: string[]; codex?: { lock: string; lockReason: string; pending?: string } }) {
+  const t = useTokens();
+  const plainWarnings = [...new Set(warnings.map(plainDetailWarning).filter((line): line is string => Boolean(line)))];
+  return (
+    <View style={{ gap: t.space.sm }}>
+      {source.access !== "editable" ? <Notice tone="neutral">{plainReadOnly(source)}</Notice> : null}
+      {source.kind === "codex-memory" ? <Notice tone="attention">{PLAIN.codexRewrites}</Notice> : null}
+      {codex?.pending ? <Notice tone="attention">{PLAIN.codexPending}</Notice> : null}
+      {codex && codex.lock !== "free" ? <Text style={t.text.caption}>{codex.lock === "locked" ? PLAIN.codexBusy : PLAIN.codexUnsure}</Text> : null}
+      {source.versionControlled ? <Notice tone="attention">{PLAIN.shared}</Notice> : null}
+      {plainWarnings.map((warning) => (
+        <Text key={warning} style={t.text.caption}>
+          {warning}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+function NoteCard({
+  note,
+  editable,
+  hidden,
+  busy,
+  onSave,
+  onRemove,
+  onCopy,
+}: {
+  note: ReturnType<typeof noteFromSection>;
+  editable: boolean;
+  hidden: boolean;
+  busy: boolean;
+  onSave: (next: { title: string; body: string }) => Promise<boolean>;
+  onRemove: () => void;
+  onCopy?: () => void;
+}) {
+  const t = useTokens();
+  const N = PLAIN.notes;
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(note.title);
+  const [body, setBody] = useState(note.body);
+  if (editing) {
+    return (
+      <Card>
+        <View style={{ gap: t.space.sm }}>
+          {note.headless ? null : <Field label={N.titleLabel} value={title} onChangeText={setTitle} />}
+          <Field label={N.textLabel} value={body} onChangeText={setBody} multiline minHeight={140} />
+          <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
+            <Button
+              label={N.save}
+              variant="primary"
+              loading={busy}
+              disabled={(!note.headless && !title.trim()) || (title === note.title && body === note.body)}
+              onPress={() => void onSave({ title, body }).then((ok) => ok && setEditing(false))}
+            />
+            <Button
+              label={N.cancel}
+              variant="ghost"
+              onPress={() => {
+                setTitle(note.title);
+                setBody(note.body);
+                setEditing(false);
+              }}
+            />
+          </View>
+        </View>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <View style={{ gap: t.space.sm }}>
+        <Text style={t.text.bodyStrong}>{note.headless ? N.topTitle : note.title}</Text>
+        {note.body ? <Text style={t.text.body}>{note.body}</Text> : <Text style={t.text.caption}>{N.emptyBody}</Text>}
+        {editable ? (
+          <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap", alignItems: "center" }}>
+            <Button label={N.change} variant="ghost" onPress={() => setEditing(true)} disabled={hidden} />
+            <ConfirmButton label={N.remove} confirmLabel={N.removeConfirm} onConfirm={onRemove} />
+            {onCopy ? <Button label={N.copy} variant="ghost" onPress={onCopy} /> : null}
+          </View>
+        ) : null}
+      </View>
+    </Card>
+  );
+}
+
+function AddToFile({ busy, onAdd }: { busy: boolean; onAdd: (note: { title: string; body: string }) => Promise<boolean> }) {
+  const t = useTokens();
+  const N = PLAIN.notes;
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  if (!open) {
+    return (
+      <View style={{ flexDirection: "row" }}>
+        <Button label={N.add} onPress={() => setOpen(true)} />
+      </View>
+    );
+  }
+  return (
+    <Card>
+      <View style={{ gap: t.space.sm }}>
+        <Text style={t.text.bodyStrong}>{N.add}</Text>
+        <Field label={N.titleLabel} value={title} onChangeText={setTitle} placeholder="Invoices" />
+        <Field label={N.textLabel} value={body} onChangeText={setBody} multiline minHeight={120} placeholder="Invoices go out on the 1st of each month." />
+        <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
+          <Button
+            label={N.save}
+            variant="primary"
+            loading={busy}
+            disabled={!title.trim() || !body.trim()}
+            onPress={() =>
+              void onAdd({ title: title.trim(), body }).then((ok) => {
+                if (!ok) return;
+                setTitle("");
+                setBody("");
+                setOpen(false);
+              })
+            }
+          />
+          <Button label={N.cancel} variant="ghost" onPress={() => setOpen(false)} />
+        </View>
+      </View>
+    </Card>
+  );
+}
+
+/**
+ * An instruction file as note cards: each heading is a note with Change,
+ * Remove and Copy to another agent, and "Add a note" at the end. Changes go
+ * one section at a time (`sectionKey`), additions through the import path,
+ * so the rest of the file stays as it was.
+ */
+function NoteCards({ hostId, source, workspaceId, onCopy }: { hostId: string; source: Source; workspaceId?: string; onCopy: Props["onCopy"] }) {
+  const t = useTokens();
+  const [revealed, setRevealed] = useState(false);
+  const read = useRpc(entryBody);
+  const write = useRpc(instructionWrite);
+  const preview = useRpc(importPreview);
+  const apply = useRpc(importApply);
+  const invalidate = useInvalidate(hostId);
+  const body = useQuery({
+    queryKey: [KEY, hostId, "entry", source.id, "", revealed],
+    queryFn: () => read({ sourceId: source.id, reveal: revealed, ...(workspaceId ? { workspaceId } : {}) }),
+    enabled: source.exists,
+    retry: 1,
+    refetchOnMount: "always",
+  });
+  const [result, setResult] = useState<WriteResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const editable = source.access === "editable" && NOTE_KINDS.has(source.kind);
+  const where = workspaceId ? { workspaceId } : {};
+  const run = async (action: () => Promise<WriteResult>): Promise<boolean> => {
+    setBusy(true);
+    try {
+      const outcome = await action();
+      setResult(outcome);
+      if (outcome.ok) await Promise.all([invalidate(), body.refetch()]);
+      return outcome.ok;
+    } catch (error) {
+      setResult({ ok: false, message: plainError(error), reports: [], warnings: [] });
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (source.exists && !body.data) return <QueryState query={body} what="these notes" />;
+  const text = body.data?.body ?? "";
+  const stamp = body.data?.stamp;
+  const sections = splitSections(text);
+  const add = (note: { title: string; body: string }) =>
+    run(async () => {
+      const item = { id: "new", title: note.title, body: note.body, masked: false, format: "note", warnings: [] };
+      const target = { kind: "append", path: source.path, ...where };
+      const seen = await preview({ items: [item], target });
+      return apply({ items: [item], target, selected: ["new"], expected: seen.target.stamp });
+    });
+  return (
+    <View style={{ gap: t.space.md }}>
+      <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
+      {!editable && sections.length ? <Text style={t.text.caption}>{PLAIN.notes.readOnly}</Text> : null}
+      {sections.length === 0 ? <Text style={t.text.caption}>{source.exists && text.trim() ? text : PLAIN.notes.none}</Text> : null}
+      {sections.map((section) => {
+        const original = sectionText(text, section);
+        const headless = section.key === "0:";
+        const note = noteFromSection(original, headless);
+        return (
+          <NoteCard
+            key={`${section.key}:${original.length}`}
+            note={note}
+            editable={editable}
+            hidden={original.includes(MASK_FILL)}
+            busy={busy}
+            onSave={(next) => run(() => write({ path: source.path, ...where, text: sectionReplacement(original, next, headless), expected: stamp!, sectionKey: section.key }))}
+            onRemove={() => void run(() => write({ path: source.path, ...where, text: "", expected: stamp!, sectionKey: section.key, removeSection: true }))}
+            {...(headless ? {} : { onCopy: () => onCopy([{ sourceId: source.id, key: section.key }]) })}
+          />
+        );
+      })}
+      {editable ? <AddToFile busy={busy} onAdd={add} /> : null}
+      {result ? <WriteReportView result={result} /> : null}
+    </View>
+  );
+}
+
 // ------------------------------------------------------------------ the pane
 
 export function SourceDetail({ hostId, sourceId, workspaceId, entryKey, onOpenEntry, onCopy }: Props) {
   const t = useTokens();
+  const plain = usePlain();
+  const names = useSourceNames(hostId);
   const detail = useSourceDetail(hostId, sourceId, workspaceId);
-  if (!detail.data) return <QueryState query={detail} what="this source" />;
+  if (!detail.data) return <QueryState query={detail} what={plain ? "these notes" : "this source"} />;
   const { source, entries, index, warnings, codex, stamp } = detail.data;
+  const fileEditor = <FileEditor hostId={hostId} source={source} {...(workspaceId ? { workspaceId } : {})} {...(stamp ? { stamp } : {})} {...(codex ? { codexLock: codex } : {})} />;
   return (
     <View style={{ gap: t.space.md }}>
-      <QueryState query={detail} what="this source" />
-      <SourceHeader source={source} />
-      <Notes source={source} warnings={warnings} {...(codex ? { codex } : {})} />
+      <QueryState query={detail} what={plain ? "these notes" : "this source"} />
+      {plain ? <PlainHeader source={source} name={names.name(source)} /> : <SourceHeader source={source} />}
+      {plain ? <PlainNotices source={source} warnings={warnings} {...(codex ? { codex } : {})} /> : <Notes source={source} warnings={warnings} {...(codex ? { codex } : {})} />}
       {source.kind === "claude-auto-memory" ? (
         entryKey ? (
           <MemoryEditor key={entryKey} hostId={hostId} source={source} entryKey={entryKey} {...(workspaceId ? { workspaceId } : {})} onDone={onOpenEntry} onCopy={onCopy} />
@@ -406,11 +690,16 @@ export function SourceDetail({ hostId, sourceId, workspaceId, entryKey, onOpenEn
         <PromptEditor hostId={hostId} />
       ) : source.isDirectory ? (
         <Card padded={false}>
-          {entries.length ? entries.map((entry, i) => <Row key={entry.key} first={i === 0} title={entry.title} meta={<Facts items={[{ value: formatBytes(entry.bytes) }]} />} />) : <Loading label="Empty folder" />}
+          {entries.length ? entries.map((entry, i) => <Row key={entry.key} first={i === 0} title={entry.title} meta={<Facts items={[{ value: plain ? plainWords(Math.ceil(entry.bytes / 4)) : formatBytes(entry.bytes) }]} />} />) : <Loading label="Empty folder" />}
         </Card>
-      ) : source.access === "online" ? null : (
+      ) : source.access === "online" ? null : plain ? (
         <>
-          <FileEditor hostId={hostId} source={source} {...(workspaceId ? { workspaceId } : {})} {...(stamp ? { stamp } : {})} {...(codex ? { codexLock: codex } : {})} />
+          <NoteCards hostId={hostId} source={source} {...(workspaceId ? { workspaceId } : {})} onCopy={onCopy} />
+          {source.exists ? <Disclosure title={PLAIN.wholeFile}>{fileEditor}</Disclosure> : null}
+        </>
+      ) : (
+        <>
+          {fileEditor}
           {source.exists && entries.length > 1 && source.access === "editable" ? (
             <View style={{ flexDirection: "row" }}>
               <Button label="Copy a section to another agent…" variant="ghost" onPress={() => onCopy(entries.map((entry) => ({ sourceId: source.id, key: entry.key })))} />
@@ -418,7 +707,7 @@ export function SourceDetail({ hostId, sourceId, workspaceId, entryKey, onOpenEn
           ) : null}
         </>
       )}
-      {!source.exists && source.kind === "claude-auto-memory" ? <Text style={t.text.caption}>This project has no Claude memory yet; the first memory you save creates the folder.</Text> : null}
+      {!source.exists && source.kind === "claude-auto-memory" ? <Text style={t.text.caption}>{plain ? PLAIN.memory.firstNote : "This project has no Claude memory yet; the first memory you save creates the folder."}</Text> : null}
     </View>
   );
 }

@@ -26,6 +26,7 @@ export function MemoriesSettingsScreen({ theme }: PluginSurfaceProps) {
   return (
     <SettingsSection title="Memories">
       <SettingsCard>
+        <SettingsSwitch label="Show technical details" hint="Off: plain names and notes. On: file names, paths, sizes and the whole-file editors" value={values.technicalDetails} disabled={settings.saving} onValueChange={(technicalDetails) => save({ technicalDetails })} />
         <SettingsSwitch label="Show other agents" hint="OpenCode, pi, Oh My Pi and Copilot files next to Claude and Codex" value={values.showOtherAgents} disabled={settings.saving} onValueChange={(showOtherAgents) => save({ showOtherAgents })} />
         <SettingsSwitch label="Check for stale mentions" hint="Paths and code names a memory mentions that no longer exist (code names are checked in the background while the app is open)" value={values.staleChecks} disabled={settings.saving} onValueChange={(staleChecks) => save({ staleChecks })} />
         <SettingsSwitch label="Hide secrets" hint="Token-looking values stay hidden until you reveal them" value={values.maskSecrets} disabled={settings.saving} onValueChange={(maskSecrets) => save({ maskSecrets })} />

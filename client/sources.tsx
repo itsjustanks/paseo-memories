@@ -4,7 +4,9 @@ import { AGENT_LABELS } from "../shared/agents";
 import type { Account, Source } from "../shared/contracts";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, kindLabel, shortPath } from "../shared/labels";
+import { PLAIN, plainAgent, plainAgents, plainWords } from "../shared/plain";
 import { SourceDetail } from "./detail";
+import { usePlain, useSourceNames } from "./mode";
 import { Card, EmptyState, Facts, PathText, Row, Section, Tag, useTokens } from "./ui";
 
 /**
@@ -22,21 +24,28 @@ function accountTitle(account: Account | undefined, agent: string): string {
   return account.email ? `${name} · ${account.email}` : `${name} · ${account.label}`;
 }
 
-export function userGroups(sources: Source[], accounts: Account[]): Group[] {
+function plainAccountTitle(account: Account | undefined, agent: string): string {
+  const name = plainAgent(agent);
+  return account && account.origin !== "default" ? `${name} · ${account.email ?? account.label}` : name;
+}
+
+export function userGroups(sources: Source[], accounts: Account[], plain = false): Group[] {
   const groups = new Map<string, Group>();
   for (const source of sources) {
     if (source.scope !== "user" && source.scope !== "managed" && source.scope !== "host") continue;
     const account = accounts.find((entry) => entry.id === source.accountId);
     const key = source.scope === "managed" ? "managed" : source.scope === "host" ? "host" : source.accountId ?? source.agent;
-    const title = source.scope === "managed" ? "Managed by your organisation" : source.scope === "host" ? "Paseo (every agent on this host)" : accountTitle(account, source.agent);
-    const group = groups.get(key) ?? { key, title, ...(account ? { path: account.dir } : {}), sources: [] };
+    const title = plain
+      ? source.scope === "managed" ? "Set by your organisation" : source.scope === "host" ? "Every agent on this computer" : plainAccountTitle(account, source.agent)
+      : source.scope === "managed" ? "Managed by your organisation" : source.scope === "host" ? "Paseo (every agent on this host)" : accountTitle(account, source.agent);
+    const group = groups.get(key) ?? { key, title, ...(account && !plain ? { path: account.dir } : {}), sources: [] };
     group.sources.push(source);
     groups.set(key, group);
   }
   return [...groups.values()];
 }
 
-export function projectGroups(sources: Source[], workspaces: Array<{ name: string; path: string }>): Group[] {
+export function projectGroups(sources: Source[], workspaces: Array<{ name: string; path: string }>, plain = false): Group[] {
   const groups = new Map<string, Group & { rank: number }>();
   for (const source of sources) {
     if (source.scope !== "project") continue;
@@ -44,12 +53,37 @@ export function projectGroups(sources: Source[], workspaces: Array<{ name: strin
     const key = path ?? "unknown";
     const workspace = path ? workspaces.find((entry) => entry.path === path || path.startsWith(`${entry.path}/`) || entry.path.startsWith(`${path}/`)) : undefined;
     const rank = workspace ? 0 : path ? 1 : 2;
-    const group = groups.get(key) ?? { key, rank, title: path ? (workspace ? workspace.name : folderName(path)) : "Other projects (path unknown)", ...(path ? { path } : { caption: "Claude keeps these by a folder name that cannot be turned back into a path." }), sources: [] };
+    const unknown = plain
+      ? { title: "Projects not found on this computer", caption: "Claude kept notes for these, but their project folders aren't here." }
+      : { title: "Other projects (path unknown)", caption: "Claude keeps these by a folder name that cannot be turned back into a path." };
+    const group = groups.get(key) ?? { key, rank, title: path ? (workspace ? workspace.name : folderName(path)) : unknown.title, ...(path ? (plain ? {} : { path }) : { caption: unknown.caption }), sources: [] };
     group.rank = Math.min(group.rank, rank);
     group.sources.push(source);
     groups.set(key, group);
   }
   return [...groups.values()].sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title));
+}
+
+function PlainSourceRow({ source, name, first, selected, onPress }: { source: Source; name: string; first: boolean; selected: boolean; onPress: () => void }) {
+  const t = useTokens();
+  const readers = source.readBy.length ? `Followed by ${plainAgents(source.readBy)}` : undefined;
+  return (
+    <Row
+      first={first}
+      selected={selected}
+      onPress={onPress}
+      title={<Text style={t.text.bodyStrong}>{name}</Text>}
+      {...(readers ? { subtitle: readers } : {})}
+      meta={
+        <Facts
+          items={[
+            !source.exists ? { value: "Not written yet", tone: "neutral" } : source.isDirectory ? { value: `${source.files ?? 0} ${source.files === 1 ? "note" : "notes"}` } : { value: plainWords(Math.ceil(source.bytes / 4)) },
+            source.access === "editable" ? null : { value: "Can't be changed here" },
+          ]}
+        />
+      }
+    />
+  );
 }
 
 function SourceRow({ source, first, selected, onPress }: { source: Source; first: boolean; selected: boolean; onPress: () => void }) {
@@ -95,17 +129,23 @@ export function SourcesTab({
   empty: string;
 }) {
   const t = useTokens();
+  const plain = usePlain();
+  const names = useSourceNames(hostId);
   const total = useMemo(() => groups.reduce((sum, group) => sum + group.sources.length, 0), [groups]);
-  if (total === 0) return <EmptyState title="Nothing here yet" body={empty} />;
+  if (total === 0) return <EmptyState title={PLAIN.nothingYet.title} body={empty} />;
   const list = (
     <View style={{ gap: t.space.lg }}>
       {groups.map((group) => (
         <Section key={group.key} title={group.title} trailing={<Tag label={String(group.sources.length)} />}>
           {group.path ? <PathText path={group.path} /> : group.caption ? <Text style={t.text.caption}>{group.caption}</Text> : null}
           <Card padded={false}>
-            {group.sources.map((source, index) => (
-              <SourceRow key={source.id} source={source} first={index === 0} selected={source.id === selected} onPress={() => onSelect(source.id)} />
-            ))}
+            {group.sources.map((source, index) =>
+              plain ? (
+                <PlainSourceRow key={source.id} source={source} name={names.name(source)} first={index === 0} selected={source.id === selected} onPress={() => onSelect(source.id)} />
+              ) : (
+                <SourceRow key={source.id} source={source} first={index === 0} selected={source.id === selected} onPress={() => onSelect(source.id)} />
+              ),
+            )}
           </Card>
         </Section>
       ))}
@@ -113,11 +153,11 @@ export function SourcesTab({
   );
   const detail = selected ? (
     <View style={{ gap: t.space.sm }}>
-      {t.compact ? <Text style={[t.text.caption, { color: t.color.accent }]} onPress={() => onSelect(null)}>‹ Back to the list</Text> : null}
+      {t.compact ? <Text style={[t.text.caption, { color: t.color.accent }]} onPress={() => onSelect(null)}>{PLAIN.back}</Text> : null}
       <SourceDetail key={selected} hostId={hostId} sourceId={selected} entryKey={entryKey} onOpenEntry={onOpenEntry} onCopy={onCopy} />
     </View>
   ) : (
-    <EmptyState title="Pick something on the left" body="Each row is one file or folder an agent reads. Open one to see what it says, who reads it and what it costs at launch." />
+    <EmptyState title={PLAIN.pickLeft.title} body={plain ? PLAIN.pickLeft.body : "Each row is one file or folder an agent reads. Open one to see what it says, who reads it and what it costs at launch."} />
   );
   if (t.compact) return selected ? detail : list;
   // Two columns: a fixed list, the detail gets the rest (the page itself scrolls).

@@ -17,6 +17,7 @@ export const memoriesSettings = defineSettings({
     maskSecrets: z.boolean().default(true).describe("Hide token-looking values until you reveal them"),
     codexEdits: z.boolean().default(true).describe("Allow edits to Codex's generated MEMORY.md and memory_summary.md"),
     backupsToKeep: z.number().int().min(1).max(500).default(20).describe("Backups kept per file"),
+    technicalDetails: z.boolean().default(false).describe("Show file names, paths, sizes and the whole-file editors"),
   }),
 });
 

@@ -1,6 +1,9 @@
 import React from "react";
 import { Text, View } from "react-native";
-import { Card, Section, useTokens } from "./ui";
+import { PLAIN_GUIDES, PLAIN_GUIDE_TECHNICAL_HINT } from "../shared/guides";
+import { PLAIN } from "../shared/plain";
+import { usePlain } from "./mode";
+import { Card, Disclosure, Section, useTokens } from "./ui";
 
 /** How each agent loads memory, with the real numbers, and what is read-only and why. */
 
@@ -61,7 +64,7 @@ const SAFETY: Block = {
   ],
 };
 
-export function Guide() {
+function Reference() {
   const t = useTokens();
   return (
     <View style={{ gap: t.space.lg }}>
@@ -76,6 +79,35 @@ export function Guide() {
           </Card>
         </Section>
       ))}
+    </View>
+  );
+}
+
+/** Plain: task guides, numbered, then the reference folded away. Technical: the reference as it was. */
+export function Guide() {
+  const t = useTokens();
+  const plain = usePlain();
+  if (!plain) return <Reference />;
+  return (
+    <View style={{ gap: t.space.lg }}>
+      {PLAIN_GUIDES.map((guide) => (
+        <Section key={guide.title} title={guide.title}>
+          <Card>
+            <View style={{ gap: t.space.sm }}>
+              {guide.steps.map((step, index) => (
+                <View key={step} style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-start" }}>
+                  <Text style={[t.text.bodyStrong, { width: 20, flexShrink: 0 }]}>{`${index + 1}.`}</Text>
+                  <Text style={[t.text.body, { flex: 1, minWidth: 0 }]}>{step}</Text>
+                </View>
+              ))}
+            </View>
+          </Card>
+        </Section>
+      ))}
+      <Disclosure title={PLAIN.technical}>
+        <Text style={t.text.caption}>{PLAIN_GUIDE_TECHNICAL_HINT}</Text>
+        <Reference />
+      </Disclosure>
     </View>
   );
 }

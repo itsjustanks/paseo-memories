@@ -7,10 +7,12 @@ import { exportMemories, importApply, importParse, importPreview, type Account, 
 import { plainError } from "../shared/errors";
 import { formatBytes, plural } from "../shared/format";
 import { folderName, targetTitle } from "../shared/labels";
+import { PLAIN, plainMessage, plainSourceName } from "../shared/plain";
 import { moveBlocker, type ImportItem } from "../shared/transfer";
-import { QueryState, WriteReportView, useInvalidate, useInventory } from "./data";
+import { QueryState, WriteReportView, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
+import { projectNamer, usePlain } from "./mode";
 import type { Destination } from "./navigate";
-import { Button, Card, CodeBlock, ComboBox, ErrorText, Field, Notice, PathText, Row, Section, Segmented, Tag, Toggle, copyToClipboard, useTokens, type Status } from "./ui";
+import { Button, Card, CodeBlock, ComboBox, Disclosure, ErrorText, Field, Notice, PathText, Row, Section, Segmented, Tag, Toggle, copyToClipboard, useTokens, type Status } from "./ui";
 import { canDownload, canPickFiles, downloadText, pickTextFiles } from "./web";
 
 /**
@@ -23,6 +25,8 @@ import { canDownload, canPickFiles, downloadText, pickTextFiles } from "./web";
 
 type Preview = ZodOutput<(typeof importPreview)["output"]>;
 type TargetKind = "claude-memory" | "append";
+
+const PLAIN_DUPLICATE: Record<string, string> = { exact: PLAIN.transfer.isThere, near: PLAIN.transfer.isNear, batch: PLAIN.transfer.isRepeat, none: PLAIN.transfer.isNew };
 
 const DUPLICATE: Record<string, { label: string; tone: Status }> = {
   exact: { label: "Already there", tone: "attention" },
@@ -43,22 +47,23 @@ function LabelledToggle({ label, value, onChange }: { label: string; value: bool
 }
 
 /** Targets as a short list: a friendly name first, the path underneath, a filter when there are many. */
-function TargetPicker({ targets, accounts, value, onChange, hint }: { targets: Source[]; accounts: Account[]; value: string; onChange: (id: string) => void; hint: string }) {
+function TargetPicker({ targets, accounts, value, onChange, hint, namer }: { targets: Source[]; accounts: Account[]; value: string; onChange: (id: string) => void; hint: string; namer: (path: string) => string }) {
   const t = useTokens();
-  const title = (source: Source) => targetTitle(source, accounts.find((account) => account.id === source.accountId));
+  const plain = usePlain();
+  const title = (source: Source) => (plain ? plainSourceName(source, accounts, namer) : targetTitle(source, accounts.find((account) => account.id === source.accountId)));
   const [filter, setFilter] = useState("");
   const shown = targets.filter((source) => !filter || `${title(source)} ${source.path}`.toLowerCase().includes(filter.toLowerCase())).slice(0, 12);
   return (
     <View style={{ gap: t.space.sm }}>
-      {targets.length > 8 ? <Field value={filter} onChangeText={setFilter} placeholder="Filter by project or file" /> : null}
+      {targets.length > 8 ? <Field value={filter} onChangeText={setFilter} placeholder={plain ? "Find a place" : "Filter by project or file"} /> : null}
       <Card padded={false}>
         {shown.length ? (
           shown.map((source, index) => (
-            <Row key={source.id} first={index === 0} selected={source.id === value} title={title(source)} subtitle={<PathText path={source.path} />} onPress={() => onChange(source.id)} />
+            <Row key={source.id} first={index === 0} selected={source.id === value} title={title(source)} {...(plain ? {} : { subtitle: <PathText path={source.path} /> })} onPress={() => onChange(source.id)} />
           ))
         ) : (
           <View style={{ padding: t.space.md }}>
-            <Text style={t.text.caption}>{targets.length ? `None of the ${targets.length} places match "${filter}".` : "No place of this kind can take imports on this host."}</Text>
+            <Text style={t.text.caption}>{targets.length ? `None of the ${targets.length} places match "${filter}".` : plain ? "There is nowhere of this kind to put notes on this computer." : "No place of this kind can take imports on this host."}</Text>
           </View>
         )}
       </Card>
@@ -89,6 +94,10 @@ function DiffView({ lines }: { lines: Array<{ op: string; text: string }> }) {
 
 function ImportPanel({ hostId, sources, accounts, destination }: { hostId: string; sources: Source[]; accounts: Account[]; destination: Destination | null }) {
   const t = useTokens();
+  const plain = usePlain();
+  const T = PLAIN.transfer;
+  const folders = useWorkspaceFolders(hostId);
+  const namer = projectNamer(folders.data ?? []);
   const parse = useRpc(importParse);
   const previewRpc = useRpc(importPreview);
   const apply = useRpc(importApply);
@@ -144,7 +153,11 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
     run("read", async () => {
       const parsed = await parse({ ...(text.trim() ? { text } : {}), ...(files.length ? { files } : {}), format });
       setItems(parsed.items);
-      setNotes([...parsed.formats.map((entry) => `${entry.name}: ${plural(entry.items, "item")} (${entry.format})`), ...parsed.warnings]);
+      setNotes(
+        plain
+          ? [`Found ${plural(parsed.items.length, "note")}.`, ...parsed.warnings.map(plainMessage)]
+          : [...parsed.formats.map((entry) => `${entry.name}: ${plural(entry.items, "item")} (${entry.format})`), ...parsed.warnings],
+      );
       setFrom([]);
       setPreview(null);
       setResult(null);
@@ -182,31 +195,31 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
 
   const count = from.length || items.length;
   return (
-    <Section title="Import">
+    <Section title={T.import}>
       <Card>
         <View style={{ gap: t.space.md }}>
           {from.length ? (
             <Notice tone="neutral">
               <View style={{ gap: t.space.sm }}>
-                <Text style={t.text.body}>{`Copying ${plural(from.length, "entry", "entries")} you picked. Choose where they go, preview, then save.`}</Text>
+                <Text style={t.text.body}>{plain ? T.copying(from.length) : `Copying ${plural(from.length, "entry", "entries")} you picked. Choose where they go, preview, then save.`}</Text>
                 {moveBlocked ? (
-                  <Text style={t.text.caption}>{`Move isn't available: ${moveBlocked}. They can be copied.`}</Text>
+                  <Text style={t.text.caption}>{plain ? T.noMove : `Move isn't available: ${moveBlocked}. They can be copied.`}</Text>
                 ) : (
-                  <LabelledToggle label="Move instead: remove the originals once the copies are saved" value={move} onChange={setMove} />
+                  <LabelledToggle label={T.moveInstead} value={move} onChange={setMove} />
                 )}
                 <View style={{ flexDirection: "row" }}>
-                  <Button label="Import text instead" variant="ghost" onPress={() => setFrom([])} />
+                  <Button label={plain ? T.importText : "Import text instead"} variant="ghost" onPress={() => setFrom([])} />
                 </View>
               </View>
             </Notice>
           ) : (
             <>
-              <Text style={t.text.body}>Paste a bundle exported from here, markdown (split at its headings), a Claude memory file, claude.ai memory lines ("[date] - text") or a Cursor .mdc rule.</Text>
-              <Field value={text} onChangeText={setText} multiline mono minHeight={140} placeholder="Paste here" />
+              <Text style={t.text.body}>{plain ? T.importIntro : 'Paste a bundle exported from here, markdown (split at its headings), a Claude memory file, claude.ai memory lines ("[date] - text") or a Cursor .mdc rule.'}</Text>
+              <Field value={text} onChangeText={setText} multiline mono={!plain} minHeight={140} placeholder={T.pastePlaceholder} />
               <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "center", flexWrap: "wrap" }}>
-                <Segmented options={[{ value: "auto", label: "Work it out" }, { value: "markdown", label: "Markdown" }, { value: "claude-ai", label: "claude.ai lines" }]} value={format} onChange={setFormat} />
-                {canPickFiles() ? <Button label={files.length ? `${plural(files.length, "file")} picked` : "Pick files…"} variant="ghost" onPress={() => void pickTextFiles().then(setFiles)} /> : null}
-                <Button label="Read it" onPress={() => void read(false)} loading={busy === "read"} disabled={!text.trim() && !files.length} />
+                <Segmented options={[{ value: "auto", label: T.formatAuto }, { value: "markdown", label: plain ? T.formatHeadings : "Markdown" }, { value: "claude-ai", label: plain ? T.formatClaudeAi : "claude.ai lines" }]} value={format} onChange={setFormat} />
+                {canPickFiles() ? <Button label={files.length ? `${plural(files.length, "file")} picked` : T.pick} variant="ghost" onPress={() => void pickTextFiles().then(setFiles)} /> : null}
+                <Button label={T.read} onPress={() => void read(false)} loading={busy === "read"} disabled={!text.trim() && !files.length} />
               </View>
               {notes.map((note) => (
                 <Text key={note} style={t.text.caption}>
@@ -217,9 +230,9 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
           )}
           {count ? (
             <View style={{ gap: t.space.sm }}>
-              <Text style={t.text.label}>WHERE TO</Text>
+              <Text style={t.text.label}>{T.whereTo}</Text>
               <Segmented
-                options={[{ value: "claude-memory", label: "New Claude memories" }, { value: "append", label: "Add to an instruction file" }]}
+                options={[{ value: "claude-memory", label: plain ? T.toClaude : "New Claude memories" }, { value: "append", label: plain ? T.toFile : "Add to an instruction file" }]}
                 value={kind}
                 onChange={(value) => {
                   setKind(value);
@@ -230,15 +243,16 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
               <TargetPicker
                 targets={targets}
                 accounts={accounts}
+                namer={namer}
                 value={targetId}
                 onChange={(value) => {
                   setTargetId(value);
                   setPreview(null);
                 }}
-                hint={kind === "append" ? "Each item is added as a section at the end. To copy into Codex, pick its AGENTS.md; Codex's generated memory is never a target." : "Each item becomes one memory file with its line in MEMORY.md."}
+                hint={plain ? (kind === "append" ? T.targetHintAppend : T.targetHintClaude) : kind === "append" ? "Each item is added as a section at the end. To copy into Codex, pick its AGENTS.md; Codex's generated memory is never a target." : "Each item becomes one memory file with its line in MEMORY.md."}
               />
               <View style={{ flexDirection: "row" }}>
-                <Button label="Preview" onPress={() => void showPreview()} loading={busy === "preview"} disabled={!targetInput} />
+                <Button label={plain ? T.preview : "Preview"} onPress={() => void showPreview()} loading={busy === "preview"} disabled={!targetInput} />
               </View>
             </View>
           ) : null}
@@ -247,8 +261,8 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
       </Card>
       {preview ? (
         <View style={{ gap: t.space.md }}>
-          <Text style={t.text.caption}>{preview.checked}</Text>
-          {preview.target.access !== "editable" ? <Notice tone="error">{preview.target.reason ?? "That target is read-only."}</Notice> : null}
+          {plain ? null : <Text style={t.text.caption}>{preview.checked}</Text>}
+          {preview.target.access !== "editable" ? <Notice tone="error">{plain ? "That place can't be changed here." : preview.target.reason ?? "That target is read-only."}</Notice> : null}
           {preview.items.map((item) => (
             <Card key={item.id}>
               <View style={{ gap: t.space.sm }}>
@@ -264,22 +278,26 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
                     }}
                   />
                   <Text style={[t.text.bodyStrong, { flexShrink: 1 }]}>{item.title}</Text>
-                  <Tag label={DUPLICATE[item.duplicate]?.label ?? item.duplicate} tone={DUPLICATE[item.duplicate]?.tone ?? "neutral"} />
-                  {item.masked ? <Tag label="Hidden values" tone="attention" /> : null}
+                  <Tag label={plain ? PLAIN_DUPLICATE[item.duplicate] ?? item.duplicate : DUPLICATE[item.duplicate]?.label ?? item.duplicate} tone={DUPLICATE[item.duplicate]?.tone ?? "neutral"} />
+                  {item.masked ? <Tag label={T.hidden} tone="attention" /> : null}
                 </View>
-                <Text style={t.text.caption}>{item.action === "create" ? `New file ${item.fileName ?? ""}` : `Added to the end of ${preview.target.label}`}{item.duplicateOf ? `. Matches "${item.duplicateOf}".` : ""}</Text>
-                {item.warnings.map((warning) => (
+                {plain ? (
+                  <Text style={t.text.caption}>{`${item.action === "create" ? "Becomes a new note." : "Added at the end."}${item.duplicateOf ? ` Matches "${item.duplicateOf}".` : ""}`}</Text>
+                ) : (
+                  <Text style={t.text.caption}>{item.action === "create" ? `New file ${item.fileName ?? ""}` : `Added to the end of ${preview.target.label}`}{item.duplicateOf ? `. Matches "${item.duplicateOf}".` : ""}</Text>
+                )}
+                {[...new Set(item.warnings.map((warning) => (plain ? plainMessage(warning) : warning)))].map((warning) => (
                   <Text key={warning} style={[t.text.caption, { color: t.color.warning }]}>
                     {warning}
                   </Text>
                 ))}
-                <DiffView lines={item.diff} />
+                {plain ? <Disclosure title={PLAIN.technical}>{<DiffView lines={item.diff} />}</Disclosure> : <DiffView lines={item.diff} />}
               </View>
             </Card>
           ))}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
-            <Button label={`Save ${plural(selected.size, "item")}`} variant="primary" onPress={() => void save()} loading={busy === "save"} disabled={!selected.size || preview.target.access !== "editable"} />
-            <Button label="Cancel" variant="ghost" onPress={() => setPreview(null)} />
+            <Button label={plain ? T.save(selected.size) : `Save ${plural(selected.size, "item")}`} variant="primary" onPress={() => void save()} loading={busy === "save"} disabled={!selected.size || preview.target.access !== "editable"} />
+            <Button label={T.cancel} variant="ghost" onPress={() => setPreview(null)} />
           </View>
         </View>
       ) : null}
@@ -290,6 +308,8 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
 
 function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolean }) {
   const t = useTokens();
+  const plain = usePlain();
+  const T = PLAIN.transfer;
   const toast = useToast();
   const call = useRpc(exportMemories);
   const [scope, setScope] = useState<"all" | "user" | "project">("all");
@@ -311,20 +331,21 @@ function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolea
       setBusy(false);
     }
   };
+  const shownText = out ? <CodeBlock copy={false}>{out.text.length > 6000 ? `${out.text.slice(0, 6000)}\n… ${formatBytes(out.text.length - 6000)} more` : out.text}</CodeBlock> : null;
   useEffect(() => {
     if (initial) void run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
-    <Section title="Export">
+    <Section title={T.export}>
       <Card>
         <View style={{ gap: t.space.md }}>
-          <Segmented options={[{ value: "all", label: "Everything" }, { value: "user", label: "User files" }, { value: "project", label: "One project" }]} value={scope} onChange={setScope} />
-          {scope === "project" ? <ComboBox label="Project" value={project} allowCustom={false} onChange={setProject} options={projects.map((path) => ({ value: path, label: folderName(path), description: path }))} placeholder="Pick a project" /> : null}
-          <Segmented options={[{ value: "bundle", label: "Bundle (to import elsewhere)" }, { value: "markdown", label: "Markdown (to read)" }]} value={format} onChange={setFormat} />
-          <LabelledToggle label="Include values that look like secrets (off: they are hidden)" value={secrets} onChange={setSecrets} />
+          <Segmented options={[{ value: "all", label: T.everything }, { value: "user", label: plain ? T.yours : "User files" }, { value: "project", label: T.oneProject }]} value={scope} onChange={setScope} />
+          {scope === "project" ? <ComboBox label={T.project} value={project} allowCustom={false} onChange={setProject} options={projects.map((path) => ({ value: path, label: folderName(path), ...(plain ? {} : { description: path }) }))} placeholder="Pick a project" /> : null}
+          <Segmented options={[{ value: "bundle", label: plain ? T.toImport : "Bundle (to import elsewhere)" }, { value: "markdown", label: plain ? T.toRead : "Markdown (to read)" }]} value={format} onChange={setFormat} />
+          <LabelledToggle label={plain ? T.includeSecrets : "Include values that look like secrets (off: they are hidden)"} value={secrets} onChange={setSecrets} />
           <View style={{ flexDirection: "row" }}>
-            <Button label="Export" onPress={() => void run()} loading={busy} disabled={scope === "project" && !project} />
+            <Button label={T.exportButton} onPress={() => void run()} loading={busy} disabled={scope === "project" && !project} />
           </View>
           {error ? <ErrorText>{error}</ErrorText> : null}
         </View>
@@ -332,13 +353,15 @@ function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolea
       {out ? (
         <Card>
           <View style={{ gap: t.space.sm }}>
-            <Text style={t.text.bodyStrong}>{`${plural(out.count, "item")} · ${formatBytes(out.text.length)}${out.masked ? ` · ${plural(out.masked, "item")} with hidden values` : ""}`}</Text>
-            {canDownload() ? <PathText path={`Saves as ${out.fileName}`} /> : null}
+            <Text style={t.text.bodyStrong}>
+              {plain ? `${plural(out.count, "note")}${out.masked ? ` · ${plural(out.masked, "note")} with hidden values` : ""}` : `${plural(out.count, "item")} · ${formatBytes(out.text.length)}${out.masked ? ` · ${plural(out.masked, "item")} with hidden values` : ""}`}
+            </Text>
+            {canDownload() && !plain ? <PathText path={`Saves as ${out.fileName}`} /> : null}
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
-              <Button label="Copy" variant="primary" onPress={() => (copyToClipboard(out.text) ? toast.show("Copied the export.", { variant: "success" }) : toast.error("This app cannot copy; select the text instead."))} />
-              {canDownload() ? <Button label="Download" variant="ghost" onPress={() => downloadText(out.fileName, out.text, format === "bundle" ? "application/json" : "text/markdown")} /> : null}
+              <Button label={T.copyButton} variant="primary" onPress={() => (copyToClipboard(out.text) ? toast.show(plain ? T.copied : "Copied the export.", { variant: "success" }) : toast.error(plain ? T.cantCopy : "This app cannot copy; select the text instead."))} />
+              {canDownload() ? <Button label={T.download} variant="ghost" onPress={() => downloadText(out.fileName, out.text, format === "bundle" ? "application/json" : "text/markdown")} /> : null}
             </View>
-            <CodeBlock copy={false}>{out.text.length > 6000 ? `${out.text.slice(0, 6000)}\n… ${formatBytes(out.text.length - 6000)} more` : out.text}</CodeBlock>
+            {plain ? <Disclosure title={PLAIN.technical}>{shownText}</Disclosure> : shownText}
           </View>
         </Card>
       ) : null}

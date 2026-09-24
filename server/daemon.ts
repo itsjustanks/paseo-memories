@@ -79,10 +79,16 @@ type WorkspaceEntry = { id: string; name: string; workspaceDirectory?: string; p
 
 /** The directory an agent in this workspace starts in (paseo-mcp `enabled.ts:54-68`). */
 export async function workspaceDirectory(paseo: Paseo, workspaceId: string): Promise<string> {
+  return (await workspaceEntry(paseo, workspaceId)).directory;
+}
+
+/** A workspace's name and starting directory. */
+export async function workspaceEntry(paseo: Paseo, workspaceId: string): Promise<{ name: string; directory: string }> {
   const result = await withDeadline(paseo.workspaces.list(), "its workspace list");
   const workspace = (result as unknown as { entries: WorkspaceEntry[] }).entries.find((entry) => entry.id === workspaceId);
   if (!workspace) throw new Error("This Paseo workspace no longer exists.");
-  return workspace.workspaceDirectory || workspace.projectRootPath;
+  const directory = workspace.workspaceDirectory || workspace.projectRootPath;
+  return { name: workspace.name || basename(directory), directory };
 }
 
 /**

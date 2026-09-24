@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 (2026-09-24)
+
+Memories now works for people who don't work with files every day. Everything from 0.1 is still there: turn on **Show technical details** in Settings → Memories to see it exactly as before.
+
+- **Plain view by default.** Notes have plain names everywhere: "Your instructions for Claude", "Your instructions for Codex", "Claude's notes for acme-web", "What Codex has learned", "Project instructions · acme-web (shared with the team)", "Instructions for every agent on this computer". Sizes read "about 1,200 words". Where a note is saved sits in one folded line.
+- **Notes instead of files.** A set of instructions shows as note cards, each with Change, Remove and Copy to another agent, and Add a note at the end. Only that note changes; the rest stays exactly as it was. Editing the whole file is still there, folded under "Edit the whole file (technical)".
+- **Claude's notes** use plain fields: Title, Short summary, What kind of note ("About you", "How you like things done", "About this project", "Where to find things") and What should Claude remember. File name and Rename moved under Technical details.
+- **Add a note**, from the Overview, Everywhere and Projects: write what your agents should remember, choose who follows it (All my agents, Just Claude, Just Codex) and where (Everywhere, or one project), check where it goes and whether something almost the same is already there, then save. Everywhere means your own instructions for Claude and for Codex. One project means a private Claude note for that project, plus the project's instructions for Codex, with a warning when those are shared with your team through git. Only places the agent actually reads; never Codex's own notes or the instructions for every agent on this computer.
+- **Plain warnings and findings**: "This note contains something that looks like a password or key…", "Two notes say the same thing", "A note mentions a file or folder that no longer exists", "Codex is still tidying its notes…". The safety rules underneath are unchanged.
+- **Guides**: the Guide tab is now six short how-tos that name the real buttons: what your agents remember, adding a note, fixing a note, keeping passwords out, moving notes to another Paseo computer, and what can't be changed here. The full reference is folded under Technical details.
+- **Panels** list what an agent started here reads, in order, by plain name, with "about N words", "Read when needed" and "Not read".
+- For developers: new setting `technicalDetails` (default off; old settings files still load), RPCs `note-preview` and `note-add`, `instruction-write` takes `removeSection`, all additive. Preview: plain by default, `?technical` for the old view, `?add`, `?add=ws-1`, `?notes`. Tests check every plain string against a jargon list.
+
 ## 0.1.1 (2026-09-24)
 
 - Long paths, URLs, tokens and code lines no longer make the page scroll sideways: text breaks anywhere it has to, and nothing in a row can push the page wider.

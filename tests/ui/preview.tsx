@@ -5,13 +5,15 @@ import { openMemories, registerSurfaceOpener } from "../../client/navigate";
 import { MemoriesAgentPanel, MemoriesWorkspacePanel } from "../../client/panels";
 import { MemoriesSettingsScreen } from "../../client/settings";
 import { MemoriesSurface } from "../../client/surface";
-import { APP, appMemory, codexIndex, importText } from "./plugin";
+import { APP, H, appMemory, codexIndex, importText } from "./plugin";
 
 /**
  * Fixture preview. Params: ?tab=overview|user|projects|transfer|guide,
  * ?memory (a memory open in the editor), ?codex (Codex memory with the
  * pending warning), ?import (preview diff), ?export, ?workspace, ?agent
- * (&provider=), ?settings, ?dark, ?empty, ?error, ?stale.
+ * (&provider=), ?settings, ?dark, ?empty, ?error, ?stale. Plain view by
+ * default (?plain); ?technical shows file names and paths. ?add (Add a note;
+ * ?add=ws-1 in a project), ?notes (your Claude instructions as note cards).
  */
 registerSurfaceOpener((id) => console.info("[open-surface]", id));
 const queryClient = new QueryClient();
@@ -26,7 +28,9 @@ const colors = light ? {
 };
 
 const tab = params.get("tab") as "overview" | "user" | "projects" | "transfer" | "guide" | null;
-if (params.has("memory")) openMemories({ tab: "projects", sourceId: appMemory, entryKey: "payments_retry_limit.md" });
+if (params.has("add")) openMemories({ tab: "overview", addNote: params.get("add") ? { workspaceId: params.get("add")! } : {} });
+else if (params.has("notes")) openMemories({ tab: "user", sourceId: `${H}/.claude/CLAUDE.md` });
+else if (params.has("memory")) openMemories({ tab: "projects", sourceId: appMemory, entryKey: "payments_retry_limit.md" });
 else if (params.has("codex")) openMemories({ tab: "user", sourceId: codexIndex });
 else if (params.has("import")) openMemories({ tab: "transfer", text: importText, target: { kind: "append", path: `${APP}/CLAUDE.md` }, preview: true });
 else if (params.has("export")) openMemories({ tab: "transfer", exportView: true });

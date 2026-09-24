@@ -15,6 +15,8 @@ export type Destination = {
   target?: { kind: string; sourceId?: string; path?: string };
   preview?: boolean;
   exportView?: boolean;
+  /** Open "Add a note", optionally in one project's workspace. */
+  addNote?: { workspaceId?: string };
 };
 
 let opener: ((id: string) => void) | null = null;

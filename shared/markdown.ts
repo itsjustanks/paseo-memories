@@ -89,3 +89,19 @@ export function replaceSection(text: string, section: Section, replacement: stri
   lines.splice(section.start, section.end - section.start, ...inner.split("\n"));
   return lines.join("\n");
 }
+
+/**
+ * Take one section out entirely, lines and all. Everything above and below
+ * stays byte for byte, except that removing the last section leaves the file
+ * ending in one line break instead of the blank lines that sat before it.
+ */
+export function removeSection(text: string, section: Section): string {
+  const lines = text.split("\n");
+  const total = text.endsWith("\n") ? lines.length - 1 : lines.length;
+  const last = section.end >= total;
+  lines.splice(section.start, section.end - section.start);
+  const out = lines.join("\n");
+  if (!last) return out;
+  const trimmed = out.replace(/\s+$/, "");
+  return trimmed ? `${trimmed}\n` : "";
+}

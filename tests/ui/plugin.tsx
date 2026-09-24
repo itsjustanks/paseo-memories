@@ -87,6 +87,7 @@ const bodies: Record<string, { body: string; fields?: any }> = {
   },
   [`${appMemory}#staging_deploys.md`]: { fields: { name: "Staging deploys go through the CI job", description: "Which job deploys staging", type: "reference" }, body: "\nStaging is deployed by the `deploy-staging` CI job.\nDeploy token: tok_live_1a2b3c4d5e6f7g8h9i0jKLMNOPQRSTUV\n" },
   [codexIndex]: { body: "# Codex memory\n\n## Tooling\n\n- Use the project's package manager; never mix lock files.\n- Tests run with the built-in runner.\n\n## People\n\n- Sam reviews database changes.\n" },
+  [`${H}/.claude/CLAUDE.md`]: { body: "# How I work\n\nI run the marketing team. Keep answers short and friendly.\n\n## Writing style\n\nPlain words, short sentences. No jargon unless I use it first.\n\n## Reports\n\nWeekly reports go to the shared drive folder \"Team reports\", named by date.\n\n## Meetings\n\nI prefer summaries as three bullet points: what was decided, who does what, and by when.\n" },
   [`${APP}/CLAUDE.md`]: { body: "# Acme web\n\nA small web shop. State lives in one store; server data is fetched per page.\n\n## Testing\n\nRun the tests before every commit.\n" + (long ? `\n## Payments\n\n${TABLE_WIDE}\n\n\`\`\`ts\n${CODE_LONG}\n\`\`\`\n\nSee ${URL_LONG}\n` : "") },
 };
 
@@ -112,7 +113,7 @@ const planItems = (agent: string) => {
     item(1, "~/.claude/rules/testing.md", "claude-rule", "launch", 612, { scope: "user" }),
     item(2, `${APPT}/CLAUDE.md`, "claude-md", "launch", 18020, { scope: "project", path: `${APP}/CLAUDE.md`, sourceId: `${APP}/CLAUDE.md` }),
     item(3, `${APPT}/AGENTS.md`, "agents-md", "skipped", 21430, { note: "A project CLAUDE.md exists, so Claude does not read AGENTS.md (default mode).", scope: "project" }),
-    item(4, `${APPT}/src/extensions/CLAUDE.md`, "claude-md", "on-demand", 2230, { note: "Subfolder file: loads when Claude reads a file there.", scope: "project" }),
+    item(4, `${APPT}/src/extensions/CLAUDE.md`, "claude-md", "on-demand", 2230, { note: "Subfolder file: loads when Claude reads a file there.", scope: "project", path: `${APP}/src/extensions/CLAUDE.md` }),
     item(5, `Auto memory (${tilde(appMemory)})`, "claude-auto-memory", "launch", 71200, { loadedBytes: 6120, note: "MEMORY.md at launch; 28 memory files read on demand.", scope: "project", path: appMemory, sourceId: appMemory }),
     item(6, "Paseo: append to system prompt", "paseo-prompt", "launch", 412, { note: "Appended to Claude's system prompt. New and relaunched agents only.", scope: "host" }),
   ];
@@ -182,6 +183,14 @@ function answer(name: string, input: any): unknown {
       };
     }
     case "import-apply": return { ok: true, message: `Imported ${input.selected.length} items into ${APPT}/CLAUDE.md.`, reports: [{ target: `${APP}/CLAUDE.md`, ok: true, action: "updated", readBack: "ok", backupPath: `${H}/.paseo/plugin-data/paseo-memories/backups/2026-09-24T12-00-00-000Z-a1b2c3${APP}/CLAUDE.md`, versionControlled: true }], warnings: ["This file is in a git repository: the change shows up in git."] };
+    case "note-preview": {
+      const project = input.workspaceId ? (input.workspaceId === "ws-1" ? "acme-web" : "demo-api") : undefined;
+      const claude = project ? { id: appMemory, agent: "claude", kind: "claude-memory", label: `Claude's notes for ${project}`, path: appMemory, creates: false, shared: false, private: true, warnings: [], duplicate: "none", stamp: null } : { id: `${H}/.claude/CLAUDE.md`, agent: "claude", kind: "append", label: "Your instructions for Claude", path: `${H}/.claude/CLAUDE.md`, creates: false, shared: false, private: true, warnings: [], duplicate: "near", duplicateOf: "Writing style", stamp };
+      const codex = project ? { id: `${APP}/AGENTS.md`, agent: "codex", kind: "append", label: `Project instructions · ${project} (shared with the team)`, path: `${APP}/AGENTS.md`, creates: false, shared: true, private: false, warnings: ["This is shared with your team through git."], duplicate: "none", stamp } : { id: `${H}/.codex/AGENTS.md`, agent: "codex", kind: "append", label: "Your instructions for Codex", path: `${H}/.codex/AGENTS.md`, creates: false, shared: false, private: true, warnings: [], duplicate: "none", stamp };
+      const targets = input.who === "claude" ? [claude] : input.who === "codex" ? [codex] : [claude, codex];
+      return { title: String(input.text).split("\n")[0]!.slice(0, 60), ...(project ? { project } : {}), targets, skipped: [], warnings: maskSecrets(input.text).count ? ["This note contains something that looks like a password or key. Anyone whose agent reads it can see it. Remove it?"] : [] };
+    }
+    case "note-add": return { ok: true, message: "Saved. New agents will follow it; agents already running won't see it until they restart.", reports: [], warnings: input.workspaceId ? ["This is shared with your team through git."] : [] };
     case "export": return { text: JSON.stringify({ format: "paseo-memories", version: 1, exportedAt: new Date().toISOString(), host: "demo-host", items: memoryEntries.map((e) => ({ agent: "claude", scope: "project", kind: "claude-auto-memory", projectHint: APP, title: e.title, description: e.description, type: e.type, body: e.secrets ? "Deploy token: tok_••••••••\n" : `${e.description}.\n`, masked: e.secrets > 0 })) }, null, 2), fileName: long ? "paseo-memories-demo-build-host-with-a-long-docker-container-name-2026-09-24.json" : "paseo-memories-2026-09-24.json", count: 120, masked: 1, units: [] };
     case "claude-update": case "claude-create": case "claude-delete": case "instruction-write": case "prompt-set": return { ok: true, message: "Saved.", reports: [{ target: input.path ?? input.sourceId, ok: true, action: "updated", readBack: "ok", backupPath: `${H}/.paseo/plugin-data/paseo-memories/backups/2026-09-24T12-00-00-000Z-a1b2c3/x` }], warnings: [] };
     case "codex-write": return input.confirmPending ? { ok: true, message: "Saved. Codex folds this in at its next run; wording may change.", reports: [], warnings: [] } : { ok: false, needsConfirm: true, message: findingsData.find((f) => f.id === "p1")!.message, reports: [], warnings: [] };
@@ -200,7 +209,8 @@ export function useRpc(contract: any) { return useCallback((input: unknown) => c
 export function usePaseo() { return { workspaces: { list: async () => ({ entries: empty ? [] : [{ id: "ws-1", name: long ? "acme-web-storefront-platform-rebuild · feature-checkout-payment-provider-webhook-retry-handling" : "acme-web", workspaceDirectory: APP, projectRootPath: APP }, { id: "ws-2", name: "demo-api", workspaceDirectory: DATA, projectRootPath: DATA }] }) } } as any; }
 export function useWorkspace<T>(_id: string, select: (workspace: { name: string; directory: string }) => T): T { return select({ name: long ? "acme-web-storefront-platform-rebuild" : "acme-web", directory: APP }); }
 export function useAgent<T>(_id: string, select: (agent: { provider: string; model: string | null }) => T): T { return select({ provider: params.get("provider") ?? "codex", model: "gpt-5-codex" }); }
-const settingsValues: Record<string, unknown> = { showOtherAgents: true, staleChecks: true, maskSecrets: true, codexEdits: true, backupsToKeep: 20 };
+// ?technical: the 0.1 view with file names and paths; plain (?plain, or nothing) is the default.
+const settingsValues: Record<string, unknown> = { showOtherAgents: true, staleChecks: true, maskSecrets: true, codexEdits: true, backupsToKeep: 20, technicalDetails: params.has("technical") };
 export function useSettings(_definition: unknown) {
   return { status: "ready" as const, values: settingsValues, revision: "fixture", saving: false, saveError: null, async save(values: Record<string, unknown>) { Object.assign(settingsValues, values); return true; }, async reset() { return true; }, async reload() {} };
 }
@@ -218,4 +228,4 @@ export const SettingsSelect = ({ label, hint, value, options, onValueChange }: a
 export const SettingsInput = ({ label, hint }: any) => row(label, hint);
 export const SettingsAction = ({ label, actionLabel, onPress }: any) => row(label, undefined, <Text onPress={onPress}>{actionLabel}</Text>);
 export const Icon = ({ name, size = 16, color }: { name: string; size?: number; color?: string }) => <Text style={{ fontSize: size - 4, color, fontWeight: "700" }} accessibilityLabel={name}>{name.replace(/[a-z]/g, "").slice(0, 2)}</Text>;
-export { importText, appMemory, codexIndex, APP };
+export { importText, appMemory, codexIndex, APP, H };
