@@ -161,18 +161,21 @@ async function stalePathFindings(units: Unit[], probe: Probe): Promise<{ finding
   return { findings: out, checked };
 }
 
-function staleSymbolFindings(units: Unit[]): { findings: Finding[]; roots: Set<string> } {
+function staleSymbolFindings(units: Unit[]): { findings: Finding[]; queries: Map<string, Set<string>> } {
   const out: Finding[] = [];
-  const roots = new Set<string>();
+  const queries = new Map<string, Set<string>>();
   for (const unit of units) {
     if (!unit.projectPath) continue;
     const names = symbolRefs(unit.text);
     if (!names.length) continue;
-    roots.add(unit.projectPath);
+    const query = queries.get(unit.projectPath) ?? new Set<string>();
+    queries.set(unit.projectPath, query);
+    for (const name of names) query.add(name);
     const index = symbolIndex(unit.projectPath);
     if (!index || index.capped) continue;
     for (const name of names) {
-      if (index.tokens.has(name)) continue;
+      // A name the last scan was not asked about is unknown until the next one.
+      if (!index.names.has(name) || index.found.has(name)) continue;
       out.push({
         id: id("stale-symbol", unit.id, name),
         kind: "stale-symbol",
@@ -185,7 +188,7 @@ function staleSymbolFindings(units: Unit[]): { findings: Finding[]; roots: Set<s
       });
     }
   }
-  return { findings: out, roots };
+  return { findings: out, queries };
 }
 
 async function folderFindings(discovery: Discovery, probe: Probe): Promise<Finding[]> {
@@ -258,9 +261,9 @@ export async function findingsFor(paseo: Paseo | null, refresh = false) {
   const units = await buildCorpus(discovery, probe);
   const stale = discovery.settings.staleChecks;
   const paths = stale ? await stalePathFindings(units, probe) : { findings: [], checked: 0 };
-  const symbols = stale ? staleSymbolFindings(units) : { findings: [], roots: new Set<string>() };
+  const symbols = stale ? staleSymbolFindings(units) : { findings: [], queries: new Map<string, Set<string>>() };
   const unknownFolders = new Set(units.filter((unit) => unit.kind === "claude-auto-memory" && !unit.projectPath && pathRefs(unit.text).some((ref) => !ref.startsWith("~/") && !isAbsolute(ref))).map((unit) => unit.sourceId));
-  if (stale && symbols.roots.size) requestScan(symbols.roots, refresh);
+  if (stale) requestScan(symbols.queries, refresh);
   const all = rankFindings([
     ...secretFindings(units),
     ...(await folderFindings(discovery, probe)),
@@ -287,7 +290,7 @@ export async function findingsFor(paseo: Paseo | null, refresh = false) {
       note: !stale
         ? "Stale-mention checks are off in settings."
         : scan.state === "done"
-          ? `Code names checked against ${symbols.roots.size} project${symbols.roots.size === 1 ? "" : "s"}.`
+          ? `Code names checked against ${symbols.queries.size} project${symbols.queries.size === 1 ? "" : "s"}.`
           : "Checking code names in the background; they show on the next refresh.",
     },
   };

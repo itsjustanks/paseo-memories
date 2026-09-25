@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 (2026-09-25)
+
+- Memories uses far less memory on computers with many projects: the background check for code names that no longer exist now remembers only the names your notes mention, forgets deleted files and projects, and reads at most 128 MB per pass.
+
 ## 0.2.0 (2026-09-24)
 
 Memories now works for people who don't work with files every day. Everything from 0.1 is still there: turn on **Show technical details** in Settings → Memories to see it exactly as before.
