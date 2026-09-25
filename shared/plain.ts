@@ -263,6 +263,8 @@ export const PLAIN = {
     show: "Show me",
     more: (count: number) => `${count} more`,
     allGood: { title: "Everything looks tidy", detail: "Nothing needs your attention. To teach your agents something new, use Add a note." },
+    scanPartial: (checked: number, total: number) => `Code names checked in ${checked} of ${total} project${total === 1 ? "" : "s"} so far; the rest are still being scanned.`,
+    scanWaiting: "Code names are still being checked; they show on the next refresh.",
   },
   search: {
     title: "Find a note",
@@ -474,6 +476,16 @@ export function plainNextStep(step: NextStep, first: Pick<Finding, "kind" | "mes
   const plain = plainFinding(first, nameOf);
   void step;
   return { title: plain.title, detail: `${plain.detail}${total > 1 ? ` ${total - 1} more ${total - 1 === 1 ? "thing" : "things"} to look at below.` : ""}`.trim() };
+}
+
+/**
+ * What the code-name check has covered, when it has not covered everything
+ * yet; null once every project has an answer or the check is off.
+ */
+export function scanProgressNote(scan: { state: string; checked?: number; total?: number }): string | null {
+  if (scan.state === "off" || scan.total === undefined || scan.checked === undefined) return null;
+  if (scan.checked >= scan.total) return null;
+  return scan.checked > 0 ? PLAIN.tidy.scanPartial(scan.checked, scan.total) : PLAIN.tidy.scanWaiting;
 }
 
 // ------------------------------------------------------------------ jargon

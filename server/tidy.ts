@@ -7,6 +7,7 @@ import type { FindingAction, FindingInput } from "../shared/contracts";
 type Finding = FindingInput & { severity: string };
 import { CLAUDE_MD_ADVISORY_LINES, CODEX_MEMORY_SUMMARY_TOKENS, CODEX_PROJECT_DOC_MAX_BYTES, claudeIndexLoad } from "../shared/limits";
 import { parseIndex } from "../shared/memory-index";
+import { scanProgressNote } from "../shared/plain";
 import { findSecrets } from "../shared/secrets";
 import { findConflicts, findDuplicates, nextStep, pathRefs, rankFindings, symbolRefs, type Unit } from "../shared/tidy";
 import { pendingDiff } from "./codex-pending";
@@ -15,7 +16,7 @@ import type { Paseo } from "./daemon";
 import { discover, type Discovery } from "./discover";
 import { userHome } from "./env";
 import { Probe, sha256 } from "./files";
-import { requestScan, scanState, symbolIndex } from "./symbols";
+import { requestScan, scanProgress, scanState, symbolIndex } from "./symbols";
 
 /**
  * The tidy checks (SPEC "Tidy checks"), pure code, no LLM. Each finding
@@ -272,7 +273,8 @@ export async function findingsFor(paseo: Paseo | null, refresh = false) {
     ...symbols.findings,
     ...conflictFindings(units),
   ]);
-  const scan = stale ? scanState() : { state: "off" };
+  const scan: { state: string; asOf?: string; checked?: number; total?: number } = stale ? { ...scanState(), ...scanProgress(symbols.queries.keys()) } : { state: "off" };
+  const partial = scanProgressNote(scan);
   const counts = { sources: discovery.sources.filter((source) => source.exists).length };
   return {
     checkedAt: new Date().toISOString(),
@@ -289,9 +291,11 @@ export async function findingsFor(paseo: Paseo | null, refresh = false) {
       ...scan,
       note: !stale
         ? "Stale-mention checks are off in settings."
-        : scan.state === "done"
-          ? `Code names checked against ${symbols.queries.size} project${symbols.queries.size === 1 ? "" : "s"}.`
-          : "Checking code names in the background; they show on the next refresh.",
+        : partial
+          ? partial
+          : scan.state === "done"
+            ? `Code names checked against ${symbols.queries.size} project${symbols.queries.size === 1 ? "" : "s"}.`
+            : "Checking code names in the background; they show on the next refresh.",
     },
   };
 }

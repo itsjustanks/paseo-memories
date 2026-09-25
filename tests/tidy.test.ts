@@ -10,11 +10,12 @@ const { forgetDiscovery } = await import("../server/discover");
 const { resetDaemonCache } = await import("../server/daemon");
 const { findingsFor } = await import("../server/tidy");
 const { searchFor } = await import("../server/search");
-const { forgetScans, scanSettled } = await import("../server/symbols");
+const { forgetScans, scanSettled, scanStats, PASS_LIMITS } = await import("../server/symbols");
 const { pendingSettled, forgetPendingCounts } = await import("../server/codex-pending");
 const { setSqliteLoader } = await import("../server/codex-lock");
 const { handleInventory } = await import("../server/read");
 const tidy = await import("../shared/tidy");
+const { PLAIN, jargonIn, scanProgressNote } = await import("../shared/plain");
 const { compactDiff, lineDiff } = await import("../shared/diff");
 
 const LONG = "Deploys go out every Friday afternoon after the release checklist is signed off by two people, the staging smoke tests pass, the changelog is written, and the on-call engineer has confirmed they are around for the next four hours";
@@ -126,6 +127,42 @@ test("findings: every kind on the seeded fixture, each with one action", async (
   assert.ok(symbols.some((message) => message.includes("oldHelperFn")), symbols.join("\n"));
   assert.ok(!symbols.some((message) => message.includes("renderWidget")), "a name still in the code is fine");
   void second;
+});
+
+test("a scan cut short by the read budget says how many projects were checked", async () => {
+  await fresh();
+  seed();
+  // A second project whose memory names code: it has no source files, so it needs no reads.
+  appendFileSync(join(sb.plain, "AGENTS.md"), "\n## Build\n\nRun `buildPlainThing()` before a release.\n");
+  const paseo = fakePaseo(sb).api;
+  const budget = PASS_LIMITS.readBytes;
+  PASS_LIMITS.readBytes = 0;
+  try {
+    await findingsFor(paseo, true);
+    await scanSettled();
+    const stats = scanStats();
+    assert.equal(stats.unfinished, true, "the app project needs reads the budget does not allow");
+    assert.ok(stats.projects >= 1 && stats.projects < stats.wanted, `${stats.projects} of ${stats.wanted}`);
+    const partial = await findingsFor(paseo);
+    assert.equal(partial.symbolScan.checked, stats.projects);
+    assert.equal(partial.symbolScan.total, stats.wanted);
+    const note = `Code names checked in ${stats.projects} of ${stats.wanted} projects so far; the rest are still being scanned.`;
+    assert.equal(partial.symbolScan.note, note, "technical mode");
+    assert.equal(scanProgressNote(partial.symbolScan), note, "plain mode");
+    assert.deepEqual(jargonIn(note), []);
+    assert.ok(!partial.findings.some((finding) => finding.kind === "stale-symbol" && finding.message.includes("oldHelperFn")), "no answer yet for the project not read");
+  } finally {
+    PASS_LIMITS.readBytes = budget;
+  }
+  await findingsFor(paseo, true);
+  await scanSettled();
+  const done = await findingsFor(paseo);
+  assert.equal(done.symbolScan.checked, done.symbolScan.total);
+  assert.equal(scanProgressNote(done.symbolScan), null, "nothing to add once every project has an answer");
+  assert.match(done.symbolScan.note, /^Code names checked against \d+ projects\.$/);
+  assert.ok(done.findings.some((finding) => finding.kind === "stale-symbol" && finding.message.includes("oldHelperFn")));
+  assert.equal(scanProgressNote({ state: "waiting", checked: 0, total: 3 }), PLAIN.tidy.scanWaiting);
+  assert.equal(scanProgressNote({ state: "off" }), null);
 });
 
 test("stale checks can be switched off; nothing opens Codex's database", async () => {

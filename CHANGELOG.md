@@ -3,6 +3,7 @@
 ## 0.2.1 (2026-09-25)
 
 - Memories uses far less memory on computers with many projects: the background check for code names that no longer exist now remembers only the names your notes mention, forgets deleted files and projects, and reads at most 128 MB per pass.
+- Until that check has reached every project, Worth a look says how far it got, for example "Code names checked in 3 of 11 projects so far; the rest are still being scanned."
 
 ## 0.2.0 (2026-09-24)
 

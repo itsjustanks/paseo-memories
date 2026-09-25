@@ -7,7 +7,7 @@ import { search, type Finding, type FindingAction } from "../shared/contracts";
 import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, scopeLabel } from "../shared/labels";
-import { PLAIN, isCodexInternal, plainAgent, plainFinding, plainFindings, plainNextStep, plainWords } from "../shared/plain";
+import { PLAIN, isCodexInternal, plainAgent, plainFinding, plainFindings, plainNextStep, plainWords, scanProgressNote } from "../shared/plain";
 import { KEY, QueryState, useFindings, useInventory } from "./data";
 import { usePlain, useSourceNames } from "./mode";
 import { Button, Card, Disclosure, EmptyState, ErrorText, Facts, Field, Loading, PathText, Row, Section, Tag, useTokens, type Status } from "./ui";
@@ -136,6 +136,7 @@ function PlainOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: 
   const projectFiles = count(listed.filter((source) => source.scope === "project" && !source.accountId));
   const shown = plainFindings(tidy?.findings ?? [], inv.sources);
   const next = tidy ? plainNextStep(tidy.nextStep, shown[0], shown.length, names.byId) : null;
+  const scanNote = tidy ? scanProgressNote(tidy.symbolScan) : null;
   const notes = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
   return (
     <View style={{ gap: t.space.lg }}>
@@ -193,6 +194,7 @@ function PlainOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: 
             <Text style={t.text.caption}>{PLAIN.tidy.none}</Text>
           )
         ) : null}
+        {scanNote ? <Text style={t.text.caption}>{scanNote}</Text> : null}
       </Section>
       <SearchBox hostId={hostId} onOpen={onOpen} />
     </View>

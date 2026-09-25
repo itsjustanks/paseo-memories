@@ -433,8 +433,8 @@ export const findings = defineRpc({
     checked: z.array(z.string()).default([]),
     /** What the checks could not look at, and why (shown under the list). */
     notes: z.array(z.string()).default([]),
-    /** The background scan for stale code names: off | waiting | running | done, with the time of its answer. */
-    symbolScan: z.object({ state: z.string(), asOf: z.string().optional(), note: z.string().default("") }),
+    /** The background scan for stale code names: off | waiting | running | done, with the time of its answer and how many projects have one. */
+    symbolScan: z.object({ state: z.string(), asOf: z.string().optional(), checked: z.number().optional(), total: z.number().optional(), note: z.string().default("") }),
   }),
 });
 

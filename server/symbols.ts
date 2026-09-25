@@ -38,6 +38,8 @@ type Budget = { readBytes: number; cachedFiles: number };
 
 const caches = new Map<string, ProjectCache>();
 const projects = new Map<string, ProjectIndex>();
+/** Requested roots that are not folders on this machine: never scanned, so never "still being scanned". */
+const missing = new Set<string>();
 /** Project root → the names its memories mention (sorted, own strings). Replaced by every request. */
 let wanted = new Map<string, string[]>();
 let running: Promise<void> | null = null;
@@ -139,12 +141,14 @@ async function runPass(): Promise<void> {
   if (!settings.staleChecks) {
     caches.clear();
     projects.clear();
+    missing.clear();
     unfinished = false;
     return;
   }
   const request = wanted;
   for (const root of [...caches.keys()]) if (!request.has(root)) caches.delete(root);
   for (const root of [...projects.keys()]) if (!request.has(root)) projects.delete(root);
+  for (const root of [...missing]) if (!request.has(root)) missing.delete(root);
   // Start where the last cut-short pass stopped, so no project waits forever behind the others.
   const roots = [...request.keys()];
   const start = roots.length ? cursor % roots.length : 0;
@@ -155,8 +159,10 @@ async function runPass(): Promise<void> {
     if (!(await statSafe(root))?.isDirectory) {
       caches.delete(root);
       projects.delete(root);
+      missing.add(root);
       continue;
     }
+    missing.delete(root);
     const index = await scanProject(root, request.get(root)!, budget);
     if (index) projects.set(root, index);
     else if (firstCut < 0) firstCut = i;
@@ -176,6 +182,7 @@ export function requestScan(queries?: Map<string, Iterable<string>>, force = fal
   if (!wanted.size) {
     caches.clear();
     projects.clear();
+    missing.clear();
     return;
   }
   if (!force && !clientSeenWithin()) return;
@@ -201,6 +208,18 @@ export function scanState(): { state: string; asOf?: string } {
   return times.length ? { state: "done", asOf: times[times.length - 1] } : { state: "waiting" };
 }
 
+/** Of these project roots, how many have an answer, out of those that exist here (or are not known to be missing). */
+export function scanProgress(roots: Iterable<string>): { checked: number; total: number } {
+  let checked = 0;
+  let total = 0;
+  for (const root of roots) {
+    if (missing.has(root)) continue;
+    total += 1;
+    if (projects.has(root)) checked += 1;
+  }
+  return { checked, total };
+}
+
 /** For tests: wait for the pass in flight. */
 export async function scanSettled(): Promise<void> {
   await running;
@@ -216,6 +235,7 @@ export function scanStats(): { files: number; projects: number; wanted: number; 
 export function forgetScans(): void {
   caches.clear();
   projects.clear();
+  missing.clear();
   wanted = new Map();
   unfinished = false;
   cursor = 0;
