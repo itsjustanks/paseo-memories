@@ -10,7 +10,7 @@ import { folderName, whenLabel } from "../shared/labels";
 import { PLAIN, isCodexInternal, plainAgent, plainPlanItemName, plainWhen, plainWords } from "../shared/plain";
 import { KEY, QueryState } from "./data";
 import { ModeProvider, usePlain } from "./mode";
-import { canOpenMemories, openMemories } from "./navigate";
+import { canOpenMemories, itemDestination, openMemories, panelDestination } from "./navigate";
 import { Button, Card, EmptyState, Facts, Header, PathText, Row, Screen, Section, Tag, useTokens, useUi } from "./ui";
 
 /**
@@ -19,10 +19,11 @@ import { Button, Card, EmptyState, Facts, Header, PathText, Row, Screen, Section
  * that agent's provider and account.
  */
 
-/** Where a row opens in the Memories page. */
 function openItem(item: LoadPlan["items"][number]) {
-  return item.sourceId && canOpenMemories() ? { onPress: () => openMemories({ tab: item.scope === "user" || item.kind === "paseo-prompt" ? "user" : "projects", sourceId: item.sourceId! }) } : {};
+  const destination = itemDestination(item);
+  return destination && canOpenMemories() ? { onPress: () => openMemories(destination) } : {};
 }
+
 
 /** Plain: what an agent reads, in order, by name, with about how many words; Codex's own working files are left out (they show with technical details). */
 function PlainPlanCard({ plan, showMissing }: { plan: LoadPlan; showMissing?: boolean }) {
@@ -126,7 +127,7 @@ function WorkspacePanel({ theme, layout, host, workspaceId }: PluginWorkspacePan
       ))}
       {canOpenMemories() ? (
         <View style={{ flexDirection: "row" }}>
-          <Button label={PLAIN.panel.open} icon="Brain" variant="ghost" onPress={() => openMemories({ tab: "projects" })} />
+          <Button label={PLAIN.panel.open} icon="Brain" variant="ghost" onPress={() => openMemories(panelDestination(plans))} />
         </View>
       ) : null}
     </Screen>

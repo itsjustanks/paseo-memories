@@ -1,68 +1,105 @@
+import type {
+  PluginClientContext,
+  PluginPopoverProps,
+  PluginScreenParams,
+  PluginSidebarItemProps,
+  PluginSurfaceProps,
+} from "@getpaseo/plugin/client";
+import type { SidebarRowProps } from "@getpaseo/plugin/client/ui";
 import React, { type ComponentType } from "react";
 
 /**
  * The Memories page and its sidebar entry, on whatever app is running it.
  *
  * Paseo 0.11+ apps have native screens: `addScreen` (its title shows in the
- * app's header) and a sidebar item that draws the app's own `SidebarRow`,
- * highlighted while the page is open. Older apps get the surface and sidebar
- * item exactly as before. Each new call is looked up at runtime, because the
- * 0.8 SDK this plugin builds against does not declare them; the types below
- * are copied from the 0.11 SDK.
+ * app's header and can follow the screen's params) and a sidebar item that
+ * draws the app's own `SidebarRow`, highlighted while the page is open, with
+ * a trailing "+" for Add a note. Older apps get the surface and sidebar item
+ * exactly as before. The SDK types are 0.11's, but an older app simply lacks
+ * the new methods, so each one is checked at runtime.
  */
 
-type Params = Record<string, string>;
-type OpenScreen = (input: { screenId: string; params?: Params }) => void;
-type SidebarItemProps = { currentScreen: { screenId: string; params: Params } | null; openScreen: OpenScreen };
-type Cleanup = () => void;
+type NewApi = "addScreen" | "addSidebarHeaderItem" | "openScreen";
 
-/** What every app has (the 0.8 API). */
-export type LegacyClient = {
-  addSurface(id: string, Component: ComponentType<never>): Cleanup;
-  addSidebarItem(contribution: { id: string; title: string; icon: string; surface: string }): Cleanup;
-  openSurface(id: string): void;
-};
-
-/** What Paseo 0.11+ adds; any of it may be missing. */
-export type ScreenClient = {
-  addScreen?: (contribution: { id: string; title: string; Component: ComponentType<never> }) => Cleanup;
-  addSidebarHeaderItem?: (contribution: { id: string; title: string; Component: ComponentType<SidebarItemProps> }) => Cleanup;
-  openScreen?: OpenScreen;
-};
+/** What every app has (the 0.8 API), plus 0.11's screen API where the app has it. */
+export type RegisterClient = Pick<PluginClientContext, "addSurface" | "addSidebarItem" | "openSurface"> & Partial<Pick<PluginClientContext, NewApi>>;
 
 /** The app's sidebar row (`@getpaseo/plugin/client/ui`, 0.11+). */
-export type SidebarRowComponent = ComponentType<{ icon?: string; label?: string; active?: boolean; onPress(): void }>;
+export type SidebarRowComponent = ComponentType<SidebarRowProps>;
 
-export type MainScreen = { id: string; title: string; icon: string; Component: ComponentType<never> };
+/** Screen props on any app: `params` arrive on 0.11+ only. */
+export type MemoriesScreenProps = PluginSurfaceProps & { params?: PluginScreenParams };
+
+/** Sidebar item props as an app may hand them over: `openPopover` can be missing. */
+type ItemProps = Omit<PluginSidebarItemProps, "openPopover"> & Partial<Pick<PluginSidebarItemProps, "openPopover">>;
+
+export type QuickAddButtonProps = { label: string; color: string; onPress(): void };
+
+export type QuickAdd = {
+  /** Accessibility label of the "+" button. */
+  label: string;
+  /** The "+" itself (client/popover.tsx), drawn in the row's trailing slot. */
+  Button: ComponentType<QuickAddButtonProps>;
+  /** Opens the screen here when the app has no popovers. */
+  params: PluginScreenParams;
+  Popover?: ComponentType<PluginPopoverProps>;
+};
+
+export type MainScreen = {
+  id: string;
+  title: string;
+  /** The header title from the screen's params (0.11+); `title` elsewhere. */
+  screenTitle?: (params: PluginScreenParams) => string;
+  icon: string;
+  Component: (props: MemoriesScreenProps) => React.ReactNode;
+  quickAdd?: QuickAdd;
+};
 
 /** Which API a registration used, so tests and callers can tell. */
-export type Registration = { screen: "native" | "surface"; sidebar: "native" | "legacy"; open: (id: string) => void };
+export type Registration = {
+  screen: "native" | "surface";
+  sidebar: "native" | "legacy";
+  /** Opens a page; params only reach it on native screens. */
+  open: (id: string, params?: PluginScreenParams) => void;
+};
 
-/** A sidebar item drawn with the app's own row: the page's icon, highlighted while it is open. */
-export function sidebarItem(screen: MainScreen, SidebarRow: SidebarRowComponent): ComponentType<SidebarItemProps> {
-  function MemoriesSidebarItem({ currentScreen, openScreen }: SidebarItemProps) {
-    return React.createElement(SidebarRow, { icon: screen.icon, active: currentScreen?.screenId === screen.id, onPress: () => openScreen({ screenId: screen.id }) });
+/** A sidebar item drawn with the app's own row: the page's icon, highlighted while it is open, and a "+" for Add a note. */
+export function sidebarItem(screen: MainScreen, SidebarRow: SidebarRowComponent): ComponentType<ItemProps> {
+  function MemoriesSidebarItem({ currentScreen, openScreen, openPopover, theme }: ItemProps) {
+    const quick = screen.quickAdd;
+    const add = quick
+      ? () => {
+          if (quick.Popover && typeof openPopover === "function") openPopover(quick.Popover);
+          else openScreen({ screenId: screen.id, params: quick.params });
+        }
+      : null;
+    return React.createElement(SidebarRow, {
+      icon: screen.icon,
+      active: currentScreen?.screenId === screen.id,
+      onPress: () => openScreen({ screenId: screen.id }),
+      ...(quick && add ? { trailing: React.createElement(quick.Button, { label: quick.label, color: theme?.colors?.foregroundMuted ?? "#888888", onPress: add }) } : {}),
+    });
   }
   return MemoriesSidebarItem;
 }
 
-export function registerMainScreen(client: LegacyClient & ScreenClient, screen: MainScreen, SidebarRow: SidebarRowComponent | undefined): Registration {
+export function registerMainScreen(client: RegisterClient, screen: MainScreen, SidebarRow: SidebarRowComponent | undefined): Registration {
   const native = typeof client.addScreen === "function" && typeof client.openScreen === "function";
-  if (native) client.addScreen!({ id: screen.id, title: screen.title, Component: screen.Component });
+  if (native) client.addScreen!({ id: screen.id, title: screen.screenTitle ?? screen.title, Component: screen.Component });
   else client.addSurface(screen.id, screen.Component);
   // The new sidebar item needs the new screen and the app's row; otherwise the old item, which 0.11 also maps onto screens.
   const nativeSidebar = native && typeof client.addSidebarHeaderItem === "function" && typeof SidebarRow === "function";
-  if (nativeSidebar) client.addSidebarHeaderItem!({ id: screen.id, title: screen.title, Component: sidebarItem(screen, SidebarRow!) });
+  if (nativeSidebar) client.addSidebarHeaderItem!({ id: screen.id, title: screen.title, Component: sidebarItem(screen, SidebarRow!) as ComponentType<PluginSidebarItemProps> });
   else client.addSidebarItem({ id: screen.id, title: screen.title, icon: screen.icon, surface: screen.id });
   return {
     screen: native ? "native" : "surface",
     sidebar: nativeSidebar ? "native" : "legacy",
-    open: native ? (id) => client.openScreen!({ screenId: id }) : (id) => client.openSurface(id),
+    open: native ? (id, params) => client.openScreen!(params ? { screenId: id, params } : { screenId: id }) : (id) => client.openSurface(id),
   };
 }
 
 /** Opens a page from a command: `openScreen` where the app has it, else `openSurface`. */
-export function openFrom(context: { openSurface(id: string): void } & Pick<ScreenClient, "openScreen">, id: string): void {
+export function openFrom(context: Pick<PluginClientContext, "openSurface"> & Partial<Pick<PluginClientContext, "openScreen">>, id: string): void {
   if (typeof context.openScreen === "function") context.openScreen({ screenId: id });
   else context.openSurface(id);
 }

@@ -235,4 +235,11 @@ export const SettingsSelect = ({ label, hint, value, options, onValueChange }: a
 export const SettingsInput = ({ label, hint }: any) => row(label, hint);
 export const SettingsAction = ({ label, actionLabel, onPress }: any) => row(label, undefined, <Text onPress={onPress}>{actionLabel}</Text>);
 export const Icon = ({ name, size = 16, color }: { name: string; size?: number; color?: string }) => <Text style={{ fontSize: size - 4, color, fontWeight: "700" }} accessibilityLabel={name}>{name.replace(/[a-z]/g, "").slice(0, 2)}</Text>;
+// Paseo 0.11's sidebar row (`@getpaseo/plugin/client/ui`): icon, label, highlight, and a trailing slot that presses on its own.
+export const SidebarRow = ({ icon, label, active, onPress, trailing }: { icon?: string; label?: string; active?: boolean; onPress(): void; trailing?: React.ReactNode }) => (
+  <View style={{ flexDirection: "row", alignItems: "center", borderRadius: 8, backgroundColor: active ? "#8882" : "transparent", paddingHorizontal: 8, minHeight: 32 }}>
+    <Text accessibilityRole="button" onPress={onPress} style={{ flex: 1, paddingVertical: 6, color: "inherit" as never }}>{icon ? <Icon name={String(icon)} size={16} /> : null}{"  "}{label ?? "Memories"}</Text>
+    {trailing}
+  </View>
+);
 export { importText, appMemory, codexIndex, APP, H };

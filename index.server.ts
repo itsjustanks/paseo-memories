@@ -37,7 +37,7 @@ import {
 } from "./shared/contracts";
 import { maskTextFields } from "./shared/secrets";
 import { memoriesSettings } from "./shared/settings";
-import { readMemoriesSettings } from "./server/settings";
+import { readMemoriesSettings, adoptSettingsHandle } from "./server/settings";
 
 /** Slow enough to be worth a line in the daemon log. */
 const SLOW_RPC_MS = 5_000;
@@ -75,7 +75,8 @@ export default function contribute(server: PluginServerContext) {
       }
     });
 
-  server.registerSettings(memoriesSettings);
+  // Paseo 0.9+ returns a live handle: settings changes apply without a reload.
+  const stopSettings = adoptSettingsHandle(server.registerSettings(memoriesSettings));
   handle(inventory, handleInventory);
   handle(sourceDetail, handleSourceDetail);
   handle(entryBody, handleEntryBody);
@@ -98,5 +99,8 @@ export default function contribute(server: PluginServerContext) {
   handle(noteAdd, handleNoteAdd);
 
   runStart();
-  return runShutdown;
+  return () => {
+    stopSettings();
+    runShutdown();
+  };
 }

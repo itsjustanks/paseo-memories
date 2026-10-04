@@ -1,11 +1,11 @@
-import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { PLAIN, isCodexInternal, plainFindings } from "../shared/plain";
 import { AddNote } from "./add-note";
 import { QueryState, useCachedFindings, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
 import { ModeProvider, usePlain } from "./mode";
 import { Guide } from "./guide";
-import { onDestination, takeDestination, type Destination } from "./navigate";
+import { isStaleSource, landing, onDestination, opensTransfer, syncScreenParams, takeDestination, toScreenParams, type Destination } from "./navigate";
+import type { MemoriesScreenProps } from "./register";
 import { TabBar, TabIntro, type SectionId } from "./navigation";
 import { Overview } from "./overview";
 import { SourcesTab, projectGroups, userGroups } from "./sources";
@@ -31,7 +31,7 @@ function useHeaderStatus(hostId: string, hostLabel: string, plain: boolean): { s
   return { status, caption: `${S.on(hostLabel)} · ${shown.length ? S.worth(shown.length) : S.tidy}` };
 }
 
-export function MemoriesSurface(props: PluginSurfaceProps) {
+export function MemoriesSurface(props: MemoriesScreenProps) {
   const t = useUi(props.theme, props.layout.compact);
   return (
     <TokensProvider value={t}>
@@ -42,20 +42,20 @@ export function MemoriesSurface(props: PluginSurfaceProps) {
   );
 }
 
-function MemoriesBody({ host }: PluginSurfaceProps) {
+function MemoriesBody({ host, params }: MemoriesScreenProps) {
   const t = useTokens();
   const plain = usePlain();
   const hostId = host.id;
-  const first = useMemo(() => takeDestination(), []);
-  const [tab, setTab] = useState<SectionId>(first?.tab ?? (first?.from || first?.text ? "transfer" : "overview"));
-  const [sourceId, setSourceId] = useState<string | null>(first?.sourceId ?? null);
-  const [entryKey, setEntryKey] = useState<string | null>(first?.entryKey ?? null);
-  const [transfer, setTransfer] = useState<Destination | null>(first?.tab === "transfer" || first?.from || first?.text ? first : null);
+  const first = useMemo(() => landing(params), []);
+  const [tab, setTab] = useState<SectionId>(opensTransfer(first) ? "transfer" : (first.tab ?? "overview"));
+  const [sourceId, setSourceId] = useState<string | null>(first.sourceId ?? null);
+  const [entryKey, setEntryKey] = useState<string | null>(first.entryKey ?? null);
+  const [transfer, setTransfer] = useState<Destination | null>(opensTransfer(first) ? first : null);
   const inventory = useInventory(hostId);
   const workspaces = useWorkspaceFolders(hostId);
   const refreshAll = useInvalidate(hostId);
   // Add a note, open over the current tab; `workspaceId` preselects "Only in <project>".
-  const [adding, setAdding] = useState<{ workspaceId?: string } | null>(first?.addNote ?? null);
+  const [adding, setAdding] = useState<{ workspaceId?: string } | null>(first.addNote ?? null);
 
   const go = (destination: Destination) => {
     setAdding(destination.addNote ?? null);
@@ -77,6 +77,46 @@ function MemoriesBody({ host }: PluginSurfaceProps) {
       }),
     [],
   );
+
+  // Paseo 0.11+: the page's place lives in its params. New params on this
+  // screen (back/forward) move the page; a move inside the page records new
+  // params, handing the in-memory part (entries to copy) to the next screen.
+  const paramsKey = JSON.stringify(params ?? null);
+  const seenParams = useRef(paramsKey);
+  useEffect(() => {
+    if (seenParams.current === paramsKey) return;
+    seenParams.current = paramsKey;
+    const destination = landing(params);
+    setAdding(destination.addNote ?? null);
+    setTab(opensTransfer(destination) ? "transfer" : (destination.tab ?? "overview"));
+    setSourceId(destination.sourceId ?? null);
+    setEntryKey(destination.entryKey ?? null);
+    setTransfer(opensTransfer(destination) ? destination : null);
+  }, [paramsKey]);
+  const here = toScreenParams({
+    tab,
+    ...(sourceId ? { sourceId } : {}),
+    ...(entryKey ? { entryKey } : {}),
+    ...(adding ? { addNote: adding } : {}),
+  });
+  const hereKey = JSON.stringify(here);
+  // A stale link falls back to the Overview without a new history entry, so Back is not a loop.
+  const quietKey = useRef<string | null>(null);
+  useEffect(() => {
+    const quiet = quietKey.current === hereKey;
+    quietKey.current = null;
+    if (quiet) return;
+    syncScreenParams(here, params, tab === "transfer" ? transfer : null);
+  }, [hereKey]);
+  // A source this host no longer has (an old link, a deleted file): back to the Overview.
+  const sourcesNow = inventory.data?.sources;
+  useEffect(() => {
+    if (!isStaleSource(sourceId, sourcesNow)) return;
+    quietKey.current = JSON.stringify(toScreenParams(adding ? { addNote: adding } : {}));
+    setTab("overview");
+    setSourceId(null);
+    setEntryKey(null);
+  }, [sourceId, sourcesNow]);
 
   /** Open a source on the tab it belongs to. */
   const open = (id: string, key?: string) => {

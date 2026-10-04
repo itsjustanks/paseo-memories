@@ -15,7 +15,7 @@ Nothing technical shows unless you ask for it: turn on **Show technical details*
 
 ## Install
 
-Needs Paseo 0.8.0 or later. On the daemon host:
+Needs Paseo 0.8 or later; best on 0.11 (remembers where you were, "+" in the sidebar). On the daemon host:
 
 ```sh
 paseo plugin add git:https://github.com/itsjustanks/paseo-memories.git
@@ -74,7 +74,7 @@ npm run smoke       # read-only inventory, findings and export of your real HOME
 npm run preview:ui  # fixture preview at 127.0.0.1:43299 (PREVIEW_PORT to change)
 ```
 
-Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`, `?nolinks` (an app without `openExternalUrl`).
+Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`, `?nolinks` (an app without `openExternalUrl`). The preview runs the real client entry against a fake Paseo 0.11 app (screen params in the URL as `param.*`); `?legacy` stands in for Paseo 0.10, `?chrome` adds the app sidebar and header, `?popover` opens Add a note from the sidebar "+".
 
 Client bundle check (Paseo's esbuild; no `node:` import may be reachable from `client/`):
 
