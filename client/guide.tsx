@@ -90,9 +90,9 @@ function DocsCard() {
     void openLink(url).then((outcome) => setMessage(outcome === "opened" ? "" : outcome === "copied" ? `Couldn't open a browser, so the link was copied: ${url}` : `Couldn't open a browser. The link is ${url}`));
   return (
     <Card title="The agents' own docs" icon="ExternalLink" subtitle="Where the numbers above come from. Opens in your browser.">
-      <View style={{ gap: 2 }}>
+      <View style={{ gap: t.space.hair }}>
         {DOCS.map((doc) => (
-          <Pressable key={doc.url} accessibilityRole="link" accessibilityLabel={`${doc.label} (opens in your browser)`} onPress={() => open(doc.url)} hitSlop={t.control.hit} style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, paddingVertical: 6, alignSelf: "flex-start" }}>
+          <Pressable key={doc.url} accessibilityRole="link" accessibilityLabel={`${doc.label} (opens in your browser)`} onPress={() => open(doc.url)} hitSlop={t.control.hit} style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, paddingVertical: t.space.xs + t.space.hair, alignSelf: "flex-start" }}>
             {HostIcon ? <HostIcon name="ExternalLink" size={16} color={t.color.accent} /> : null}
             <Text style={[t.text.body, { color: t.color.accent, fontWeight: "600", flexShrink: 1 }]}>{doc.label}</Text>
           </Pressable>
@@ -106,7 +106,7 @@ function DocsCard() {
 function Reference() {
   const t = useTokens();
   return (
-    <View style={{ gap: t.space.lg }}>
+    <View style={{ gap: t.space.md }}>
       {[...LOADING, READ_ONLY, SAFETY].map((block) => (
         <Card key={block.title} title={block.title} icon={block.icon}>
           <Bullets items={block.lines} icon="Dot" />
@@ -123,7 +123,7 @@ export function Guide() {
   const plain = usePlain();
   if (!plain) return <Reference />;
   return (
-    <View style={{ gap: t.space.lg }}>
+    <View style={{ gap: t.space.md }}>
       {PLAIN_GUIDES.map((guide) => (
         <Card key={guide.title} title={guide.title} icon={guide.icon}>
           {guide.steps.map((step, index) => (

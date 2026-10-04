@@ -33,7 +33,7 @@ export type MemoriesScreenProps = PluginSurfaceProps & { params?: PluginScreenPa
 /** Sidebar item props as an app may hand them over: `openPopover` can be missing. */
 type ItemProps = Omit<PluginSidebarItemProps, "openPopover"> & Partial<Pick<PluginSidebarItemProps, "openPopover">>;
 
-export type QuickAddButtonProps = { label: string; color: string; onPress(): void };
+export type QuickAddButtonProps = { label: string; color: string; onPress(): void; testID?: string };
 
 export type QuickAdd = {
   /** Accessibility label of the "+" button. */
@@ -65,7 +65,7 @@ export type Registration = {
 
 /** A sidebar item drawn with the app's own row: the page's icon, highlighted while it is open, and a "+" for Add a note. */
 export function sidebarItem(screen: MainScreen, SidebarRow: SidebarRowComponent): ComponentType<ItemProps> {
-  function MemoriesSidebarItem({ currentScreen, openScreen, openPopover, theme }: ItemProps) {
+  function PluginSidebarRowItem({ currentScreen, openScreen, openPopover, theme }: ItemProps) {
     const quick = screen.quickAdd;
     const add = quick
       ? () => {
@@ -75,12 +75,13 @@ export function sidebarItem(screen: MainScreen, SidebarRow: SidebarRowComponent)
       : null;
     return React.createElement(SidebarRow, {
       icon: screen.icon,
+      label: screen.title,
       active: currentScreen?.screenId === screen.id,
       onPress: () => openScreen({ screenId: screen.id }),
-      ...(quick && add ? { trailing: React.createElement(quick.Button, { label: quick.label, color: theme?.colors?.foregroundMuted ?? "#888888", onPress: add }) } : {}),
+      ...(quick && add ? { trailing: React.createElement(quick.Button, { label: quick.label, color: theme?.colors?.foregroundMuted ?? "#888888", onPress: add, testID: `${screen.id}-sidebar-add` }) } : {}),
     });
   }
-  return MemoriesSidebarItem;
+  return PluginSidebarRowItem;
 }
 
 export function registerMainScreen(client: RegisterClient, screen: MainScreen, SidebarRow: SidebarRowComponent | undefined): Registration {

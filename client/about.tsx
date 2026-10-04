@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Text, View, type LayoutChangeEvent } from "react-native";
 import { PLAIN } from "../shared/plain";
-import { Card, HostIcon, IconBadge, Link, NumberedStep, Tag, TYPE, useTokens } from "./ui";
+import { Card, Disclosure, Divider, HostIcon, IconBadge, Link, Meta, NumberedStep, SectionTitle, TYPE, useTokens } from "./ui";
 
 /**
  * The Overview's guide, in the order every plugin uses: what Memories is, how
@@ -27,59 +27,53 @@ function useWidth(): [number | null, (event: LayoutChangeEvent) => void] {
 }
 
 /** "What is Memories?", with the agents that have notes on this computer when they are known. */
-function WhatIsCard({ agents }: { agents: readonly string[] }) {
+function WhatIs({ agents }: { agents: readonly string[] }) {
   const t = useTokens();
   return (
-    <Card title={A.whatIsTitle} icon="Brain">
+    <View style={{ gap: t.space.sm }}>
+      <SectionTitle icon="Brain">{A.whatIsTitle}</SectionTitle>
       {A.whatIs.map((line) => (
         <Text key={line} style={t.text.body}>
           {line}
         </Text>
       ))}
-      {agents.length ? (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: t.space.sm }}>
-          <Text style={t.text.caption}>{A.agentsHere}</Text>
-          {agents.map((name) => (
-            <Tag key={name} label={name} tone="ok" />
-          ))}
-        </View>
-      ) : null}
-    </Card>
+      {agents.length ? <Meta>{`${A.agentsHere} ${agents.join(", ")}`}</Meta> : null}
+    </View>
   );
 }
 
 function Arrow({ down }: { down: boolean }) {
   const t = useTokens();
-  const glyph = HostIcon ? <HostIcon name={down ? "ArrowDown" : "ArrowRight"} size={20} color={t.color.muted} /> : <Text style={[t.text.lead, { color: t.color.muted }]}>{down ? "↓" : "→"}</Text>;
+  const glyph = HostIcon ? <HostIcon name={down ? "ArrowDown" : "ArrowRight"} size={18} color={t.color.muted} /> : <Text style={[t.text.lead, { color: t.color.muted }]}>{down ? "↓" : "→"}</Text>;
   return (
-    <View accessible={false} style={down ? { width: 48, alignItems: "center", paddingVertical: 2 } : { paddingTop: 16, width: 24, alignItems: "center" }}>
+    <View accessible={false} style={down ? { width: 40, alignItems: "center", paddingVertical: t.space.hair } : { paddingTop: t.space.row, width: t.space.section, alignItems: "center" }}>
       {glyph}
     </View>
   );
 }
 
-/** Four steps with icons and arrows: across on a wide screen, down on a narrow one. */
-function HowItWorksCard() {
+/** Steps with icons and arrows: across on a wide screen, down on a narrow one. */
+export function FlowSteps({ steps, note }: { steps: ReadonlyArray<{ icon: string; title: string; text: string }>; note?: React.ReactNode }) {
   const t = useTokens();
   const [width, onLayout] = useWidth();
   const stacked = width === null ? t.compact : width < FLOW_STACK_WIDTH;
   return (
-    <Card title={A.howTitle} icon="Workflow">
+    <>
       <View onLayout={onLayout} style={{ flexDirection: stacked ? "column" : "row", alignItems: stacked ? "stretch" : "flex-start" }}>
-        {A.flow.map((step, index) => (
+        {steps.map((step, index) => (
           <React.Fragment key={step.title}>
             {index > 0 ? <Arrow down={stacked} /> : null}
             {stacked ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
-                <IconBadge name={step.icon} size={48} />
-                <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.row }}>
+                <IconBadge name={step.icon} size={40} />
+                <View style={{ flex: 1, minWidth: 0, gap: t.space.hair }}>
                   <Text style={t.text.heading}>{`${index + 1}. ${step.title}`}</Text>
                   <Text style={t.text.body}>{step.text}</Text>
                 </View>
               </View>
             ) : (
-              <View style={{ flex: 1, minWidth: 0, alignItems: "center", gap: t.space.sm, paddingHorizontal: 4 }}>
-                <IconBadge name={step.icon} size={52} />
+              <View style={{ flex: 1, minWidth: 0, alignItems: "center", gap: t.space.sm, paddingHorizontal: t.space.xs }}>
+                <IconBadge name={step.icon} size={40} />
                 <Text style={[t.text.heading, { textAlign: "center" }]}>{`${index + 1}. ${step.title}`}</Text>
                 <Text style={{ ...TYPE.secondary, color: t.color.fg, textAlign: "center" }}>{step.text}</Text>
               </View>
@@ -87,68 +81,63 @@ function HowItWorksCard() {
           </React.Fragment>
         ))}
       </View>
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.md, padding: 14, borderRadius: t.radius.md, backgroundColor: t.color.accentSoft }}>
-        {HostIcon ? (
-          <View style={{ paddingTop: 3 }}>
-            <HostIcon name="RotateCcw" size={18} color={t.color.accent} />
-          </View>
-        ) : null}
-        <Text style={[t.text.body, { flex: 1, minWidth: 0 }]}>
-          <Text style={{ fontWeight: "700" }}>{A.flowNoteBold}</Text>
-          {A.flowNote}
-        </Text>
-      </View>
-    </Card>
-  );
-}
-
-/** Numbered steps for a first note, and where to see what one agent reads. */
-function HowToUseCard({ onGuide }: { onGuide: () => void }) {
-  const t = useTokens();
-  return (
-    <Card title={A.useTitle} icon="ListOrdered">
-      {A.steps.map((step, index) => (
-        <NumberedStep key={step} n={index + 1}>
-          {step}
-        </NumberedStep>
-      ))}
-      <View style={{ gap: 4, padding: 14, borderRadius: t.radius.md, borderWidth: 1, borderColor: t.color.border, backgroundColor: t.color.surface0 }}>
-        <Text style={t.text.heading}>{A.boxTitle}</Text>
-        <Text style={t.text.body}>{A.boxText}</Text>
-        <Link label={A.boxLink} accessibilityLabel="Open the Guide tab" onPress={onGuide} />
-      </View>
-    </Card>
-  );
-}
-
-/** One plain line for each word the page uses, two across when there is room. */
-function GlossaryCard() {
-  const t = useTokens();
-  return (
-    <Card title={A.wordsTitle} icon="BookOpen">
-      <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 24, rowGap: t.space.lg }}>
-        {A.words.map((word) => (
-          <View key={word.term} style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.md, flexBasis: 300, flexGrow: 1, flexShrink: 1 }}>
-            <IconBadge name={word.icon} size={30} />
-            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-              <Text style={t.text.heading}>{word.term}</Text>
-              <Text style={t.text.body}>{word.text}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-    </Card>
-  );
-}
-
-/** The Overview's guide, top to bottom: what it is, how it works, how to use it, and the words. */
-export function OverviewGuide({ agents, onGuide }: { agents: readonly string[]; onGuide: () => void }) {
-  return (
-    <>
-      <WhatIsCard agents={agents} />
-      <HowItWorksCard />
-      <HowToUseCard onGuide={onGuide} />
-      <GlossaryCard />
+      {note ? <Meta>{note}</Meta> : null}
     </>
+  );
+}
+
+/** Four words with icons, two across when there is room. */
+export function Glossary({ words }: { words: ReadonlyArray<{ icon: string; term: string; text: string }> }) {
+  const t = useTokens();
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: t.space.section, rowGap: t.space.row }}>
+      {words.map((word) => (
+        <View key={word.term} style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.row, flexBasis: 300, flexGrow: 1, flexShrink: 1 }}>
+          <IconBadge name={word.icon} size={28} />
+          <View style={{ flex: 1, minWidth: 0, gap: t.space.hair }}>
+            <Text style={t.text.heading}>{word.term}</Text>
+            <Text style={t.text.body}>{word.text}</Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * "New to Memories? How it works": one card, the parts split by rules: what
+ * it is, how it works, how to use it, and the words. Open while nothing is
+ * set up yet, folded once things work.
+ */
+export function OverviewGuide({ agents, onGuide, open }: { agents: readonly string[]; onGuide: () => void; open: boolean }) {
+  const t = useTokens();
+  return (
+    <Disclosure title={A.newTo} open={open}>
+      <Card>
+        <WhatIs agents={agents} />
+        <Divider />
+        <View style={{ gap: t.space.row }}>
+          <SectionTitle icon="Workflow">{A.howTitle}</SectionTitle>
+          <FlowSteps steps={A.flow} note={`${A.flowNoteBold}${A.flowNote}`} />
+        </View>
+        <Divider />
+        <View style={{ gap: t.space.row }}>
+          <SectionTitle icon="ListOrdered">{A.useTitle}</SectionTitle>
+          <Meta>{PLAIN.overview.primaryHint}</Meta>
+          {A.steps.map((step, index) => (
+            <NumberedStep key={step} n={index + 1}>
+              {step}
+            </NumberedStep>
+          ))}
+          <Text style={t.text.body}>{`${A.boxTitle} ${A.boxText}`}</Text>
+          <Link label={A.boxLink} accessibilityLabel="Open the Guide tab" onPress={onGuide} />
+        </View>
+        <Divider />
+        <View style={{ gap: t.space.row }}>
+          <SectionTitle icon="BookOpen">{A.wordsTitle}</SectionTitle>
+          <Glossary words={A.words} />
+        </View>
+      </Card>
+    </Disclosure>
   );
 }

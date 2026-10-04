@@ -2,7 +2,10 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import * as HostUI from "@getpaseo/plugin/client/ui";
 import { registerSurfaceOpener, rememberTitleMode, screenTitle } from "./client/navigate";
 import { MemoriesAgentPanel, MemoriesWorkspacePanel } from "./client/panels";
-import { AddNotePopover, QuickAddButton } from "./client/popover";
+import { AddNotePopover, AddSkillPopover, QuickAddButton } from "./client/popover";
+import { registerScreenOpener } from "./client/screens";
+import { skillsScreenTitle } from "./client/skills-nav";
+import { SkillsSurface } from "./client/skills-surface";
 import { openFrom, registerMainScreen, type SidebarRowComponent } from "./client/register";
 import { MemoriesSettingsScreen } from "./client/settings";
 import { MemoriesSurface } from "./client/surface";
@@ -27,11 +30,25 @@ export default function contribute(client: PluginClientContext) {
     },
     SidebarRow,
   );
-  // Panels have no way to open the page of their own; lend them this one. Native screens keep their place in params.
+  // The second page, Skills (0.4.0), the same way: its own screen and sidebar row, with "+" for Add a skill.
+  registerMainScreen(
+    client,
+    {
+      id: "skills",
+      title: "Skills",
+      screenTitle: skillsScreenTitle,
+      icon: "Sparkles",
+      Component: SkillsSurface,
+      quickAdd: { label: "Add a skill", Button: QuickAddButton, params: { tab: "add" }, Popover: AddSkillPopover },
+    },
+    SidebarRow,
+  );
+  // Panels have no way to open a page of their own; lend them this one. Native screens keep their place in params.
   registerSurfaceOpener(page.open, { params: page.screen === "native" });
+  registerScreenOpener(page.open, { params: page.screen === "native" });
   client.addWorkspacePanel({
     id: "memories-workspace",
-    title: "Memories",
+    title: "Memories & Skills",
     icon: "Brain",
     context: "workspace",
     locations: ["workspace", "explorer"],
@@ -39,13 +56,13 @@ export default function contribute(client: PluginClientContext) {
   });
   client.addWorkspacePanel({
     id: "memories-agent",
-    title: "Memories",
+    title: "Memories & Skills",
     icon: "Brain",
     context: "agent",
     locations: ["workspace", "explorer"],
     Component: MemoriesAgentPanel,
   });
-  client.addSettingsScreen({ id: "memories", title: "Memories", icon: "Brain", Component: MemoriesSettingsScreen });
+  client.addSettingsScreen({ id: "memories", title: "Memories & Skills", icon: "Brain", Component: MemoriesSettingsScreen });
   client.addCommandCenterItem({
     id: "open-memories",
     title: "Open Memories",
@@ -54,6 +71,16 @@ export default function contribute(client: PluginClientContext) {
     context: "global",
     onSelect(context) {
       openFrom(context, "memories");
+    },
+  });
+  client.addCommandCenterItem({
+    id: "open-skills",
+    title: "Open Skills",
+    icon: "Sparkles",
+    keywords: ["skill", "skills", "SKILL.md", "usage", "add a skill", "npx skills"],
+    context: "global",
+    onSelect(context) {
+      openFrom(context, "skills");
     },
   });
   client.addCommandCenterItem({
@@ -78,5 +105,6 @@ export default function contribute(client: PluginClientContext) {
   });
   return () => {
     registerSurfaceOpener(null);
+    registerScreenOpener(null);
   };
 }

@@ -5,6 +5,7 @@
  * blocking file calls, nothing kept but headers and counts).
  */
 import assert from "node:assert/strict";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
 import { fakePaseo, makeSandbox, spawned, withoutSyncFs } from "./helpers";
@@ -130,7 +131,7 @@ test("checks and tidy findings, each with one action", async () => {
   assert.equal(d.nextStep!.title, d.findings.find((finding) => finding.severity === "warn")!.message);
 });
 
-test("listing cost per account, against each agent's budget", async () => {
+test("listing cost per account: a budget only when the model is known", async () => {
   const d = await fresh();
   const claude = d.costs.find((cost) => cost.agent === "claude" && cost.accountId === `claude:${sb.claude}`)!;
   const slot = d.costs.find((cost) => cost.agent === "claude" && cost.accountId === `claude:${sb.slot.claude}`)!;
@@ -140,19 +141,70 @@ test("listing cost per account, against each agent's budget", async () => {
   assert.equal(claude.skills, listed.length);
   assert.equal(claude.chars, listed.reduce((sum, skill) => sum + skill.listing.claude, 0));
   assert.equal(claude.tokens, Math.ceil(claude.chars / 4));
-  assert.equal(claude.budgetChars, 8000);
+  assert.equal(claude.budgetKnown, false, "no model known: a fact, not a budget");
+  assert.equal(claude.overBudget, false);
+  assert.equal(codex.budgetKnown, false, "Codex's window isn't known here");
   assert.equal(slot.skills, 2, "the slot sees its own skill and the managed one");
-  assert.ok(d.skills.find((skill) => skill.name === "alpha")!.codexAccounts.includes(`codex:${sb.codex}`));
   assert.ok(codex.skills >= 5, "shared, its own, built-in and admin skills");
 });
 
-test("over budget is a finding", async () => {
+test("over budget: only against the window the agents use", async () => {
   const { writeSkill, skillMd } = await import("./skills-helpers");
+  const { readFileSync, writeFileSync, rmSync } = await import("node:fs");
   for (let i = 0; i < 8; i += 1) writeSkill(join(sb.shared, `wordy-${i}`), skillMd(`wordy-${i}`, "w".repeat(1500)));
-  const d = await fresh();
-  assert.ok(d.findings.some((finding) => finding.kind === "over-budget" && finding.message.startsWith("Codex")));
-  const { rmSync } = await import("node:fs");
-  for (let i = 0; i < 8; i += 1) rmSync(join(sb.shared, `wordy-${i}`), { recursive: true });
+  for (let i = 0; i < 8; i += 1) symlinkSync(join(sb.shared, `wordy-${i}`), join(sb.claudeSkills, `wordy-${i}`));
+  const path = join(sb.claude, "settings.json");
+  const original = readFileSync(path, "utf8");
+  const withModel = (model: string) => writeFileSync(path, JSON.stringify({ ...JSON.parse(original), model }, null, 2));
+  try {
+    let d = await fresh();
+    assert.equal(d.findings.some((finding) => finding.kind === "over-budget"), false, "unknown model: no alarm");
+    withModel("claude-haiku-4-5");
+    d = await fresh();
+    const small = d.costs.find((cost) => cost.accountId === `claude:${sb.claude}`)!;
+    assert.deepEqual([small.budgetKnown, small.budgetChars, small.overBudget, small.model], [true, 8000, true, "claude-haiku-4-5"]);
+    assert.ok(d.findings.some((finding) => finding.kind === "over-budget" && finding.message.includes("claude-haiku-4-5")));
+    withModel("opus[1m]");
+    d = await fresh();
+    const big = d.costs.find((cost) => cost.accountId === `claude:${sb.claude}`)!;
+    assert.deepEqual([big.budgetKnown, big.budgetChars, big.overBudget], [true, 40000, false]);
+    assert.equal(d.findings.some((finding) => finding.kind === "over-budget"), false);
+    // The agents Paseo runs decide over the account's default: the smallest window counts.
+    const { forgetAgentModels } = await import("../server/skill-models");
+    (fake.api as unknown as { agents: unknown }).agents = { list: async () => ({ entries: [{ agent: { provider: "claude", model: "opus[1m]" } }, { agent: { provider: "claude", model: "claude-sonnet-4-5" } }] }) };
+    forgetAgentModels();
+    d = await fresh();
+    assert.equal(d.costs.find((cost) => cost.accountId === `claude:${sb.claude}`)!.budgetChars, 8000);
+    (fake.api as unknown as { agents: unknown }).agents = { list: async () => ({ entries: [{ agent: { provider: "claude", model: "some-gateway-model" } }] }) };
+    forgetAgentModels();
+    d = await fresh();
+    assert.equal(d.costs.find((cost) => cost.accountId === `claude:${sb.claude}`)!.budgetKnown, false, "an agent on an unknown model: no guess");
+  } finally {
+    writeFileSync(path, original);
+    delete (fake.api as unknown as { agents?: unknown }).agents;
+    for (let i = 0; i < 8; i += 1) {
+      rmSync(join(sb.claudeSkills, `wordy-${i}`));
+      rmSync(join(sb.shared, `wordy-${i}`), { recursive: true });
+    }
+  }
+});
+
+test("Paseo orphans come only from the running Paseo's own bundle", async () => {
+  const { forgetPaseoBundle } = await import("../server/paseo-bundle");
+  const saved = process.env.PASEO_MEMORIES_PASEO_BUNDLE_DIR;
+  try {
+    process.env.PASEO_MEMORIES_PASEO_BUNDLE_DIR = "";
+    forgetPaseoBundle();
+    let d = await fresh();
+    assert.equal(d.findings.some((finding) => finding.kind === "paseo-orphan"), false, "bundle unreadable: no orphan finding at all");
+    process.env.PASEO_MEMORIES_PASEO_BUNDLE_DIR = saved;
+    forgetPaseoBundle();
+    d = await fresh();
+    assert.deepEqual(d.findings.filter((finding) => finding.kind === "paseo-orphan").map((finding) => finding.message.split(" ")[0]), ["paseo-loop"]);
+  } finally {
+    process.env.PASEO_MEMORIES_PASEO_BUNDLE_DIR = saved;
+    forgetPaseoBundle();
+  }
 });
 
 test("reads start no process, use no network and never block", async () => {

@@ -169,7 +169,7 @@ test("no pass while no app is connected, unless forced", async () => {
 });
 
 test("used in this chat: exact by the agent's chat id, else by folder and time", async () => {
-  agentSnapshots.set("ag-claude", { id: "ag-claude", provider: "claude", cwd: sb.app, createdAt: isoDaysAgo(3), persistence: { provider: "claude", sessionId: "sess-main" } });
+  agentSnapshots.set("ag-claude", { id: "ag-claude", provider: "claude", model: "claude-opus-5-5", cwd: sb.app, createdAt: isoDaysAgo(3), persistence: { provider: "claude", sessionId: "sess-main" } });
   agentSnapshots.set("ag-codex", { id: "ag-codex", provider: "codex", cwd: sb.app, createdAt: isoDaysAgo(3), persistence: { provider: "codex", sessionId: "x", nativeHandle: "thread-9" } });
   agentSnapshots.set("ag-old", { id: "ag-old", provider: "claude", cwd: sb.app, createdAt: isoDaysAgo(5), persistence: null });
   const claude = await handleSkillsAgent({ workspaceId: "ws-app", providerId: "claude", agentId: "ag-claude" }, ctx);
@@ -177,6 +177,7 @@ test("used in this chat: exact by the agent's chat id, else by folder and time",
   assert.deepEqual(Object.fromEntries(claude.chat.skills.map((skill) => [skill.name, skill.count])), { alpha: 4, "own-skill": 1, "toolkit:deploy": 1 });
   assert.ok(claude.skills.some((skill) => skill.name === "app-helper"), "the project's own skills are listed");
   assert.ok(claude.cost && claude.cost.chars > 0);
+  assert.deepEqual([claude.cost!.budgetKnown, claude.cost!.budgetChars], [true, 40_000], "this agent's own model sets its budget");
   const codex = await handleSkillsAgent({ workspaceId: "ws-app", providerId: "codex", agentId: "ag-codex" }, ctx);
   assert.equal(codex.chat.match, "exact");
   assert.deepEqual(codex.chat.skills.map((skill) => skill.name).sort(), ["alpha", "legacy-x"]);

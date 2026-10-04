@@ -66,7 +66,7 @@ const PATHS: Record<string, string> = {
 };
 
 test("the jargon list is the one in the brief", () => {
-  assert.deepEqual([...JARGON], ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "frontmatter", "token", "slug", "scope", "sqlite", "consolidation", "markdown", "repo", "config", "git", "commit"]);
+  assert.deepEqual([...JARGON], ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "frontmatter", "token", "slug", "scope", "sqlite", "consolidation", "markdown", "repo", "config", "git", "commit", "SKILL.md", "npx", "lockfile", "lock file", "symlink"]);
   assert.deepEqual(jargonIn("Your repository config"), ["repo", "config"]);
   assert.deepEqual(jargonIn("Shared through git; commit it"), ["git", "commit"]);
   assert.deepEqual(jargonIn("GitHub keeps it online"), []);

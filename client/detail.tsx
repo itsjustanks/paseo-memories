@@ -62,7 +62,7 @@ function HeaderCard({ source, children }: { source: Source; children: React.Reac
   const t = useTokens();
   return (
     <Card>
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.md }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.row }}>
         <IconBadge name={sourceIcon(source)} tone={source.access === "editable" ? "accent" : "neutral"} size={40} />
         <View style={{ flex: 1, minWidth: 0, gap: t.space.xs }}>{children}</View>
       </View>
@@ -242,7 +242,7 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
   );
   return (
     <Card>
-      <View style={{ gap: t.space.md }}>
+      <View style={{ gap: t.space.row }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: t.space.sm }}>
           <Text style={[t.text.section, { flexShrink: 1 }]}>{creating ? (plain ? M.newTitle : "New memory") : form.name || entryKey}</Text>
           <Button label={M.back} icon="ArrowLeft" variant="ghost" onPress={() => onDone(null)} />
@@ -371,7 +371,7 @@ function FileEditor({ hostId, source, workspaceId, stamp, codexLock }: { hostId:
   if (source.exists && !body.data) return <QueryState query={body} what="this file" />;
   return (
     <Card>
-      <View style={{ gap: t.space.md }}>
+      <View style={{ gap: t.space.row }}>
         <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
         {draft?.newer ? <ChangedOnDisk onReload={() => setDraft(reload(draft))} onKeep={() => setDraft(keepEditing(draft))} /> : null}
         {editable && !locked ? (
@@ -416,7 +416,7 @@ function PromptEditor({ hostId }: { hostId: string }) {
   if (!query.data) return <QueryState query={query} what={plain ? "these instructions" : "Paseo's appended prompt"} />;
   return (
     <Card>
-      <View style={{ gap: t.space.md }}>
+      <View style={{ gap: t.space.row }}>
         <Text style={t.text.caption}>{plain ? PLAIN.prompt.note : query.data.note}</Text>
         <RevealBar secrets={query.data.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
         {draft?.newer ? <ChangedOnDisk onReload={() => setDraft(reload(draft))} onKeep={() => setDraft(keepEditing(draft))} /> : null}
@@ -666,7 +666,7 @@ function NoteCards({ hostId, source, workspaceId, onCopy }: { hostId: string; so
   const change = (card: (typeof cards)[number], next: { title: string; body: string }) =>
     run(async () => (hasHiddenText(`${next.title}\n${next.body}`) ? refuse(HIDDEN_TEXT) : write({ path: source.path, ...where, text: cardReplacement(card, next), expected: stamp!, sectionKey: card.key })));
   return (
-    <View style={{ gap: t.space.md }}>
+    <View style={{ gap: t.space.row }}>
       <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
       {!editable && cards.length ? <Text style={t.text.body}>{PLAIN.notes.readOnly}</Text> : null}
       {cards.length === 0 ? <Text style={t.text.body}>{PLAIN.notes.none}</Text> : null}
@@ -699,7 +699,7 @@ export function SourceDetail({ hostId, sourceId, workspaceId, entryKey, onOpenEn
   const { source, entries, index, warnings, codex, stamp } = detail.data;
   const fileEditor = <FileEditor hostId={hostId} source={source} {...(workspaceId ? { workspaceId } : {})} {...(stamp ? { stamp } : {})} {...(codex ? { codexLock: codex } : {})} />;
   return (
-    <View style={{ gap: t.space.md }}>
+    <View style={{ gap: t.space.row }}>
       <QueryState query={detail} what={plain ? "these notes" : "this source"} />
       {plain ? <PlainHeader source={source} name={names.name(source)} /> : <SourceHeader source={source} />}
       {plain ? <PlainNotices source={source} warnings={warnings} {...(codex ? { codex } : {})} /> : <Notes source={source} warnings={warnings} {...(codex ? { codex } : {})} />}

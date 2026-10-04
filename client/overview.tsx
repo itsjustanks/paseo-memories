@@ -12,7 +12,9 @@ import { OverviewGuide } from "./about";
 import { KEY, QueryState, useFindings, useInventory } from "./data";
 import { usePlain, useSourceNames } from "./mode";
 import type { SectionId } from "./navigation";
-import { Button, Card, Divider, ErrorText, Facts, Field, HeroCard, Link, Loading, PathText, Row, StatusLine, Tag, useTokens, type Status } from "./ui";
+import { clockTime } from "../shared/schedule";
+import { canOpenScreen, openScreenById } from "./screens";
+import { Button, Card, Disclosure, ErrorText, Facts, Field, HeroCard, Link, Loading, Meta, PathText, QuietLine, Row, StatusLine, Tag, useTokens, type Status } from "./ui";
 
 /**
  * "What do my agents remember, and what needs tidying?" The hero says the
@@ -69,7 +71,7 @@ function FindingRow({ finding, first, onOpen }: { finding: Finding; first: boole
 /** The bottom strip of a list card: padding, a rule above, and what it holds. */
 function CardFooter({ children }: { children: React.ReactNode }) {
   const t = useTokens();
-  return <View style={{ gap: t.space.xs, paddingVertical: t.space.md, paddingHorizontal: t.compact ? t.space.md : t.space.lg, borderTopWidth: 1, borderTopColor: t.color.borderSubtle }}>{children}</View>;
+  return <View style={{ gap: t.space.xs, paddingVertical: t.space.row, paddingHorizontal: t.compact ? t.space.row : t.space.md, borderTopWidth: 1, borderTopColor: t.color.borderSubtle }}>{children}</View>;
 }
 
 /** Up to five things worth a look, the rest behind "N more", and the lines that say what was checked. */
@@ -87,7 +89,7 @@ function TidyCard({ title, findings, none, notes, onOpen }: { title: string; fin
         </CardFooter>
       ) : null}
       {findings && !count ? (
-        <View style={{ padding: t.compact ? t.space.md : t.space.lg }}>
+        <View style={{ padding: t.compact ? t.space.row : t.space.md }}>
           <Text style={t.text.body}>{none}</Text>
         </View>
       ) : null}
@@ -160,10 +162,13 @@ export function Overview(props: Props) {
   const inventory = useInventory(props.hostId);
   // The agents with notes here, for "What is Memories?".
   const agents = [...new Set((inventory.data?.accounts ?? []).filter((account) => account.exists && inventory.data!.sources.some((source) => source.accountId === account.id && source.exists)).map((account) => plainAgent(account.agent)))];
+  // Open while there is nothing here yet; folded once things work.
+  const firstRun = inventory.data ? inventory.data.counts.sources === 0 : false;
   return (
     <HostContext.Provider value={props.hostId}>
       {plain ? <PlainOverview {...props} /> : <TechnicalOverview {...props} />}
-      <OverviewGuide agents={agents} onGuide={() => props.onGo("guide")} />
+      <OverviewGuide key={String(firstRun)} agents={agents} onGuide={() => props.onGo("guide")} open={firstRun} />
+      {canOpenScreen() ? <QuietLine icon="Sparkles" links={[{ label: PLAIN.overview.openSkills, onPress: () => openScreenById("skills") }]}>{PLAIN.overview.skillsPointer}</QuietLine> : null}
     </HostContext.Provider>
   );
 }
@@ -181,18 +186,21 @@ function FirstLoad({ query }: { query: UseQueryResult<unknown> }) {
   );
 }
 
-/** The actions under every hero: the next step when there is one, and Add a note. */
+/** At most two buttons under the hero: the next step when there is one (primary), and Add a note. */
 function HeroActions({ show, onShow, onAddNote }: { show: boolean; onShow: () => void; onAddNote: () => void }) {
   const t = useTokens();
   return (
-    <>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
-        {show ? <Button label={PLAIN.tidy.show} icon="ArrowRight" variant="primary" onPress={onShow} /> : null}
-        <Button label={PLAIN.overview.primary} icon="Plus" variant={show ? "secondary" : "primary"} onPress={onAddNote} />
-      </View>
-      <Text style={t.text.caption}>{PLAIN.overview.primaryHint}</Text>
-    </>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
+      {show ? <Button label={PLAIN.tidy.show} icon="ArrowRight" variant="primary" onPress={onShow} /> : null}
+      <Button label={PLAIN.overview.primary} icon="Plus" variant={show ? "secondary" : "primary"} onPress={onAddNote} />
+    </View>
   );
+}
+
+/** The one muted line under the rows: when it was last checked or changed, and a scan still running. */
+function lastEvent(checkedAt: string | undefined, scanNote: string | null): string {
+  const when = checkedAt ? `${PLAIN.overview.checkedAt(clockTime(checkedAt))}` : "";
+  return [when, scanNote ?? ""].filter(Boolean).join(" ");
 }
 
 function PlainOverview({ hostId, onOpen, onAddNote, onGo }: Props) {
@@ -220,32 +228,40 @@ function PlainOverview({ hostId, onOpen, onAddNote, onGo }: Props) {
       const own = listed.filter((source) => source.accountId === account.id);
       return { account, files: count(own), tokens: own.reduce((sum, source) => sum + source.loaded.tokens, 0) };
     })
-    .filter((row) => row.account.exists && row.files > 0);
+    .filter((row) => row.account.exists && row.files > 0)
+    .sort((a, b) => b.files - a.files);
+  // At most three agent rows and the projects row; the rest add up into one.
+  const top = accountRows.length > 3 ? accountRows.slice(0, 2) : accountRows;
+  const rest = accountRows.length > 3 ? accountRows.slice(2) : [];
   const projectFiles = count(listed.filter((source) => source.scope === "project" && !source.accountId));
   const shown = tidy ? plainFindings(tidy.findings, inv.sources) : [];
   const next = tidy ? plainNextStep(tidy.nextStep, shown[0], shown.length, names.byId) : null;
   const scanNote = tidy ? scanProgressNote(tidy.symbolScan) : null;
-  const notes = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
+  const notes = (n: number) => `${n} ${n === 1 ? "note" : "notes"}`;
   const hero = tidy ? heroFor(shown, next?.title) : waitingHero(Boolean(findings.error));
   const action = shown[0]?.action?.sourceId ? shown[0].action : null;
   return (
     <>
       <QueryState query={inventory} what="what your agents remember" />
       <HeroCard tone={hero.tone} icon={hero.icon} title={hero.title} lead={hero.lead}>
-        <Text style={t.text.label}>{O.remember}</Text>
-        <View style={{ gap: 6 }}>
-          {accountRows.map((row) => (
+        <View style={{ gap: t.space.xs }}>
+          {top.map((row) => (
             <StatusLine key={row.account.id} label={`${plainAgent(row.account.agent)}${row.account.origin !== "default" ? ` · ${row.account.email ?? row.account.label}` : ""}`} value={notes(row.files)} status="neutral" hint={O.readAtStart(plainWords(row.tokens))} />
           ))}
-          <StatusLine label={O.projectNotes} value={notes(projectFiles)} status="neutral" hint={O.projectNotesHint} action={{ label: PLAIN.tabLabels.projects, onPress: () => onGo("projects") }} />
+          {rest.length ? <StatusLine label={O.otherAgents} value={notes(rest.reduce((sum, row) => sum + row.files, 0))} status="neutral" hint={O.readAtStart(plainWords(rest.reduce((sum, row) => sum + row.tokens, 0)))} action={{ label: PLAIN.tabLabels.user, onPress: () => onGo("user") }} /> : null}
+          <StatusLine label={O.projectNotes} value={notes(projectFiles)} status="neutral" action={{ label: PLAIN.tabLabels.projects, onPress: () => onGo("projects") }} />
         </View>
-        <Divider />
-        {tidy && shown.length && next ? <Text style={t.text.body}>{next.detail}</Text> : null}
-        {!tidy ? <QueryState query={findings} what="the checks" /> : null}
+        {!tidy ? <QueryState query={findings} what="the checks" /> : <Meta>{lastEvent(tidy.checkedAt, scanNote)}</Meta>}
         <HeroActions show={Boolean(action)} onShow={() => action && openAction(action)} onAddNote={onAddNote} />
       </HeroCard>
-      <TidyCard title={PLAIN.tidy.title} findings={tidy ? shown : null} none={PLAIN.tidy.none} notes={scanNote ? [scanNote] : []} onOpen={openAction} />
-      <SearchBox hostId={hostId} onOpen={onOpen} />
+      {tidy && shown.length ? (
+        <Disclosure quiet title={O.allWorth(shown.length)} openTitle={O.hideWorth}>
+          <TidyCard title={PLAIN.tidy.title} findings={shown} none={PLAIN.tidy.none} notes={[]} onOpen={openAction} />
+        </Disclosure>
+      ) : null}
+      <Disclosure quiet title={PLAIN.search.title}>
+        <SearchBox hostId={hostId} onOpen={onOpen} />
+      </Disclosure>
     </>
   );
 }
@@ -278,41 +294,50 @@ function TechnicalOverview({ hostId, onOpen, onAddNote }: Props) {
     <>
       <QueryState query={inventory} what="what your agents remember" />
       <HeroCard tone={hero.tone} icon={hero.icon} title={hero.title} lead={hero.lead}>
-        <Text style={t.text.body}>
-          {`${plural(inv.counts.claudeMemoryFiles, "Claude memory file")} in ${plural(inv.counts.claudeMemoryFolders, "project")}, ${plural(inv.counts.codexHomes, "Codex home")}, ${plural(inv.counts.sources, "source")} in all (${formatBytes(inv.counts.bytes)}).`}
-        </Text>
-        <Divider />
-        {tidy && tidy.findings.length ? <Text style={t.text.body}>{tidy.nextStep.detail}</Text> : null}
-        {!tidy ? <QueryState query={findings} what="the tidy checks" /> : null}
+        <View style={{ gap: t.space.xs }}>
+          <StatusLine label="Claude memory" value={plural(inv.counts.claudeMemoryFiles, "file")} status="neutral" hint={`in ${plural(inv.counts.claudeMemoryFolders, "project")}`} />
+          <StatusLine label="Codex homes" value={String(inv.counts.codexHomes)} status="neutral" />
+          <StatusLine label="Sources in all" value={plural(inv.counts.sources, "source")} status="neutral" hint={formatBytes(inv.counts.bytes)} />
+          {tidy ? <StatusLine label="Needs tidying" value={String(tidy.findings.length)} status={tidy.findings.length ? "attention" : "ok"} /> : null}
+        </View>
+        {!tidy ? <QueryState query={findings} what="the tidy checks" /> : <Meta>{[tidy.checked[0] ?? "", tidy.symbolScan.note].filter(Boolean).join(" ")}</Meta>}
         <HeroActions show={Boolean(action)} onShow={() => action && openAction(action)} onAddNote={onAddNote} />
       </HeroCard>
-      <Card padded={false} title="What your agents remember" icon="Brain">
-        {accountRows.map((row, index) => (
-          <Row
-            key={row.account.id}
-            first={index === 0}
-            title={`${AGENT_LABELS[row.account.agent] ?? row.account.agent}${row.account.email ? ` · ${row.account.email}` : ""}`}
-            subtitle={<PathText path={row.account.dir} />}
-            meta={<Facts items={[{ value: plural(row.files, "file") }, { value: formatBytes(row.bytes) }, { value: `${formatTokens(row.tokens)} at launch` }]} />}
-            trailing={row.account.origin === "default" ? null : <Tag label={row.account.origin === "agent-link" ? "AgentLink" : row.account.origin === "provider-env" ? "Provider" : "Slot"} />}
-          />
-        ))}
-        <Row
-          first={accountRows.length === 0}
-          title="Project files"
-          subtitle="CLAUDE.md, AGENTS.md and the like inside your projects"
-          meta={<Facts items={[{ value: plural(projectFiles.reduce((sum, group) => sum + group.files, 0), "file") }, { value: formatBytes(projectFiles.reduce((sum, group) => sum + group.bytes, 0)) }]} />}
-        />
-        <CardFooter>
-          {[...inv.checked, ...inv.notes].map((line) => (
-            <Text key={line} style={t.text.caption}>
-              {line}
-            </Text>
+      <Disclosure quiet title={`What your agents remember (${plural(accountRows.length, "account")})`}>
+        <Card padded={false}>
+          {accountRows.map((row, index) => (
+            <Row
+              key={row.account.id}
+              first={index === 0}
+              title={`${AGENT_LABELS[row.account.agent] ?? row.account.agent}${row.account.email ? ` · ${row.account.email}` : ""}`}
+              subtitle={<PathText path={row.account.dir} />}
+              meta={<Facts items={[{ value: plural(row.files, "file") }, { value: formatBytes(row.bytes) }, { value: `${formatTokens(row.tokens)} at launch` }]} />}
+              trailing={row.account.origin === "default" ? null : <Tag label={row.account.origin === "agent-link" ? "AgentLink" : row.account.origin === "provider-env" ? "Provider" : "Slot"} />}
+            />
           ))}
-        </CardFooter>
-      </Card>
-      <TidyCard title="Needs tidying" findings={tidy ? tidy.findings : null} none={`${tidy?.checked[0] ?? ""} Nothing needs tidying.`.trim()} notes={tidy ? [tidy.symbolScan.note, ...tidy.notes] : []} onOpen={openAction} />
-      <SearchBox hostId={hostId} onOpen={onOpen} />
+          <Row
+            first={accountRows.length === 0}
+            title="Project files"
+            subtitle="CLAUDE.md, AGENTS.md and the like inside your projects"
+            meta={<Facts items={[{ value: plural(projectFiles.reduce((sum, group) => sum + group.files, 0), "file") }, { value: formatBytes(projectFiles.reduce((sum, group) => sum + group.bytes, 0)) }]} />}
+          />
+          <CardFooter>
+            {[...inv.checked, ...inv.notes].map((line) => (
+              <Text key={line} style={t.text.caption}>
+                {line}
+              </Text>
+            ))}
+          </CardFooter>
+        </Card>
+      </Disclosure>
+      {tidy && tidy.findings.length ? (
+        <Disclosure quiet title={`Needs tidying (${tidy.findings.length})`}>
+          <TidyCard title="Needs tidying" findings={tidy.findings} none="Nothing needs tidying." notes={tidy.notes} onOpen={openAction} />
+        </Disclosure>
+      ) : null}
+      <Disclosure quiet title="Search">
+        <SearchBox hostId={hostId} onOpen={onOpen} />
+      </Disclosure>
     </>
   );
 }

@@ -108,7 +108,7 @@ export function AddNote({
   if (result?.ok) {
     return (
       <Card title={A.title} icon="CircleCheck" iconTone="ok">
-        <View style={{ gap: t.space.md }}>
+        <View style={{ gap: t.space.row }}>
           <Notice tone="ok">
             <View style={{ gap: t.space.xs }}>
               <Text style={t.text.bodyStrong}>{result.message}</Text>
@@ -132,13 +132,13 @@ export function AddNote({
   const fresh = preview?.targets.filter((target) => !target.blocked && target.duplicate !== "exact") ?? [];
   return (
     <Card title={A.title} icon="NotebookPen" trailing={<Button label={closeLabel} icon={closeLabel === "Close" ? "X" : "ArrowLeft"} variant="ghost" onPress={onClose} />}>
-      <View style={{ gap: t.space.md }}>
+      <View style={{ gap: t.space.row }}>
         {preview ? (
-          <View style={{ gap: t.space.md }}>
+          <View style={{ gap: t.space.row }}>
             <Text style={t.text.heading}>{A.addsTo}</Text>
             <View style={{ gap: t.space.sm }}>
               {preview.targets.map((target) => (
-                <View key={target.id} style={{ gap: 2 }}>
+                <View key={target.id} style={{ gap: t.space.hair }}>
                   <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "center", flexWrap: "wrap" }}>
                     <Text style={[t.text.body, { flexShrink: 1 }]}>{`•  ${target.label}`}</Text>
                     {target.blocked ? <Tag label={A.wontRead} tone="attention" /> : target.duplicate === "exact" ? <Tag label="Already there" tone="attention" /> : target.duplicate === "near" ? <Tag label="Almost the same is there" tone="attention" /> : null}
@@ -159,7 +159,7 @@ export function AddNote({
                 <Text key={entry.agent} style={t.text.body}>{entry.covered ? entry.reason : `${A.skipped} ${plainAgent(entry.agent)}: ${entry.reason}`}</Text>
               ))}
             </View>
-            <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.md, padding: t.space.md }}>
+            <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.control, padding: t.space.row }}>
               <Text style={t.text.body}>{text.trim()}</Text>
             </View>
             {preview.warnings.map((warning) => (
@@ -174,7 +174,7 @@ export function AddNote({
             </View>
           </View>
         ) : (
-          <View style={{ gap: t.space.md }}>
+          <View style={{ gap: t.space.row }}>
             <Field label={A.what} value={text} onChangeText={setText} multiline minHeight={120} placeholder={A.whatPlaceholder} autoFocus />
             <View style={{ gap: t.space.sm }}>
               <Text style={t.text.heading}>{A.who}</Text>

@@ -48,6 +48,10 @@ export function addSkills(sb: Sandbox): SkillsSandbox {
   const pluginDir = join(sb.claude, "plugins", "cache", "market", "toolkit", "1.0.0");
   const codexAdmin = join(sb.root, "codex-admin");
   process.env.PASEO_MEMORIES_CODEX_ADMIN_DIR = codexAdmin;
+  // The running Paseo's own bundle (in real life: <server package>/dist/server/skills).
+  const bundle = join(sb.root, "paseo-bundle");
+  for (const name of ["paseo", "paseo-help"]) writeSkill(join(bundle, name), skillMd(name, "Bundled with Paseo."));
+  process.env.PASEO_MEMORIES_PASEO_BUNDLE_DIR = bundle;
 
   // Shared folder: one from npx skills, one by hand with a script, Paseo's own and an orphan of Paseo's.
   writeSkill(join(shared, "alpha"), skillMd("alpha", "Plans the work before starting."));

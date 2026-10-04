@@ -185,18 +185,19 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
         title="Memories"
         icon="Brain"
         status={header.status}
-        caption={header.caption}
+        // Said once: on the Overview the hero says how many things are worth a look.
+        caption={tab === "overview" ? header.caption.split(" · ")[0]! : header.caption}
         trailing={header.retry ? <Button label="Try again" icon="RefreshCw" variant="ghost" onPress={() => void refreshAll()} /> : lists ? <Button label={PLAIN.refresh} icon="RefreshCw" variant="ghost" onPress={() => void refreshAll()} loading={inventory.isFetching} /> : null}
       />
       <TabBar
         active={tab}
         onSelect={goToTab}
       />
-      <TabIntro
+      {tab === "overview" ? null : <TabIntro
         key={tab}
         section={tab}
         actions={!adding && (tab === "user" || tab === "projects") ? <Button label={PLAIN.overview.primary} icon="Plus" onPress={() => addNote(tab === "projects" ? workspaceFor(sourceId) : undefined)} /> : null}
-      />
+      />}
       {adding ? <AddNote key={adding.workspaceId ?? "everywhere"} hostId={hostId} {...(adding.workspaceId ? { workspaceId: adding.workspaceId } : {})} onClose={() => setAdding(null)} /> : null}
       {!adding && tab === "overview" ? <Overview
           hostId={hostId}

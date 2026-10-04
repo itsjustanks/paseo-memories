@@ -1,11 +1,13 @@
 import type { PluginPopoverProps } from "@getpaseo/plugin/client";
-import React from "react";
+import React, { useState } from "react";
 import { Pressable, ScrollView, Text } from "react-native";
 import { AddNote } from "./add-note";
+import { AddSkill } from "./skills-add";
+import { openSkills, type AddMode } from "./skills-nav";
 import { ModeProvider } from "./mode";
 import { noteDrafts } from "./note-draft";
 import type { QuickAddButtonProps } from "./register";
-import { TokensProvider, useUi } from "./ui";
+import { SPACE, TokensProvider, useUi } from "./ui";
 
 /**
  * Add a note from the sidebar's "+" (Paseo 0.11+): the same form as on the
@@ -17,7 +19,7 @@ export function AddNotePopover({ theme, host, close }: PluginPopoverProps) {
   return (
     <TokensProvider value={t}>
       <ModeProvider>
-        <ScrollView style={{ maxHeight: 640, backgroundColor: t.color.surface0 }} contentContainerStyle={{ padding: t.space.md, gap: t.space.md }}>
+        <ScrollView style={{ maxHeight: 640, backgroundColor: t.color.surface0 }} contentContainerStyle={{ padding: t.space.row, gap: t.space.row }}>
           <AddNote hostId={host.id} onClose={close} closeLabel="Close" draft={noteDrafts(host.id)} />
         </ScrollView>
       </ModeProvider>
@@ -26,10 +28,40 @@ export function AddNotePopover({ theme, host, close }: PluginPopoverProps) {
 }
 
 /** The sidebar row's trailing "+": its own button beside the row's pressable. */
-export function QuickAddButton({ label, color, onPress }: QuickAddButtonProps) {
+export function QuickAddButton({ label, color, onPress, testID = "memories-sidebar-add" }: QuickAddButtonProps) {
   return (
-    <Pressable testID="memories-sidebar-add" accessibilityRole="button" accessibilityLabel={label} hitSlop={6} onPress={onPress} style={{ paddingHorizontal: 6, alignItems: "center", justifyContent: "center" }}>
+    <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={label} hitSlop={6} onPress={onPress} style={{ paddingHorizontal: SPACE.xs + SPACE.hair, alignItems: "center", justifyContent: "center" }}>
       <Text style={{ color, fontSize: 18, lineHeight: 20 }}>+</Text>
     </Pressable>
+  );
+}
+
+/**
+ * Add a skill from the Skills row's "+" (Paseo 0.11+): the same three ways
+ * as on the page, compact. Once added, "Open it" takes you to the skill.
+ */
+export function AddSkillPopover({ theme, host, close }: PluginPopoverProps) {
+  const t = useUi(theme, true);
+  const [mode, setMode] = useState<AddMode>("catalog");
+  return (
+    <TokensProvider value={t}>
+      <ModeProvider>
+        <ScrollView style={{ maxHeight: 640, backgroundColor: t.color.surface0 }} contentContainerStyle={{ padding: t.space.md, gap: t.space.row }}>
+          <Text accessibilityRole="header" style={t.text.section}>
+            Add a skill
+          </Text>
+          <AddSkill
+            hostId={host.id}
+            mode={mode}
+            onMode={setMode}
+            compact
+            onOpen={(skillId) => {
+              close();
+              openSkills({ tab: "skills", skillId });
+            }}
+          />
+        </ScrollView>
+      </ModeProvider>
+    </TokensProvider>
   );
 }

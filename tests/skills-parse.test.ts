@@ -13,7 +13,7 @@ import { codexSkillEnabled, readSkillSwitches, setSkillEnabled, unsafeReason } f
 import { parseGithubLink } from "../shared/github-link";
 import { readLock, serializeLock, withEntry, withoutEntry } from "../shared/skill-lock";
 import { cleanText, cutText, fileKind, planHash, safeRelativePath } from "../shared/skill-files";
-import { buildSkillMd, claudeListingChars, nameKey, parseSkillMd, skillNameOk, skillProblems, suggestName } from "../shared/skill-md";
+import { buildSkillMd, claudeBudgetChars, claudeContextTokens, claudeListingChars, nameKey, parseSkillMd, skillNameOk, skillProblems, suggestName } from "../shared/skill-md";
 import { CATALOG, catalogName } from "../shared/skills-catalog";
 import { addUse, claudeUsesInLine, codexLine, dayOf, summarizeUsage, type LogTally } from "../shared/skill-usage";
 import { claudeCommandLine, claudeSkillLine, codexListingLine, codexMetaLine, codexReadLine, codexSkillBlockLine, codexTurnLine, skillMd } from "./skills-helpers";
@@ -188,4 +188,17 @@ test("tallies: windows, typed commands that name no skill, plugin prefixes", () 
   assert.equal(summarizeUsage(logs, ["alpha"], 90, now).rows.find((row) => row.name === "alpha")!.total, 2);
   assert.deepEqual(summarizeUsage(logs, ["alpha", "zeta"], 7, now).neverUsed, ["zeta"]);
   assert.equal(dayOf(now) - dayOf(now - 86_400_000), 1);
+});
+
+test("Claude's window by model (code.claude.com/docs/en/model-config)", () => {
+  const cases: Array<[string | null, number | null]> = [
+    [null, null], ["", null], ["gpt-5", null],
+    ["opus[1m]", 1_000_000], ["claude-opus-4-6[1m]", 1_000_000], ["sonnet", 1_000_000], ["fable", 1_000_000], ["haiku", 200_000],
+    ["claude-opus-4-6", 200_000], ["claude-opus-4-7", 1_000_000], ["claude-opus-5-5", 1_000_000], ["claude-opus-4-20250514", 200_000],
+    ["claude-sonnet-4-5-20250929", 200_000], ["claude-sonnet-5-5", 1_000_000], ["claude-fable-5-1", 1_000_000], ["claude-haiku-4-5-20251001", 200_000], ["claude-3-5-sonnet-20241022", 200_000],
+  ];
+  for (const [model, tokens] of cases) assert.equal(claudeContextTokens(model), tokens, String(model));
+  assert.equal(claudeContextTokens("opus[1m]", true), 200_000, "1M turned off");
+  assert.equal(claudeBudgetChars(200_000), 8_000);
+  assert.equal(claudeBudgetChars(1_000_000), 40_000);
 });

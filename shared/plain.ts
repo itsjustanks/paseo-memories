@@ -267,6 +267,7 @@ export const PLAIN = {
   },
   /** The Overview's guide: what Memories is, how it works, how to use it, and the words it uses. */
   about: {
+    newTo: "New to Memories? How it works",
     whatIsTitle: "What is Memories?",
     whatIs: [
       "Memories shows, in one place, everything your coding agents (Claude, Codex and others) remember and follow on this computer: your own instructions, each project's instructions, and the notes agents keep for themselves.",
@@ -363,6 +364,14 @@ export const PLAIN = {
     remember: "What your agents remember",
     projectNotes: "Notes in your projects",
     projectNotesHint: "Instructions that belong to one project",
+    otherAgents: "Other agents",
+    checkedAt: (time: string) => `Checked at ${time}.`,
+    allWorth: (count: number) => (count === 1 ? "See the one thing worth a look" : `See all ${count} things worth a look`),
+    hideWorth: "Hide the list",
+    skillsPointer: "Skills: see which skills your agents have, and which ones they actually use.",
+    openSkills: "Open Skills",
+    memoriesPointer: "Memories: see and tidy what your agents remember.",
+    openMemories: "Open Memories",
     readAtStart: (words: string) => `${words} read at the start`,
   },
   notes: {
@@ -579,7 +588,7 @@ export function scanProgressNote(scan: { state: string; checked?: number; total?
  * Substrings, except "git" and "commit", which are whole words ("GitHub" and
  * "committee" are fine).
  */
-export const JARGON = ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "frontmatter", "token", "slug", "scope", "sqlite", "consolidation", "markdown", "repo", "config", "git", "commit"] as const;
+export const JARGON = ["CLAUDE.md", "AGENTS.md", "MEMORY.md", "frontmatter", "token", "slug", "scope", "sqlite", "consolidation", "markdown", "repo", "config", "git", "commit", "SKILL.md", "npx", "lockfile", "lock file", "symlink"] as const;
 
 const WHOLE_WORD: Record<string, RegExp> = { git: /\bgit\b/i, commit: /\bcommit(s|ted|ting)?\b/i };
 

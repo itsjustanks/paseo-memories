@@ -9,6 +9,7 @@ import { formatBytes, formatTokens } from "../shared/format";
 import { folderName, whenLabel } from "../shared/labels";
 import { PLAIN, isCodexInternal, plainAgent, plainPlanItemName, plainWhen, plainWords } from "../shared/plain";
 import { KEY, QueryState } from "./data";
+import { AgentSkills, WorkspaceSkills } from "./skills-panel";
 import { ModeProvider, usePlain } from "./mode";
 import { canOpenMemories, itemDestination, openMemories, panelDestination } from "./navigate";
 import { Button, Card, EmptyState, Facts, Header, PathText, Row, Screen, Section, Tag, useTokens, useUi } from "./ui";
@@ -34,7 +35,7 @@ function PlainPlanCard({ plan, showMissing }: { plan: LoadPlan; showMissing?: bo
     <Section title={`${plainAgent(plan.agent)} · ${P.readAtStart(plainWords(plan.total.tokens))}`} icon="Bot">
       <Card padded={false}>
         {shown.length === 0 ? (
-          <View style={{ padding: t.space.md }}>
+          <View style={{ padding: t.space.row }}>
             <Text style={t.text.body}>{P.nothing}</Text>
           </View>
         ) : (
@@ -65,7 +66,7 @@ function PlanCard({ plan, showMissing }: { plan: LoadPlan; showMissing?: boolean
       {plan.configDir ? <Text style={t.text.caption}>{`Config folder: ${plan.configDir}`}</Text> : null}
       <Card padded={false}>
         {shown.length === 0 ? (
-          <View style={{ padding: t.space.md }}>
+          <View style={{ padding: t.space.row }}>
             <Text style={t.text.body}>Nothing loads for this agent here.</Text>
           </View>
         ) : (
@@ -117,7 +118,7 @@ function WorkspacePanel({ theme, layout, host, workspaceId }: PluginWorkspacePan
     <Screen t={t}>
       <Header
         panel
-        title="Memories"
+        title="Memories & Skills"
         caption={plain ? (query.data ? PLAIN.panel.caption(folderName(query.data.directory)) : PLAIN.panel.captionAny) : query.data ? `What an agent started in ${folderName(query.data.directory)} loads` : "What an agent started here loads"}
       />
       <QueryState query={query} what={plain ? "what agents read here" : "this workspace's memory"} />
@@ -125,6 +126,7 @@ function WorkspacePanel({ theme, layout, host, workspaceId }: PluginWorkspacePan
       {plans.map((plan) => (
         <PlanCard key={plan.agent} plan={plan} />
       ))}
+      <WorkspaceSkills hostId={host.id} workspaceId={workspaceId} />
       {canOpenMemories() ? (
         <View style={{ flexDirection: "row" }}>
           <Button label={PLAIN.panel.open} icon="Brain" variant="ghost" onPress={() => openMemories(panelDestination(plans))} />
@@ -158,12 +160,13 @@ function AgentPanel({ theme, layout, host, workspaceId, agentId }: PluginAgentPa
     <Screen t={t}>
       <Header
         panel
-        title="Memories"
+        title="Memories & Skills"
         caption={plain ? (provider ? PLAIN.panel.agentCaption(plainAgent(provider)) : PLAIN.panel.captionAny) : provider ? `What this ${AGENT_LABELS[provider] ?? provider} agent loads` : "What this agent loads"}
       />
       <QueryState query={query} what={plain ? "what this agent reads" : "this agent's memory"} />
       {query.data ? <PlanCard plan={query.data.plan} showMissing /> : null}
       {query.data ? <Text style={t.text.caption}>{plain ? PLAIN.panel.runningNote : `Checked for ${query.data.directory}. A running agent keeps what it loaded at launch; this is what a new one would load.`}</Text> : null}
+      <AgentSkills hostId={host.id} workspaceId={workspaceId} provider={provider ?? null} agentId={agentId} />
     </Screen>
   );
 }

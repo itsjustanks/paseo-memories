@@ -18,7 +18,7 @@ A stopped, uncommitted scaffold from another agent is in a sibling `paseo-skills
 | Claude | managed (macOS `/Library/Application Support/ClaudeCode/.claude/skills`; Linux path: verify in docs) | read-only |
 | Shared | `~/.agents/skills/` (read by Codex, OpenCode, Copilot, Gemini, Cursor; `npx skills` canonical) | editable |
 | Codex | `$CODEX_HOME/skills/` (deprecated), `$CODEX_HOME/skills/.system/` (read-only), `/etc/codex/skills` (read-only), project `.agents/skills` walk-up, `.codex/skills` | as labelled |
-| pi | `~/.pi/agent/skills`, `.pi/skills` | read-only listing in v1; install links here when pi is present |
+| pi | `~/.pi/agent/skills`, `.pi/skills` (pi also reads `~/.agents/skills`) | read-only listing in v1; no install links (it reads the shared folder) |
 | Paseo | any skill dir with `.paseo-managed-files.json` | **read-only** (Paseo rewrites them at daemon start) |
 
 Dedupe by realpath; one skill may be read by several agents (`readBy`). Label provenance: Paseo, `npx skills` (entry in `~/.agents/.skill-lock.json`), added here, Claude plugin, claude.ai, Codex built-in, added by hand.
@@ -38,7 +38,7 @@ Show what each agent's skill list costs at the start of every chat: Claude lists
   2. A GitHub link (`owner/repo[/path][@ref]`): fetch over HTTPS (GitHub API tree + raw files; no git, no npx, no spawning), pin the resolved commit, size caps (e.g. 2 MB, 200 files), text only unless confirmed; treat names/descriptions as untrusted (clean, cap).
   3. Write your own: name, "When should agents use it?", instructions → a valid SKILL.md.
   - **Skills with scripts** (any non-markdown file, executable bit or shebang) show their file list and need an explicit confirm: "This skill includes code your agents may run."
-  - Install like `npx skills`: canonical copy in `~/.agents/skills/<name>` (atomic: temp dir + rename), symlinks in each Claude account's `skills/` and in pi's if present, and an entry in `~/.agents/.skill-lock.json` v3 (keep the format; atomic write with backup). Names: `a-z0-9-`, 1–64, no clash in any spelling with any existing skill; never overwrite.
+  - Install like `npx skills`: canonical copy in `~/.agents/skills/<name>` (atomic: temp dir + rename), symlinks in each Claude account's `skills/` (none for pi: it already reads `~/.agents/skills`, so a link would list it twice; decided 2026-10-04), and an entry in `~/.agents/.skill-lock.json` v3 (keep the format; atomic write with backup). Names: `a-z0-9-`, 1–64, no clash in any spelling with any existing skill; never overwrite.
 - **Turn off / on (nothing deleted):** Claude `skillOverrides: { name: "off" }` in the account's user settings (verify that user-level settings honour it; otherwise say where it works); Codex `[[skills.config]] name = "…" enabled = false` in `$CODEX_HOME/config.toml` (TOML-safe edit, backup). Not available for Paseo, plugin, claude.ai or built-in skills (say why).
 - **Remove:** only skills added here, by `npx skills`, or by hand in user/shared dirs. Move the folder into the backup session (never `rm -rf`), remove links that point to it, update the lock file. If the skill is a link, remove only the link.
 - **Tidy ("Worth a look"):** broken links, empty folders and stray zips, invalid names/frontmatter, the same name with different content in several places, never used in 30 days but costing context, a skill list over budget, Paseo orphans (managed marker but not in Paseo's current bundle), lock entries missing on disk. One plain action each.

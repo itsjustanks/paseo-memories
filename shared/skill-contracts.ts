@@ -87,8 +87,13 @@ export const ListingCostSchema = z.object({
   skills: z.number(),
   chars: z.number(),
   tokens: z.number(),
+  /** What the agent keeps whole; 0 when the model (so the window) isn't known. */
   budgetChars: z.number(),
+  /** Only when the budget is known and the list is over it: a guess never raises a warning. */
   overBudget: z.boolean(),
+  budgetKnown: z.boolean().default(false),
+  /** The model the budget was worked out for, when known. */
+  model: z.string().optional(),
   note: z.string().default(""),
 });
 export type ListingCost = z.infer<typeof ListingCostSchema>;
@@ -112,6 +117,8 @@ export const skillsInventory = defineRpc({
     findings: z.array(FindingSchema).default([]),
     nextStep: NextStepSchema.optional(),
     usage: UsageStateSchema,
+    /** The days "used lately" counts over (the skillsWindowDays setting). */
+    windowDays: z.number().default(30),
     counts: z.object({ skills: z.number(), places: z.number(), projects: z.number(), accounts: z.number() }),
     checked: z.array(z.string()).default([]),
     notes: z.array(z.string()).default([]),

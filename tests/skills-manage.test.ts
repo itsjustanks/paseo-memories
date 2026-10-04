@@ -63,11 +63,12 @@ async function skillNamed(name: string) {
 
 // ------------------------------------------------------------------ add
 
-test("write your own: preview, add, linked for every Claude account and pi, recorded for npx skills", async () => {
+test("write your own: preview, add, linked for every Claude account (pi reads the shared copy), recorded for npx skills", async () => {
   const source = { kind: "write", name: "weekly-report", whenToUse: "When asked for the weekly report.", instructions: "1. Gather.\n2. Write." };
   const preview = await handleSkillsPreview({ source }, ctx);
   assert.equal(preview.ok, true, preview.problem);
-  assert.deepEqual(preview.targets.map((target) => target.kind), ["canonical", "link", "link", "link", "lock"].sort((a, b) => (a === "canonical" ? -1 : b === "canonical" ? 1 : a === "lock" ? 1 : b === "lock" ? -1 : 0)));
+  assert.deepEqual(preview.targets.map((target) => target.kind), ["canonical", "link", "link", "lock"]);
+  assert.equal(preview.targets.some((target) => target.path.startsWith(sb.piSkills)), false, "no link for pi");
   assert.equal(preview.scripts, false);
   assert.equal(github.calls.length, 0, "no network for a skill written here");
   const added = await handleSkillsAdd({ source, planHash: preview.planHash }, ctx);
@@ -75,7 +76,8 @@ test("write your own: preview, add, linked for every Claude account and pi, reco
   assert.ok(added.skillId);
   const folder = join(sb.shared, "weekly-report");
   assert.match(readFileSync(join(folder, "SKILL.md"), "utf8"), /^---\nname: weekly-report\ndescription: "When asked for the weekly report."\n---\n\n1\. Gather\.\n2\. Write\.\n$/);
-  for (const dir of [sb.claudeSkills, sb.slotSkills, sb.piSkills]) {
+  assert.equal(existsSync(join(sb.piSkills, "weekly-report")), false);
+  for (const dir of [sb.claudeSkills, sb.slotSkills]) {
     const link = join(dir, "weekly-report");
     assert.ok(lstatSync(link).isSymbolicLink(), dir);
     assert.ok(!readlinkSync(link).startsWith("/"), "relative, like npx skills");
@@ -88,7 +90,7 @@ test("write your own: preview, add, linked for every Claude account and pi, reco
   assert.equal(lock.skills["weekly-report"]!.sourceType, "local");
   const skill = await skillNamed("weekly-report");
   assert.equal(skill!.provenance, "added-here");
-  assert.equal(skill!.locations.length, 4);
+  assert.equal(skill!.locations.length, 3);
 });
 
 test("a changed plan is refused, and nothing is written", async () => {
@@ -282,15 +284,49 @@ test("remove: the folder goes to the backups with its links and lock entry, and 
   const removed = await handleSkillsRemove({ skillId: skill.id }, ctx);
   assert.equal(removed.ok, true, removed.message);
   assert.equal(existsSync(join(sb.shared, "weekly-report")), false);
-  for (const dir of [sb.claudeSkills, sb.slotSkills, sb.piSkills]) assert.equal(existsSync(join(dir, "weekly-report")) || (() => { try { lstatSync(join(dir, "weekly-report")); return true; } catch { return false; } })(), false, dir);
+  for (const dir of [sb.claudeSkills, sb.slotSkills]) assert.equal(existsSync(join(dir, "weekly-report")) || (() => { try { lstatSync(join(dir, "weekly-report")); return true; } catch { return false; } })(), false, dir);
   assert.equal(lockJson().skills["weekly-report"], undefined);
   assert.ok(lockJson().skills.alpha, "other entries kept");
   const folderBackup = removed.reports.find((report) => report.target === join(sb.shared, "weekly-report"))!.backupPath!;
   assert.ok(existsSync(join(folderBackup, "SKILL.md")));
-  assert.ok(removed.reports.filter((report) => report.backupPath?.endsWith(".link.json")).length === 3, "each link written down");
+  assert.ok(removed.reports.filter((report) => report.backupPath?.endsWith(".link.json")).length === 2, "each link written down");
   // Put it back by hand: it is a skill again.
   renameSync(folderBackup, join(sb.shared, "weekly-report"));
   assert.ok(await skillNamed("weekly-report"));
+});
+
+test("across disks: copied, checked file for file, then deleted; a bad copy leaves the original", async () => {
+  const fsp = (await import("node:fs/promises")).default as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const { syncBuiltinESMExports } = await import("node:module");
+  const realRename = fsp.rename!;
+  const realCp = fsp.cp!;
+  const exdev = (...args: unknown[]) => (String(args[1]).startsWith(backupsRoot()) ? Promise.reject(Object.assign(new Error("cross-device"), { code: "EXDEV" })) : realRename(...args));
+  writeSkill(join(sb.shared, "far-away"), skillMd("far-away", "On another disk."), { "scripts/x.sh": { text: "#!/bin/sh\n", mode: 0o755 } });
+  fsp.rename = exdev;
+  syncBuiltinESMExports();
+  try {
+    const report = await moveToBackup(newSession(5), join(sb.shared, "far-away"));
+    assert.equal(report.ok, true, report.error ?? "");
+    assert.equal(report.action, "copied-and-deleted");
+    assert.equal(existsSync(join(sb.shared, "far-away")), false);
+    assert.equal(readFileSync(join(report.backupPath!, "scripts", "x.sh"), "utf8"), "#!/bin/sh\n");
+    assert.equal(readdirSync(sb.shared).some((name) => name.startsWith(".paseo-memories-tmp-")), false, "nothing left aside");
+    // A copy that comes out different: the original stays, the bad copy is taken back out.
+    writeSkill(join(sb.shared, "far-two"), skillMd("far-two", "Copy goes wrong."));
+    fsp.cp = async (...args: unknown[]) => {
+      await realCp(...args);
+      writeFileSync(join(String(args[1]), "SKILL.md"), "changed in transit");
+    };
+    syncBuiltinESMExports();
+    const bad = await moveToBackup(newSession(5), join(sb.shared, "far-two"));
+    assert.equal(bad.ok, false);
+    assert.ok(existsSync(join(sb.shared, "far-two", "SKILL.md")));
+    assert.match(readFileSync(join(sb.shared, "far-two", "SKILL.md"), "utf8"), /Copy goes wrong/);
+  } finally {
+    fsp.rename = realRename;
+    fsp.cp = realCp;
+    syncBuiltinESMExports();
+  }
 });
 
 test("a link to a folder elsewhere: only the link goes", async () => {

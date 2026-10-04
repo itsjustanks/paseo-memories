@@ -119,7 +119,7 @@ export function WriteReportView({ result }: { result: WriteResult }) {
           </Text>
         ))}
         {result.reports.map((report, index) => (
-          <View key={`${report.target}-${index}`} style={{ gap: 2 }}>
+          <View key={`${report.target}-${index}`} style={{ gap: t.space.hair }}>
             <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "center", flexWrap: "wrap" }}>
               <Tag label={report.ok ? report.action : "failed"} tone={report.ok ? "ok" : "error"} />
               <Text style={[t.text.mono, { flexShrink: 1 }]}>{report.target}</Text>

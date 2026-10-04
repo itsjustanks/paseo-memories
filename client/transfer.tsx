@@ -62,7 +62,7 @@ function TargetPicker({ targets, accounts, value, onChange, hint, namer }: { tar
             <Row key={source.id} first={index === 0} selected={source.id === value} title={title(source)} {...(plain ? {} : { subtitle: <PathText path={source.path} /> })} onPress={() => onChange(source.id)} />
           ))
         ) : (
-          <View style={{ padding: t.space.md }}>
+          <View style={{ padding: t.space.row }}>
             <Text style={t.text.caption}>{targets.length ? `None of the ${targets.length} places match "${filter}".` : plain ? "There is nowhere of this kind to put notes on this computer." : "No place of this kind can take imports on this host."}</Text>
           </View>
         )}
@@ -76,7 +76,7 @@ function TargetPicker({ targets, accounts, value, onChange, hint, namer }: { tar
 function DiffView({ lines }: { lines: Array<{ op: string; text: string }> }) {
   const t = useTokens();
   return (
-    <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.sm, padding: t.space.sm }}>
+    <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.control, padding: t.space.sm }}>
       {lines.map((line, index) => {
         const color = line.op === "+" ? t.color.success : line.op === "-" ? t.color.danger : t.color.muted;
         return (
@@ -195,9 +195,9 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
 
   const count = from.length || items.length;
   return (
-    <View style={{ gap: t.space.md }}>
+    <View style={{ gap: t.space.row }}>
       <Card title={T.import} icon="FileInput">
-        <View style={{ gap: t.space.md }}>
+        <View style={{ gap: t.space.row }}>
           {from.length ? (
             <Notice tone="neutral">
               <View style={{ gap: t.space.sm }}>
@@ -260,7 +260,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
         </View>
       </Card>
       {preview ? (
-        <View style={{ gap: t.space.md }}>
+        <View style={{ gap: t.space.row }}>
           {plain ? null : <Text style={t.text.caption}>{preview.checked}</Text>}
           {preview.target.access !== "editable" ? <Notice tone="error">{plain ? "That place can't be changed here." : preview.target.reason ?? "That target is read-only."}</Notice> : null}
           {preview.items.map((item) => (
@@ -337,9 +337,9 @@ function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolea
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
-    <View style={{ gap: t.space.md }}>
+    <View style={{ gap: t.space.row }}>
       <Card title={T.export} icon="FileOutput">
-        <View style={{ gap: t.space.md }}>
+        <View style={{ gap: t.space.row }}>
           <Segmented options={[{ value: "all", label: T.everything }, { value: "user", label: plain ? T.yours : "User files" }, { value: "project", label: T.oneProject }]} value={scope} onChange={setScope} />
           {scope === "project" ? <ComboBox label={T.project} value={project} allowCustom={false} onChange={setProject} options={projects.map((path) => ({ value: path, label: folderName(path), ...(plain ? {} : { description: path }) }))} placeholder="Pick a project" /> : null}
           <Segmented options={[{ value: "bundle", label: plain ? T.toImport : "Bundle (to import elsewhere)" }, { value: "markdown", label: plain ? T.toRead : "Markdown (to read)" }]} value={format} onChange={setFormat} />
@@ -374,7 +374,7 @@ export function TransferTab({ hostId, destination }: { hostId: string; destinati
   const inventory = useInventory(hostId);
   if (!inventory.data) return <QueryState query={inventory} what="where memories can go" />;
   return (
-    <View style={{ gap: t.space.xl }}>
+    <View style={{ gap: t.space.section }}>
       <ImportPanel key={JSON.stringify(destination?.from ?? destination?.text ?? "")} hostId={hostId} sources={inventory.data.sources} accounts={inventory.data.accounts} destination={destination} />
       <ExportPanel sources={inventory.data.sources} {...(destination?.exportView ? { initial: true } : {})} />
     </View>

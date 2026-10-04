@@ -481,12 +481,42 @@ export async function createSkillLink(parent: string, name: string, target: stri
   }
 }
 
-async function countFiles(path: string): Promise<number> {
+/** Every file and link under `path` (or `path` itself), by relative path, with a hash of its bytes or the link's target. */
+async function treeDigest(path: string, prefix = ""): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
   const stat = await fs.lstat(path);
-  if (!stat.isDirectory()) return 1;
-  let count = 0;
-  for (const entry of await fs.readdir(path)) count += await countFiles(join(path, entry));
-  return count;
+  if (stat.isSymbolicLink()) out.set(prefix || ".", `link:${await fs.readlink(path)}`);
+  else if (stat.isDirectory()) {
+    for (const entry of (await fs.readdir(path)).sort()) for (const [key, value] of await treeDigest(join(path, entry), prefix ? `${prefix}/${entry}` : entry)) out.set(key, value);
+  } else out.set(prefix || ".", `file:${sha256(await fs.readFile(path))}`);
+  return out;
+}
+
+function sameTree(a: Map<string, string>, b: Map<string, string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [key, value] of a) if (b.get(key) !== value) return false;
+  return true;
+}
+
+/**
+ * The move into the backups when the backups are on another disk: copy, then
+ * check the copy file for file (same count, same bytes by hash), and only
+ * then take the original away. A copy that doesn't match is taken back out
+ * of the backups and the original stays. The original is first renamed out
+ * of the agents' sight and its SKILL.md goes first, so no half a skill is
+ * ever left where agents look.
+ */
+async function copyThenDelete(path: string, backupPath: string): Promise<void> {
+  await fs.cp(path, backupPath, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
+  const [original, copy] = await Promise.all([treeDigest(path), treeDigest(backupPath)]);
+  if (!sameTree(original, copy)) {
+    await fs.rm(backupPath, { recursive: true, force: true }).catch(() => undefined);
+    throw Object.assign(new Error("copy differs"), { code: "EIO" });
+  }
+  const aside = join(dirname(path), `${TEMP_PREFIX}${randomBytes(6).toString("hex")}`);
+  await fs.rename(path, aside);
+  await fs.rm(join(aside, "SKILL.md"), { force: true }).catch(() => undefined);
+  await fs.rm(aside, { recursive: true });
 }
 
 /**
@@ -494,7 +524,7 @@ async function countFiles(path: string): Promise<number> {
  * skills folder by moving it into this action's backup folder: nothing is
  * deleted outright. A link is removed as a link (what it pointed to is
  * written down in the backup). Across disks the move is a copy, checked
- * file for file, then the original goes. Only direct children of the user's
+ * file for file (count and bytes), then the original goes. Only direct children of the user's
  * own skills folders; never Paseo's, claude.ai's or Codex's own (unless
  * `paseoOrphan`: Paseo no longer ships it). Never throws.
  */
@@ -515,11 +545,11 @@ export async function moveToBackup(session: Session, path: string, { paseoOrphan
       if (await statSafe(backupPath)) return { ...report, action: "refused", error: "This action already backed up something at that place." };
       try {
         await fs.rename(path, backupPath);
+        report.action = "moved";
       } catch (error) {
         if ((error as { code?: string }).code !== "EXDEV") throw error;
-        await fs.cp(path, backupPath, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
-        if ((await countFiles(path)) !== (await countFiles(backupPath))) throw Object.assign(new Error("copy incomplete"), { code: "EIO" });
-        await fs.rm(path, { recursive: true });
+        await copyThenDelete(path, backupPath);
+        report.action = "copied-and-deleted";
       }
       report.backupPath = backupPath;
     }

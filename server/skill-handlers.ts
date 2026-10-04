@@ -19,7 +19,8 @@ import { addSkill, previewSkill } from "./skill-add";
 import { forgetAdded } from "./skill-records";
 import { projectRoots } from "./skill-roots";
 import { chatUsage, folderUsage, requestUsagePass, usageState, usageSummary } from "./skill-usage";
-import { discoverSkills, findSkill, forgetSkills, publicSkill, walkSkill, type InternalSkill, type SkillsDiscovery } from "./skills";
+import { agentWindow, claudeWindows, type AccountWindow } from "./skill-models";
+import { cost, discoverSkills, findSkill, forgetSkills, publicSkill, walkSkill, type InternalSkill, type SkillsDiscovery } from "./skills";
 import { skillParentReason } from "./writable";
 import { moveToBackup, newSession, readCurrent, safeWrite, type Session } from "./write";
 
@@ -50,6 +51,7 @@ export async function handleSkillsInventory({ refresh }: { refresh?: boolean }, 
     findings: discovery.findings,
     ...(discovery.nextStep ? { nextStep: discovery.nextStep } : {}),
     usage,
+    windowDays: discovery.settings.skillsWindowDays,
     counts: {
       skills: discovery.skills.length,
       places: discovery.skills.reduce((sum, skill) => sum + skill.locations.length, 0),
@@ -173,12 +175,13 @@ async function skillsFor(discovery: SkillsDiscovery, agent: string, accountId: s
   });
 }
 
-function costOf(discovery: SkillsDiscovery, agent: string, accountId: string | undefined, skills: InternalSkill[]): ListingCost | undefined {
-  const base = discovery.costs.find((cost) => cost.agent === agent && (!accountId || cost.accountId === accountId));
+function costOf(discovery: SkillsDiscovery, agent: string, accountId: string | undefined, skills: InternalSkill[], window?: AccountWindow): ListingCost | undefined {
+  const base = discovery.costs.find((entry) => entry.agent === agent && (!accountId || entry.accountId === accountId));
   if (!base) return undefined;
   const chars = skills.reduce((sum, skill) => sum + (agent === "claude" ? skill.listing.claude : skill.listing.codex), 0);
   const count = skills.filter((skill) => (agent === "claude" ? skill.listing.claude : skill.listing.codex) > 0).length;
-  return { ...base, skills: count, chars, tokens: Math.ceil(chars / 4), overBudget: chars > base.budgetChars, note: "Including this project's own skills." };
+  const known = window ?? (base.budgetKnown ? { contextTokens: base.budgetChars / 0.04, ...(base.model ? { model: base.model } : {}), from: "settings" as const } : undefined);
+  return { ...cost(agent, base.accountId ?? "", base.label, count, chars, agent === "claude" ? known : undefined), note: "Including this project's own skills." };
 }
 
 function named(discovery: SkillsDiscovery, counts: Map<string, number>) {
@@ -201,7 +204,7 @@ function keepFor(discovery: SkillsDiscovery): (name: string, modelUses: number) 
   return (name, modelUses) => modelUses > 0 || known.has(name.toLowerCase()) || known.has(name.toLowerCase().split(":").pop() ?? "");
 }
 
-type AgentFacts = { sessionIds: string[]; cwd?: string; createdAt?: number; provider?: string };
+type AgentFacts = { sessionIds: string[]; cwd?: string; createdAt?: number; provider?: string; model?: string };
 
 /** What Paseo says about one agent: its chat ids (Claude session, Codex thread) when the SDK has them. Never throws. */
 async function agentFacts(paseo: Paseo, agentId: string): Promise<AgentFacts | null> {
@@ -210,7 +213,7 @@ async function agentFacts(paseo: Paseo, agentId: string): Promise<AgentFacts | n
   try {
     const handle = agents.ref(agentId);
     if (handle.refresh) await withDeadline(handle.refresh(), "the agent's details", 5_000);
-    const snap = handle.current?.() as { cwd?: string; createdAt?: string; provider?: string; persistence?: { sessionId?: string; nativeHandle?: string } | null } | null | undefined;
+    const snap = handle.current?.() as { cwd?: string; createdAt?: string; provider?: string; model?: string | null; persistence?: { sessionId?: string; nativeHandle?: string } | null } | null | undefined;
     if (!snap) return null;
     const created = snap.createdAt ? Date.parse(snap.createdAt) : NaN;
     return {
@@ -218,6 +221,7 @@ async function agentFacts(paseo: Paseo, agentId: string): Promise<AgentFacts | n
       ...(snap.cwd ? { cwd: snap.cwd } : {}),
       ...(Number.isFinite(created) ? { createdAt: created } : {}),
       ...(snap.provider ? { provider: snap.provider } : {}),
+      ...(snap.model ? { model: snap.model } : {}),
     };
   } catch {
     return null;
@@ -233,9 +237,9 @@ export async function handleSkillsAgent({ workspaceId, providerId, agentId }: { 
   if (agent !== "claude" && agent !== "codex") notes.push("This plugin counts skill use for Claude and Codex only.");
   let chat = { match: "unknown", skills: [] as Array<{ name: string; count: number; skillId?: string }>, note: "Which skills this chat used can't be told for this agent." };
   const usageOn = discovery.settings.skillsUsage;
+  const facts = agentId && (agent === "claude" || agent === "codex") ? await agentFacts(paseo, agentId) : null;
   if (!usageOn) chat = { ...chat, note: "Counting skill use is turned off in the settings." };
   else if (agentId && (agent === "claude" || agent === "codex")) {
-    const facts = await agentFacts(paseo, agentId);
     const exact = facts?.sessionIds.length ? chatUsage(facts.sessionIds, keepFor(discovery)) : null;
     if (exact && exact.size) chat = { match: "exact", skills: named(discovery, exact), note: "" };
     else if (facts?.sessionIds.length && usageState(true).state === "ready") chat = { match: "exact", skills: [], note: "" };
@@ -244,11 +248,14 @@ export async function handleSkillsAgent({ workspaceId, providerId, agentId }: { 
       chat = { match: "folder-time", skills: named(discovery, guessed), note: "Matched by this agent's folder and start time, so other chats in the same folder since then are counted too." };
     }
   }
+  // This agent's own model decides Claude's budget, when Paseo says which it is.
+  const window = agent === "claude" && account ? agentWindow(facts?.model, (await claudeWindows(paseo, discovery.accounts, new Probe())).get(account.id)) : undefined;
+  const listCost = costOf(discovery, agent, account?.id, skills, window);
   return {
     agent,
     directory,
     skills: skills.map((skill) => panelSkill(skill, agent)),
-    ...(costOf(discovery, agent, account?.id, skills) ? { cost: costOf(discovery, agent, account?.id, skills)! } : {}),
+    ...(listCost ? { cost: listCost } : {}),
     chat,
     notes,
   };

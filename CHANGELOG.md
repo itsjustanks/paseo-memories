@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 (2026-10-04)
+
+The plugin is now **Memories & Skills**: a second page, **Skills**, sits under Memories in the sidebar. And both pages are much calmer.
+
+- **See your skills.** Every skill your agents can use on this computer, in one list, grouped by where it lives: shared by your agents, Claude only, Codex only, in your projects, and (folded away) the ones Paseo, a plugin, claude.ai or your organisation looks after. Each shows who can use it, where it came from, and what it adds to the start of every chat.
+- **See which skills are used.** Usage counts the skills your agents ran over 7, 30 or 90 days, from their chat history on this computer, with a small bar for each day. Claude's counts are exact; Codex's are estimates, and it says so. Skills nobody used fold away at the end, each with Turn off. Only counts are kept, never what was said; turn counting off in Settings.
+- **Add a skill**, from the page or the "+" beside Skills in the sidebar: pick one from a short list we checked (each pinned to the exact version we read), bring one from a GitHub link, or write your own in three boxes. You always see what it is, every file and where it goes before anything is added. A skill that includes code your agents may run lists that code and needs "I've looked at the files" ticked. Nothing is ever added over a skill with the same name, however it's spelt.
+- **Turn a skill off** for Claude or Codex without deleting anything, and back on again. **Remove** one you added: it goes to the backups with its links, so it can be put back.
+- **Worth a look** for skills: links to skills that are gone, empty folders, packed files agents can't read, skills without instructions, two different skills with one name, unused skills that still cost every chat, a list too long for Claude to keep whole, and old skills an earlier Paseo left behind. Each has one action. A list is only called too long when we know which model your agents use, so there are no false alarms.
+- **The panels show skills too.** The workspace and agent panels (now "Memories & Skills") add how many skills an agent there can use, which ones were used in this chat (or in this folder since the agent started, when Paseo doesn't say which chat it is), and the full list, folded.
+- **Calm Overviews.** Both Overviews now show one status card (the state in words, at most four short lines, when it was last checked, and two buttons) and nothing else above the fold. The full list of things worth a look, the search box and the "New to …? How it works" guide are folded behind small links, and the guide is one card instead of four. Every other tab opens with a short intro; "What you can do here" is folded behind a small link. Nothing was removed: every option and every safety message is still where you decide.
+- **One spacing scale** for both pages, shared with AI Router and the other plugins.
+- For developers: 11 new RPCs (`paseo-memories.skills-*`, additive), two new settings with defaults (`skillsUsage`, `skillsWindowDays`; the settings version is unchanged), no new SDK import paths, `requirements.paseo` stays `>=0.8.0` (`paseo-plugin.json` can't carry a display name: Paseo 0.8 rejects any field but `id` and `requirements`). On Paseo 0.11 Skills is a native screen with its own sidebar row; 0.8–0.10 get a second surface and sidebar item. The writer's allow-list grew for skill folders, Claude account `settings.json`, Codex `config.toml` and `npx skills`' lock file. Paseo's own skill list is read from the running Paseo package (`dist/server/skills`); if it can't be read, no skill is called an orphan.
+
 ## 0.3.0 (2026-10-04)
 
 Memories now looks and reads like AI Router and the other Paseo plugins: the same text sizes, header, tabs and plain-English Overview. Every option, setting, safety check and memory operation is unchanged, and so is the technical view.

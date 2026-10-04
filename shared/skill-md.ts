@@ -32,12 +32,37 @@ export const CODEX_DESC_CAP = 1024;
 export const SKILL_SPEC = { nameMax: 64, descriptionMax: 1024, bodyLines: 500, compatibilityMax: 500 } as const;
 
 /**
- * What a skill list may take before agents start cutting it, in characters.
- * Claude: 1% of the context window (200k tokens × 4 characters ≈ 8,000; a
- * 1M-token model gets five times that). Codex: 2% of the window, 8,000
- * characters by default.
+ * Claude keeps its skill list within 1% of the model's context window
+ * (code.claude.com/docs/en/skills), about 4 characters a token. The window
+ * depends on the model (code.claude.com/docs/en/model-config, 2026-10-04):
+ * 1M for any `[1m]` model, the `opus`, `sonnet`, `fable` and `opusplan`
+ * aliases, Fable, Sonnet 5 and later, and Opus 4.7 and later; 200K for
+ * everything else Claude, and for all of them when
+ * CLAUDE_CODE_DISABLE_1M_CONTEXT is set. Null when the model is unknown, so
+ * nothing is called "over budget" on a guess.
  */
-export const LISTING_BUDGET_CHARS: Record<string, number> = { claude: 8_000, codex: 8_000 };
+export function claudeContextTokens(model: string | null | undefined, disable1m = false): number | null {
+  if (disable1m) return 200_000;
+  const id = (model ?? "").trim().toLowerCase();
+  if (!id) return null;
+  if (id.endsWith("[1m]")) return 1_000_000;
+  if (["opus", "sonnet", "fable", "opusplan", "best"].includes(id)) return 1_000_000;
+  if (id === "haiku") return 200_000;
+  const match = /claude-(opus|sonnet|fable|haiku)-(\d+)(?:[-.](\d+))?/.exec(id);
+  if (!match) return /claude/.test(id) ? 200_000 : null;
+  const [, family, majorText, minorText] = match;
+  const major = Number(majorText);
+  const minor = minorText && minorText.length <= 2 ? Number(minorText) : 0;
+  if (family === "fable") return 1_000_000;
+  if (family === "sonnet" && major >= 5) return 1_000_000;
+  if (family === "opus" && (major >= 5 || (major === 4 && minor >= 7))) return 1_000_000;
+  return 200_000;
+}
+
+/** The characters Claude keeps whole in its skill list for a window of `contextTokens`. */
+export function claudeBudgetChars(contextTokens: number): number {
+  return Math.round(contextTokens * 0.01 * 4);
+}
 
 const TEXT_KEYS = new Set(["name", "description", "when_to_use", "license", "compatibility", "argument-hint", "model"]);
 const BOOL_KEYS = new Set(["disable-model-invocation", "user-invocable"]);

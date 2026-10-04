@@ -136,7 +136,7 @@ export function SourcesTab({
   const total = useMemo(() => groups.reduce((sum, group) => sum + group.sources.length, 0), [groups]);
   if (total === 0) return <EmptyState icon="Sparkles" title={PLAIN.nothingYet.title} body={empty} />;
   const list = (
-    <View style={{ gap: t.space.lg }}>
+    <View style={{ gap: t.space.md }}>
       {groups.map((group) => (
         <Section key={group.key} title={group.title} icon={group.icon} trailing={<Tag label={String(group.sources.length)} />}>
           {group.path ? <PathText path={group.path} /> : group.caption ? <Text style={t.text.caption}>{group.caption}</Text> : null}
@@ -168,7 +168,7 @@ export function SourcesTab({
   if (t.compact) return selected ? detail : list;
   // Two columns: a fixed list, the detail gets the rest (the page itself scrolls).
   return (
-    <View style={{ flexDirection: "row", gap: t.space.lg, alignItems: "flex-start" }}>
+    <View style={{ flexDirection: "row", gap: t.space.md, alignItems: "flex-start" }}>
       <View style={{ width: 320, flexShrink: 0 }}>{list}</View>
       <View style={{ flex: 1, minWidth: 0 }}>{detail}</View>
     </View>

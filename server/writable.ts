@@ -59,9 +59,9 @@ export async function skillFolderReason(folder: string): Promise<string | null> 
 }
 
 /**
- * Folders whose direct children are skills this plugin may add, link or move
- * to the backups: the shared folder, and each Claude, Codex and pi account's
- * `skills/`. Never a project's, a plugin's, claude.ai's, Codex's own or a
+ * Folders whose direct children are skills this plugin may add (the shared
+ * folder), link (each Claude account's `skills/`) or move to the backups
+ * (those, and each Codex and pi account's `skills/`). Never a project's, a plugin's, claude.ai's, Codex's own or a
  * managed one.
  */
 export async function skillParentReason(parent: string, purpose: "install" | "link" | "remove"): Promise<string | null> {
@@ -72,7 +72,7 @@ export async function skillParentReason(parent: string, purpose: "install" | "li
   const codex = dirs.codex.map((dir) => join(dir, "skills"));
   const pi = dirs.pi.map((dir) => join(dir, "skills"));
   if (purpose === "install") return full === shared ? null : "Skills are only added to the shared skills folder.";
-  if (purpose === "link") return claude.includes(full) || pi.includes(full) ? null : "Links are only made in Claude's and pi's own skills folders.";
+  if (purpose === "link") return claude.includes(full) ? null : "Links are only made in Claude's own skills folders.";
   return full === shared || claude.includes(full) || codex.includes(full) || pi.includes(full) ? null : "That isn't in a skills folder of yours, so this plugin won't remove it.";
 }
 

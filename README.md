@@ -1,6 +1,8 @@
-# Memories (`paseo-memories`)
+# Memories & Skills (`paseo-memories`)
 
-A Paseo plugin that shows, edits, imports, exports and tidies what your coding agents remember on a host: Claude Code, Codex, Paseo's own appended prompt, OpenCode, pi, Oh My Pi and Copilot CLI. It works at user and project level, per agent and per account. The spec is `docs/SPEC.md`.
+A Paseo plugin with two pages. **Memories** shows, edits, imports, exports and tidies what your coding agents remember on a host. **Skills** (0.4.0) shows which skills your agents have and which ones they actually use, and adds, turns off and removes them safely. The plugin id stays `paseo-memories`, so existing installs and settings update in place.
+
+Memories covers: Claude Code, Codex, Paseo's own appended prompt, OpenCode, pi, Oh My Pi and Copilot CLI. It works at user and project level, per agent and per account. The specs are `docs/SPEC.md` (Memories) and `docs/SKILLS-SPEC.md` (Skills).
 
 ## For everyone
 
@@ -11,7 +13,14 @@ Memories shows what your AI agents remember and follow, in plain words, and lets
 - **Worth a look** on the Overview points out notes with passwords in them, notes that say the same thing twice, and notes that mention things that are gone.
 - **Guide** has short how-tos, including moving your notes to another Paseo computer.
 
-Nothing technical shows unless you ask for it: turn on **Show technical details** in Settings → Memories for file names, paths, sizes and whole-file editing. The rest of this page is the technical side.
+**Skills** is the second item in the sidebar:
+
+- **Overview** says in one card how many skills Claude and Codex can use, what that list costs at the start of every chat, and which skills were used lately, with one next step.
+- **Your skills** lists every skill by where it lives. Open one to read it, turn it off for Claude or Codex (nothing is deleted), or remove one you added (a copy is kept).
+- **Usage** shows which skills ran in the last 7, 30 or 90 days. Claude's counts are exact; Codex's are estimates.
+- **Add a skill** (also the "+" beside Skills in the sidebar): pick one from a short checked list, bring one from a GitHub link, or write your own. You see every file first; a skill that includes code your agents may run needs an extra confirm.
+
+Nothing technical shows unless you ask for it: turn on **Show technical details** in Settings → Memories & Skills for file names, paths, sizes and whole-file editing. The rest of this page is the technical side.
 
 ## Install
 
@@ -35,6 +44,17 @@ Update with `paseo plugin update paseo-memories`. Memories are per daemon: to mo
 - **Tidy checks** (plain code, no LLM): exact and near duplicates, possible conflicts (labelled a guess), paths and code names that no longer exist, `MEMORY.md` lines that point nowhere or files missing from it, over-limit files, values that look like secrets, and a pending Codex clean-up. Each comes with one suggested action.
 
 Numbers used (checked against Claude Code 2.1.280, codex-cli 0.156.1 and their docs): `MEMORY.md` loads its first 200 lines or 25,000 bytes; `@imports` go 4 hops; a CLAUDE.md over 4 MiB is skipped; AGENTS.md is read by Claude only when the project has no CLAUDE file of its own (default); Codex project docs share 32 KiB; Codex injects `memory_summary.md` cut to ≈2,500 tokens; Paseo's appended prompt reaches Claude, Codex, OpenCode, pi and Oh My Pi, never ACP providers. Tokens are bytes ÷ 4, always shown with ≈.
+
+## Skills (0.4.0)
+
+Where skills are found (per account and project): the shared `~/.agents/skills` (Codex, OpenCode, Copilot, Gemini, Cursor and pi read it; `npx skills` installs there), each Claude account's `skills/`, its claude.ai copies (`skills/synced/<account>/`), enabled Claude plugins' `skills/`, Claude's managed `.claude/skills`, Codex's `$CODEX_HOME/skills` (and `.system`), `/etc/codex/skills`, pi's `skills/`, and each Paseo project's `.claude/skills`, `.agents/skills`, `.codex/skills` and `.pi/skills` from its folder up to the repository root. Links are followed and each real folder is one skill, with everyone who reads it.
+
+- **Cost:** Claude keeps 1% of its model's context window for skill names and descriptions (each cut at 1,536 characters); a list is only called "over budget" when the model its agents use is known (1M-token models: `[1m]`, Fable, Sonnet 5+, Opus 4.7+; else 200K). Codex keeps 2% of its model's window; shown as a fact.
+- **Usage:** counted in the background from Claude's chat logs (`Skill` tool calls and typed `/name`, exact) and Codex's (`<skill>` blocks and `SKILL.md` reads, estimated): per-file cursors, a byte budget per pass, daily counts only (90 days), never chat text; only while an app is connected. Turn it off in Settings.
+- **Add:** one copy in `~/.agents/skills/<name>`, a relative link in each Claude account's `skills/`, and an entry in `npx skills`' lock file (v3, other keys kept). No link for pi: it reads the shared folder. The curated list is pinned to commits; GitHub links are fetched over HTTPS only, pinned to the commit they resolve to, at most 200 files and 2 MB, every file checked against GitHub's own hash. Nothing is written until the preview's plan hash is sent back unchanged.
+- **Turn off:** Claude `skillOverrides` in the account's `settings.json` (honoured in user settings; not for plugin skills); Codex `[[skills.config]] name = "…" enabled = false` in `config.toml`, edited line by line (a file that sets skills another way is left alone).
+- **Remove:** the folder and its links move into the backups (across disks: copied, checked file by file by hash, then deleted); `npx skills`' entry goes too. A skill that is only a link loses only the link. Paseo's, plugins', claude.ai's, Codex's own and managed skills are never changed; a Paseo skill the running Paseo no longer ships can be moved to the backups.
+- **Worth a look:** broken links, empty folders, stray zips, skills without instructions or with a bad header, one name with different instructions in several places, unused skills that still cost every chat, a list over budget, old Paseo skills, and `npx skills` entries with nothing on disk. Each has one action, done on the host.
 
 ## What is read-only, and why
 
@@ -62,7 +82,7 @@ Reads use async fs only, cache by file stat, and start no process. The code-name
 
 ## Settings
 
-Under **Settings → Memories** (host scope, `$PASEO_HOME/plugin-settings/paseo-memories/memories.json`): show technical details (off by default: plain names and note cards), show other agents, check for stale mentions, hide secrets, allow Codex memory edits, backups kept per file.
+Under **Settings → Memories & Skills** (host scope, `$PASEO_HOME/plugin-settings/paseo-memories/memories.json`): show technical details (off by default: plain names and note cards), show other agents, check for stale mentions, hide secrets, allow Codex memory edits, backups kept per file, count skill use (on), and how many days of skill use to show (30).
 
 ## Development and checks
 
@@ -74,7 +94,7 @@ npm run smoke       # read-only inventory, findings and export of your real HOME
 npm run preview:ui  # fixture preview at 127.0.0.1:43299 (PREVIEW_PORT to change)
 ```
 
-Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`, `?nolinks` (an app without `openExternalUrl`). The preview runs the real client entry against a fake Paseo 0.11 app (screen params in the URL as `param.*`); `?legacy` stands in for Paseo 0.10, `?chrome` adds the app sidebar and header, `?popover` opens Add a note from the sidebar "+".
+Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`, `?nolinks` (an app without `openExternalUrl`). The preview runs the real client entry against a fake Paseo 0.11 app (screen params in the URL as `param.*`); `?legacy` stands in for Paseo 0.10, `?chrome` adds the app sidebar and header, `?popover` opens Add a note from the sidebar "+". Skills: `?skills` (`=skills|usage|add|guide` for a tab), `?skill` (a skill open), `?addskill=catalog|github|write`, `?skillpopover` (Add a skill from the Skills row's "+").
 
 Client bundle check (Paseo's esbuild; no `node:` import may be reachable from `client/`):
 

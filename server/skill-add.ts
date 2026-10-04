@@ -27,7 +27,8 @@ import { createSkillLink, installSkillFolder, newSession, readCurrent, safeWrite
  * only here, only on an explicit preview or add.
  *
  * Installed like `npx skills`: one copy in `~/.agents/skills/<name>`, a link
- * in each Claude account's `skills/` (and pi's, when pi is set up here), and
+ * in each Claude account's `skills/` (pi, like Codex, reads the shared folder
+ * itself, so it gets no link of its own), and
  * an entry in `npx skills`' lock file.
  */
 
@@ -217,7 +218,6 @@ async function targetsFor(discovery: SkillsDiscovery, name: string): Promise<{ t
   for (const account of discovery.accounts.accounts) {
     if (!account.exists) continue;
     if (account.agent === "claude") targets.push({ kind: "link", path: join(account.dir, "skills", name), agent: "claude", accountId: account.id, label: `A link for Claude (${account.label})` });
-    if (account.agent === "pi") targets.push({ kind: "link", path: join(account.dir, "skills", name), agent: "pi", accountId: account.id, label: `A link for pi (${account.label})` });
   }
   if (discovery.lock.read.ok) targets.push({ kind: "lock", path: skillLockPath(), label: "npx skills' list of installed skills" });
   else warnings.push(`${discovery.lock.read.reason} The skill is added without an entry there.`);
@@ -317,7 +317,7 @@ export async function addSkill(paseo: Paseo | null, input: { source: AddSource; 
     const report = await createSkillLink(dirname(target.path), value.name, canonical.path);
     reports.push(report);
     logWrite("skills-add", target.path, report.ok ? "linked" : report.action);
-    if (!report.ok) warnings.push(`Added, but not linked for ${target.agent === "pi" ? "pi" : "Claude"} (${report.error ?? "unknown reason"}).`);
+    if (!report.ok) warnings.push(`Added, but not linked for Claude (${report.error ?? "unknown reason"}).`);
   }
   const lockTarget = preview.targets.find((target) => target.kind === "lock");
   if (lockTarget) {

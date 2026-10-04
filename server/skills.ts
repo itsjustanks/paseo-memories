@@ -5,7 +5,7 @@ import { readLock, type LockFile, type LockRead } from "../shared/skill-lock";
 import { codexSkillEnabled } from "../shared/codex-skills-toml";
 import { fileKind } from "../shared/skill-files";
 import {
-  LISTING_BUDGET_CHARS,
+  claudeBudgetChars,
   claudeListingChars,
   codexListingChars,
   nameKey,
@@ -25,6 +25,8 @@ import { skillLockPath, userHome } from "./env";
 import { Probe, sha256 } from "./files";
 import { versionControlled } from "./git";
 import { readMemoriesSettings } from "./settings";
+import { paseoBundle } from "./paseo-bundle";
+import { claudeWindows, type AccountWindow } from "./skill-models";
 import { readAdded, type AddedRecord } from "./skill-records";
 import { READ_ONLY_ROOTS, projectRoots, userRoots, type RootKind, type SkillRoot } from "./skill-roots";
 import { requestUsagePass, usageState, usageSummary } from "./skill-usage";
@@ -40,8 +42,7 @@ import type { MemoriesSettings } from "../shared/settings";
  * never kept (its parsed header and hash are, keyed by the file's stat).
  */
 
-/** Paseo's bundled skills (Paseo 0.9.1 `orchestration-skills`), and the old names it deletes itself. */
-export const PASEO_BUNDLE = new Set(["paseo", "paseo-advisor", "paseo-committee", "paseo-handoff", "paseo-help", "paseo-plugin"]);
+/** Names Paseo used to ship and still cleans up itself (@getpaseo/server 0.11 `LEGACY_SKILL_NAMES`): never orphans. */
 export const PASEO_LEGACY = new Set(["paseo-chat", "paseo-epic", "paseo-orchestrate", "paseo-orchestrator"]);
 export const PASEO_MARKER = ".paseo-managed-files.json";
 
@@ -593,21 +594,22 @@ export async function discoverSkills(paseo: Paseo | null, { refresh = false } = 
   }
 
   // Costs: per Claude and Codex account, each real folder once.
+  const windows = await claudeWindows(paseo, accounts, probe);
   const costs: ListingCost[] = [];
   for (const account of claudeAccounts) {
     const mine = skills.filter((skill) => skill.scope !== "project" && skill.claudeAccounts.includes(account.id));
     const chars = mine.reduce((sum, skill) => sum + claudeListingFor(skill, overrides.get(account.id) ?? {}), 0);
-    costs.push(cost("claude", account.id, account.label, mine.filter((skill) => claudeListingFor(skill, overrides.get(account.id) ?? {}) > 0).length, chars, "Projects can add more of their own."));
+    costs.push(cost("claude", account.id, account.label, mine.filter((skill) => claudeListingFor(skill, overrides.get(account.id) ?? {}) > 0).length, chars, windows.get(account.id)));
   }
   for (const account of codexAccounts) {
     const config = codexConfigs.get(account.id) ?? "";
     const mine = skills.filter((skill) => skill.scope !== "project" && skill.codexAccounts.includes(account.id) && codexSkillEnabled(config, skill.header.name || skill.folder, skill.skillMd));
     const chars = mine.reduce((sum, skill) => sum + codexListingChars(skill.folder, skill.description, skill.skillMd), 0);
-    costs.push(cost("codex", account.id, account.label, mine.length, chars, "Projects can add more of their own."));
+    costs.push(cost("codex", account.id, account.label, mine.length, chars, undefined));
   }
 
   // Worth a look.
-  skillFindings(skills, costs, lock, usage, usageReady, settings, addFinding);
+  skillFindings(skills, costs, lock, usage, usageReady, settings, await paseoBundle(), addFinding);
 
   const nextStep = pickNext(findings);
   const checked = [
@@ -645,9 +647,20 @@ function claudeListingFor(skill: InternalSkill, overrides: ClaudeOverrides): num
   return claudeListingChars(skill.name, skill.header, state);
 }
 
-function cost(agent: string, accountId: string, label: string, count: number, chars: number, note: string): ListingCost {
-  const budget = LISTING_BUDGET_CHARS[agent] ?? 8_000;
-  return { agent, accountId, label, skills: count, chars, tokens: tokensForChars(chars), budgetChars: budget, overBudget: chars > budget, note };
+/**
+ * One account's list cost. Claude's budget comes from the window its agents
+ * use (`window`); Codex's depends on its model's window, which this plugin
+ * doesn't know, so its cost is a fact, never a warning.
+ */
+export function cost(agent: string, accountId: string, label: string, count: number, chars: number, window: AccountWindow | undefined): ListingCost {
+  const tokens = agent === "claude" ? window?.contextTokens ?? null : null;
+  const budget = tokens ? claudeBudgetChars(tokens) : 0;
+  const note = agent === "claude"
+    ? tokens
+      ? `Claude keeps about ${budget.toLocaleString("en-US")} characters of skill descriptions whole${window?.model ? ` with ${window.model}` : ""}; projects can add more of their own.`
+      : "Claude keeps 1% of its model's window for skill descriptions; which model these agents use isn't known here, so this is shown as a fact only."
+    : "Codex keeps 2% of its model's window for its skill list; projects can add more of their own.";
+  return { agent, accountId, label, skills: count, chars, tokens: tokensForChars(chars), budgetChars: budget, overBudget: Boolean(tokens) && chars > budget, budgetKnown: Boolean(tokens), ...(window?.model && tokens ? { model: window.model } : {}), note };
 }
 
 type UsageSummary = ReturnType<typeof usageSummary>;
@@ -659,6 +672,7 @@ function skillFindings(
   usage: UsageSummary | null,
   usageReady: ReturnType<typeof usageState>,
   settings: MemoriesSettings,
+  bundle: ReadonlySet<string> | null,
   add: (finding: Finding, fix?: FixPlan) => void,
 ): void {
   // Header and name problems, one finding per skill (the worst problem leads).
@@ -680,12 +694,12 @@ function skillFindings(
     add({ id: findingId("duplicate", ...group.map((skill) => skill.path).sort()), kind: "duplicate", severity: "warn", sourceIds: ids, message: `${group[0]!.folder} is in ${group.length} places with different instructions; agents may pick either.`, action: { label: "Compare them", kind: "review", sourceId: ids[0] } });
   }
 
-  // Paseo orphans: Paseo's marker, but not a skill Paseo still ships or cleans up.
-  for (const skill of skills) {
-    if (skill.provenance !== "paseo" || PASEO_BUNDLE.has(skill.folder) || PASEO_LEGACY.has(skill.folder)) continue;
+  // Paseo orphans: Paseo's marker, but not a skill the running Paseo ships or cleans up. Only when its bundle could be read.
+  for (const skill of bundle ? skills : []) {
+    if (skill.provenance !== "paseo" || bundle!.has(skill.folder) || PASEO_LEGACY.has(skill.folder)) continue;
     const userPaths = skill.homeRoot?.userFolder ? [skill.path] : [];
     add(
-      { id: findingId("paseo-orphan", skill.path), kind: "paseo-orphan", severity: "info", heuristic: true, sourceIds: [skill.id], message: `${skill.folder} was put here by Paseo, but this Paseo no longer ships it, so nothing will update or remove it.`, ...(userPaths.length ? { action: { label: "Move it to the backups", kind: "fix" } } : {}) },
+      { id: findingId("paseo-orphan", skill.path), kind: "paseo-orphan", severity: "info", sourceIds: [skill.id], message: `${skill.folder} was put here by Paseo, but the Paseo running here doesn't ship it, so nothing will update or remove it.`, ...(userPaths.length ? { action: { label: "Move it to the backups", kind: "fix" } } : {}) },
       userPaths.length ? { kind: "remove-orphan", paths: userPaths } : undefined,
     );
   }
@@ -701,8 +715,8 @@ function skillFindings(
 
   // Lists over budget.
   for (const entry of costs) {
-    if (!entry.overBudget) continue;
-    add({ id: findingId("over-budget", entry.agent, entry.accountId ?? ""), kind: "over-budget", severity: "warn", sourceIds: [], message: `${entry.agent === "claude" ? "Claude" : "Codex"}'s skill list (${entry.label}) is about ${entry.chars.toLocaleString("en-US")} characters, over the ${entry.budgetChars.toLocaleString("en-US")} it keeps whole; descriptions get cut.`, action: { label: "See what costs the most", kind: "review" } });
+    if (!entry.overBudget || !entry.budgetKnown) continue;
+    add({ id: findingId("over-budget", entry.agent, entry.accountId ?? ""), kind: "over-budget", severity: "warn", sourceIds: [], message: `Claude's skill list (${entry.label}) is about ${entry.chars.toLocaleString("en-US")} characters, over the ${entry.budgetChars.toLocaleString("en-US")} it keeps whole${entry.model ? ` with ${entry.model}` : ""}; some descriptions get cut.`, action: { label: "See what costs the most", kind: "review" } });
   }
 
   // Unused but costing: only once usage has been counted all the way through.
