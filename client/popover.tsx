@@ -3,13 +3,14 @@ import React from "react";
 import { Pressable, ScrollView, Text } from "react-native";
 import { AddNote } from "./add-note";
 import { ModeProvider } from "./mode";
+import { noteDrafts } from "./note-draft";
 import type { QuickAddButtonProps } from "./register";
 import { TokensProvider, useUi } from "./ui";
 
 /**
  * Add a note from the sidebar's "+" (Paseo 0.11+): the same form as on the
  * page, anchored to the row on wide layouts and a bottom sheet on phones.
- * Done and Back close it.
+ * Close (or a tap outside) keeps what was typed for the next "+".
  */
 export function AddNotePopover({ theme, host, close }: PluginPopoverProps) {
   const t = useUi(theme, true);
@@ -17,7 +18,7 @@ export function AddNotePopover({ theme, host, close }: PluginPopoverProps) {
     <TokensProvider value={t}>
       <ModeProvider>
         <ScrollView style={{ maxHeight: 640, backgroundColor: t.color.surface0 }} contentContainerStyle={{ padding: t.space.md, gap: t.space.md }}>
-          <AddNote hostId={host.id} onClose={close} />
+          <AddNote hostId={host.id} onClose={close} closeLabel="Close" draft={noteDrafts(host.id)} />
         </ScrollView>
       </ModeProvider>
     </TokensProvider>

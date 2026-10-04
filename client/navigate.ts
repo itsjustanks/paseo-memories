@@ -1,6 +1,7 @@
 import type { PluginScreenParams } from "@getpaseo/plugin/client";
 import type { LoadPlan } from "../shared/contracts";
 import { PLAIN } from "../shared/plain";
+import { TABS } from "./tabs";
 
 /**
  * Panels get no `openSurface`; the client entry lends its opener here. A
@@ -95,6 +96,11 @@ type TabId = (typeof TAB_IDS)[number];
 const isTab = (value: unknown): value is TabId => typeof value === "string" && (TAB_IDS as readonly string[]).includes(value);
 const listsSources = (tab: TabId | undefined) => tab === "user" || tab === "projects";
 
+/** Moving to a tab: User and Projects open on their list, so a note left open earlier closes (and `entry` leaves the params). */
+export function moveToTab<Tab extends TabId>(state: { tab: TabId; sourceId: string | null; entryKey: string | null }, next: Tab): { tab: Tab; sourceId: string | null; entryKey: string | null } {
+  return { tab: next, sourceId: state.sourceId, entryKey: listsSources(next) ? null : state.entryKey };
+}
+
 /** The ids and keys of a destination, as screen params. Text, entries to copy and targets stay out. */
 export function toScreenParams(destination: Destination): PluginScreenParams {
   const params: PluginScreenParams = {};
@@ -153,11 +159,39 @@ export function isStaleSource(sourceId: string | null | undefined, sources: Read
   return Boolean(sourceId && sources && !sources.some((source) => source.id === sourceId));
 }
 
+let technicalTitles = false;
+
+/**
+ * Plain or technical tab names in the header title ("Everywhere" or "User").
+ * The title is worked out before the page reads its settings, so the page
+ * reports the mode here (and client/web.ts keeps it across reloads on web).
+ */
+export function rememberTitleMode(technical: boolean): void {
+  technicalTitles = technical;
+}
+
 /** The header title on Paseo 0.11+: "Memories · Projects", "Memories · Add a note". */
 export function screenTitle(params: PluginScreenParams): string {
   const destination = fromScreenParams(params);
   if (destination.addNote) return `Memories · ${PLAIN.addNote.title}`;
-  return destination.tab && destination.tab !== "overview" ? `Memories · ${PLAIN.tabLabels[destination.tab]}` : "Memories";
+  if (!destination.tab || destination.tab === "overview") return "Memories";
+  const label = technicalTitles ? TABS.find((tab) => tab.id === destination.tab)!.label : PLAIN.tabLabels[destination.tab];
+  return `Memories · ${label}`;
+}
+
+const staleLinks = new Set<string>();
+
+/**
+ * A link to a source this host no longer has. The first time, the page moves
+ * to the Overview with new params, so the title follows (openScreen can't
+ * replace the current entry). Seen again (Back to it), it falls back quietly,
+ * so Back is never a loop.
+ */
+export function firstTimeStale(params: PluginScreenParams | undefined): boolean {
+  const key = paramsKey(params ?? {});
+  if (staleLinks.has(key)) return false;
+  staleLinks.add(key);
+  return true;
 }
 
 function paramsKey(params: PluginScreenParams): string {

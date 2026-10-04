@@ -1,16 +1,19 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import * as HostUI from "@getpaseo/plugin/client/ui";
-import { registerSurfaceOpener, screenTitle } from "./client/navigate";
+import { registerSurfaceOpener, rememberTitleMode, screenTitle } from "./client/navigate";
 import { MemoriesAgentPanel, MemoriesWorkspacePanel } from "./client/panels";
 import { AddNotePopover, QuickAddButton } from "./client/popover";
 import { openFrom, registerMainScreen, type SidebarRowComponent } from "./client/register";
 import { MemoriesSettingsScreen } from "./client/settings";
 import { MemoriesSurface } from "./client/surface";
+import { recallTechnicalTitles } from "./client/web";
 
 /** The app's sidebar row, on Paseo 0.11+; looked up at runtime, since older apps do not have it. */
 const SidebarRow = (HostUI as Partial<{ SidebarRow: SidebarRowComponent }>).SidebarRow;
 
 export default function contribute(client: PluginClientContext) {
+  // Header titles before the page has read its settings: the last mode seen (web), else plain.
+  rememberTitleMode(recallTechnicalTitles());
   // A native screen and sidebar row (with "+" for Add a note) on Paseo 0.11+, the surface and sidebar item before.
   const page = registerMainScreen(
     client,

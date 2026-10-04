@@ -1,10 +1,12 @@
 import { useSettings } from "@getpaseo/plugin/client";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import type { Account, Source } from "../shared/contracts";
 import { plainSourceName } from "../shared/plain";
 import { memoriesSettings } from "../shared/settings";
 import { useInventory, useWorkspaceFolders } from "./data";
+import { rememberTitleMode } from "./navigate";
 import { PlainContext } from "./plain-context";
+import { keepTechnicalTitles } from "./web";
 
 /**
  * Plain or technical. "Show technical details" off (the default) shows plain
@@ -18,6 +20,12 @@ export function ModeProvider({ children }: { children: React.ReactNode }) {
   const settings = useSettings(memoriesSettings);
   // Until the setting is read (or when it can't be), plain.
   const technical = settings.status === "ready" ? Boolean((settings.values as { technicalDetails?: boolean }).technicalDetails) : false;
+  // The header title (Paseo 0.11+) names tabs the same way; only a value actually read counts.
+  useEffect(() => {
+    if (settings.status !== "ready") return;
+    rememberTitleMode(technical);
+    keepTechnicalTitles(technical);
+  }, [settings.status, technical]);
   return <PlainContext.Provider value={!technical}>{children}</PlainContext.Provider>;
 }
 

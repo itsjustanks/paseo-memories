@@ -1,11 +1,12 @@
 import { useRpc } from "@getpaseo/plugin/client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import type { output as ZodOutput } from "zod";
 import { noteAdd, notePreview, type WriteResult } from "../shared/contracts";
 import { plainError } from "../shared/errors";
 import { PLAIN, plainAgent } from "../shared/plain";
 import { useInvalidate, useWorkspaceFolders } from "./data";
+import type { DraftStore, Who } from "./note-draft";
 import { Button, Card, ErrorText, Field, Notice, Row, Segmented, Tag, useTokens } from "./ui";
 
 /**
@@ -15,7 +16,6 @@ import { Button, Card, ErrorText, Field, Notice, Row, Segmented, Tag, useTokens 
  */
 
 type Preview = ZodOutput<(typeof notePreview)["output"]>;
-type Who = "all" | "claude" | "codex";
 
 const A = PLAIN.addNote;
 
@@ -35,7 +35,24 @@ function ProjectPicker({ workspaces, value, onChange }: { workspaces: Array<{ id
   );
 }
 
-export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { hostId: string; workspaceId?: string; onClose: () => void }) {
+/**
+ * `closeLabel`: "Back" on the page, "Close" in the sidebar popover. `draft`:
+ * where unsaved text is kept (the popover's), so closing never loses it.
+ */
+export function AddNote({
+  hostId,
+  workspaceId: initialWorkspace,
+  onClose,
+  closeLabel = "Back",
+  draft,
+}: {
+  hostId: string;
+  workspaceId?: string;
+  onClose: () => void;
+  closeLabel?: "Back" | "Close";
+  draft?: DraftStore;
+}) {
+  const [kept] = useState(() => draft?.read() ?? null);
   const t = useTokens();
   const previewRpc = useRpc(notePreview);
   const add = useRpc(noteAdd);
@@ -43,10 +60,11 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
   const folders = useWorkspaceFolders(hostId);
   // One row per project folder: a worktree's workspace and its project share notes.
   const workspaces = (folders.data ?? []).filter((entry, index, all) => entry.path && all.findIndex((other) => other.path === entry.path) === index);
-  const [text, setText] = useState("");
-  const [who, setWho] = useState<Who>("all");
-  const [where, setWhere] = useState<"everywhere" | "project">(initialWorkspace ? "project" : "everywhere");
-  const [workspaceId, setWorkspaceId] = useState(initialWorkspace ?? "");
+  const [text, setText] = useState(kept?.text ?? "");
+  const [who, setWho] = useState<Who>(kept?.who ?? "all");
+  const [where, setWhere] = useState<"everywhere" | "project">(kept?.where ?? (initialWorkspace ? "project" : "everywhere"));
+  const [workspaceId, setWorkspaceId] = useState(kept?.workspaceId ?? initialWorkspace ?? "");
+  useEffect(() => draft?.write({ text, who, where, workspaceId }), [text, who, where, workspaceId]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [result, setResult] = useState<WriteResult | null>(null);
   const [error, setError] = useState("");
@@ -76,6 +94,7 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
       const outcome = await add({ ...request, expected: preview.targets.map((target) => ({ id: target.id, stamp: target.stamp })) });
       setResult(outcome);
       if (outcome.ok) {
+        draft?.write(null);
         setPreview(null);
         await invalidate();
       }
@@ -112,7 +131,7 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
   // Saved on Save: places the agent reads the note from, without the same note already.
   const fresh = preview?.targets.filter((target) => !target.blocked && target.duplicate !== "exact") ?? [];
   return (
-    <Card title={A.title} icon="NotebookPen" trailing={<Button label="Back" icon="ArrowLeft" variant="ghost" onPress={onClose} />}>
+    <Card title={A.title} icon="NotebookPen" trailing={<Button label={closeLabel} icon={closeLabel === "Close" ? "X" : "ArrowLeft"} variant="ghost" onPress={onClose} />}>
       <View style={{ gap: t.space.md }}>
         {preview ? (
           <View style={{ gap: t.space.md }}>

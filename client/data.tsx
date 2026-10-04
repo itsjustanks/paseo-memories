@@ -6,6 +6,7 @@ import { findings, inventory, sourceDetail, type WriteResult } from "../shared/c
 import { plainError } from "../shared/errors";
 import { PLAIN, plainMessage } from "../shared/plain";
 import { clockTime } from "../shared/schedule";
+import { KEY, findingsKey, refreshAfterWrite, writeKey } from "./freshness";
 import { usePlain } from "./plain-context";
 import { ErrorText, Loading, Notice, StaleNote, Tag, useTokens } from "./ui";
 
@@ -15,7 +16,7 @@ import { ErrorText, Loading, Notice, StaleNote, Tag, useTokens } from "./ui";
  * The host turns refetch-on-mount off, so every visit asks again.
  */
 
-export const KEY = "paseo-memories";
+export { KEY } from "./freshness";
 
 export function useInventory(hostId: string) {
   const call = useRpc(inventory);
@@ -25,7 +26,7 @@ export function useInventory(hostId: string) {
 export function useFindings(hostId: string) {
   const call = useRpc(findings);
   return useQuery({
-    queryKey: [KEY, hostId, "findings"],
+    queryKey: findingsKey(hostId),
     queryFn: () => call({}),
     retry: 1,
     refetchOnMount: "always",
@@ -34,10 +35,15 @@ export function useFindings(hostId: string) {
   });
 }
 
-/** The findings the Overview last read, without asking the host: for the page header on every tab. */
+/** The findings last read, without asking the host: for the page header on every tab. Writes fetch them again (`useInvalidate`). */
 export function useCachedFindings(hostId: string) {
   const call = useRpc(findings);
-  return useQuery({ queryKey: [KEY, hostId, "findings"], queryFn: () => call({}), enabled: false });
+  return useQuery({ queryKey: findingsKey(hostId), queryFn: () => call({}), enabled: false });
+}
+
+/** When this host's notes last changed here (0: not since the page opened). */
+export function useLastWrite(hostId: string): number {
+  return useQuery({ queryKey: writeKey(hostId), queryFn: () => 0, enabled: false }).data ?? 0;
 }
 
 export function useSourceDetail(hostId: string, sourceId: string | null, workspaceId?: string) {
@@ -65,10 +71,11 @@ export function useWorkspaceFolders(hostId: string) {
   });
 }
 
-/** After any save: everything that shows files is out of date. */
+/** After any save, remove or import, and on Refresh: everything that shows files is out of date, the header's findings included. */
 export function useInvalidate(hostId: string) {
   const client = useQueryClient();
-  return () => client.invalidateQueries({ queryKey: [KEY, hostId] });
+  const call = useRpc(findings);
+  return () => refreshAfterWrite(client, hostId, () => call({}));
 }
 
 /** Loading, a first-load error, or a stale-but-shown note; renders nothing once data is fresh. */

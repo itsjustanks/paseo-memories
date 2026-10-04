@@ -113,8 +113,9 @@ function Preview() {
   const Item = registered.Item;
   const muted = { color: colors.foregroundMuted };
   return <QueryClientProvider client={queryClient}>
-    <View style={{ flex: 1, flexDirection: "row", backgroundColor: colors.surface0 }}>
-      <View style={{ width: 240, borderRightWidth: 1, borderColor: colors.border, backgroundColor: colors.surface1, padding: 8, gap: 4 }}>
+    {/* Narrow: the sidebar becomes a strip and the popover a bottom sheet, as in the app. */}
+    <View style={{ flex: 1, flexDirection: compact ? "column" : "row", backgroundColor: colors.surface0 }}>
+      <View style={{ width: compact ? "100%" : 240, borderRightWidth: compact ? 0 : 1, borderBottomWidth: compact ? 1 : 0, borderColor: colors.border, backgroundColor: colors.surface1, padding: 8, gap: 4 }}>
         <Text style={[muted, { padding: 8, fontWeight: "600" }]}>Paseo {legacy ? "0.10" : "0.11"}</Text>
         <View style={{ borderRadius: 8 }}><Text style={{ padding: 8, color: colors.foreground }}>Workspaces</Text></View>
         {Item ? <View style={{ position: "relative" }}><Item {...props} currentScreen={{ screenId: "memories", params: current }} openScreen={(input: any) => openScreenInApp(input.params)} openPopover={openPopover} /></View>
@@ -127,7 +128,7 @@ function Preview() {
         {screen}
       </View>
       {Popover ? (
-          <View style={{ position: "absolute", left: 248, top: 88, width: 420, zIndex: 10, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface0, boxShadow: "0 12px 32px rgba(0,0,0,0.18)" } as any}>
+          <View style={{ position: "absolute", ...(compact ? { left: 0, right: 0, bottom: 0 } : { left: 248, top: 88, width: 420 }), zIndex: 10, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface0, boxShadow: "0 12px 32px rgba(0,0,0,0.18)" } as any}>
             <Popover {...props} close={() => setPopover(null)} openScreen={(input: any) => { setPopover(null); openScreenInApp(input.params); }} />
           </View>
         ) : null}

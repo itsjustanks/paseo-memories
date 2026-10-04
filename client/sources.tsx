@@ -74,7 +74,8 @@ function PlainSourceRow({ source, name, first, selected, onPress }: { source: So
       selected={selected}
       onPress={onPress}
       title={<Text style={t.text.bodyStrong}>{name}</Text>}
-      {...(readers ? { subtitle: readers } : {})}
+      // Wraps instead of cutting off: the list is the one place that says who follows a set of notes.
+      {...(readers ? { subtitle: <Text style={t.text.caption}>{readers}</Text> } : {})}
       meta={
         <Facts
           items={[

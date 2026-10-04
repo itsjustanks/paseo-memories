@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { PLAIN, isCodexInternal, plainFindings } from "../shared/plain";
+import { PLAIN, isCodexInternal } from "../shared/plain";
 import { AddNote } from "./add-note";
-import { QueryState, useCachedFindings, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
+import { QueryState, useCachedFindings, useInvalidate, useInventory, useLastWrite, useWorkspaceFolders } from "./data";
+import { headerStatus } from "./freshness";
 import { ModeProvider, usePlain } from "./mode";
 import { Guide } from "./guide";
-import { isStaleSource, landing, onDestination, opensTransfer, syncScreenParams, takeDestination, toScreenParams, type Destination } from "./navigate";
+import { firstTimeStale, isStaleSource, landing, moveToTab, onDestination, opensTransfer, syncScreenParams, takeDestination, toScreenParams, type Destination } from "./navigate";
 import type { MemoriesScreenProps } from "./register";
 import { TabBar, TabIntro, type SectionId } from "./navigation";
 import { Overview } from "./overview";
@@ -14,21 +15,12 @@ import { Button, Header, Screen, TokensProvider, useTokens, useUi, type Status }
 
 /** The Memories page: Overview · User · Projects · Import & Export · Guide. */
 
-/**
- * The header's one line: which computer, and how its notes are doing. The
- * tidy count comes from the checks the Overview already ran (read from the
- * cache, never fetched here), so other tabs cost no extra scan.
- */
+/** The header's one line: which computer, and how its notes are doing (client/freshness.ts). Reads only cached findings, so other tabs cost no extra scan. */
 function useHeaderStatus(hostId: string, hostLabel: string, plain: boolean): { status: Status; caption: string } {
   const inventory = useInventory(hostId);
-  const tidy = useCachedFindings(hostId).data;
-  const S = PLAIN.status;
-  if (!inventory.data) return inventory.error ? { status: "error", caption: S.cantRead(hostLabel) } : { status: "busy", caption: S.checking(hostLabel) };
-  if (inventory.data.counts.sources === 0) return { status: "neutral", caption: `${S.on(hostLabel)} · ${S.none}` };
-  if (!tidy) return { status: "neutral", caption: S.on(hostLabel) };
-  const shown = plain ? plainFindings(tidy.findings, inventory.data.sources) : tidy.findings;
-  const status: Status = shown.some((finding) => finding.severity === "error") ? "error" : shown.length ? "attention" : "ok";
-  return { status, caption: `${S.on(hostLabel)} · ${shown.length ? S.worth(shown.length) : S.tidy}` };
+  const cached = useCachedFindings(hostId);
+  const lastWrite = useLastWrite(hostId);
+  return headerStatus({ hostLabel, plain, inventory: inventory.data, inventoryError: Boolean(inventory.error), findings: cached.data, findingsAt: cached.dataUpdatedAt, lastWrite });
 }
 
 export function MemoriesSurface(props: MemoriesScreenProps) {
@@ -100,7 +92,7 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
     ...(adding ? { addNote: adding } : {}),
   });
   const hereKey = JSON.stringify(here);
-  // A stale link falls back to the Overview without a new history entry, so Back is not a loop.
+  // Set when a stale link falls back quietly (client/navigate.ts firstTimeStale).
   const quietKey = useRef<string | null>(null);
   useEffect(() => {
     const quiet = quietKey.current === hereKey;
@@ -112,11 +104,19 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
   const sourcesNow = inventory.data?.sources;
   useEffect(() => {
     if (!isStaleSource(sourceId, sourcesNow)) return;
-    quietKey.current = JSON.stringify(toScreenParams(adding ? { addNote: adding } : {}));
+    if (!firstTimeStale(params)) quietKey.current = JSON.stringify(toScreenParams(adding ? { addNote: adding } : {}));
     setTab("overview");
     setSourceId(null);
     setEntryKey(null);
   }, [sourceId, sourcesNow]);
+
+  /** The tab bar and the Overview's links: User and Projects open on their list, not on a note left open earlier. */
+  const goToTab = (next: SectionId) => {
+    const moved = moveToTab({ tab, sourceId, entryKey }, next);
+    setAdding(null);
+    setTab(moved.tab);
+    setEntryKey(moved.entryKey);
+  };
 
   /** Open a source on the tab it belongs to. */
   const open = (id: string, key?: string) => {
@@ -151,11 +151,7 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
       />
       <TabBar
         active={tab}
-        onSelect={(next) => {
-          setAdding(null);
-          setTab(next);
-          if (next === "user" || next === "projects") setEntryKey(null);
-        }}
+        onSelect={goToTab}
       />
       <TabIntro
         key={tab}
@@ -167,10 +163,7 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
           hostId={hostId}
           onOpen={open}
           onAddNote={() => addNote()}
-          onGo={(next) => {
-            setAdding(null);
-            setTab(next);
-          }}
+          onGo={goToTab}
         /> : null}
       {!adding && (tab === "user" || tab === "projects") ? (
         inventory.data ? (
