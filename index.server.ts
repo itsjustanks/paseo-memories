@@ -11,6 +11,19 @@ import { markClientSeen } from "./server/presence";
 import { handlePromptGet, handlePromptSet } from "./server/prompt";
 import { handleAgentPlan, handleEntryBody, handleInventory, handleSourceDetail, handleWorkspacePlan } from "./server/read";
 import { handleSearch } from "./server/search";
+import {
+  handleSkillDetail,
+  handleSkillsAdd,
+  handleSkillsAgent,
+  handleSkillsCatalog,
+  handleSkillsFix,
+  handleSkillsInventory,
+  handleSkillsPreview,
+  handleSkillsRemove,
+  handleSkillsToggle,
+  handleSkillsUsage,
+  handleSkillsWorkspace,
+} from "./server/skill-handlers";
 import { handleFindings } from "./server/tidy";
 import { handleExport, handleImportApply, handleImportParse, handleImportPreview } from "./server/transfer";
 import {
@@ -36,6 +49,7 @@ import {
   workspacePlan,
 } from "./shared/contracts";
 import { maskTextFields } from "./shared/secrets";
+import { skillDetail, skillsAdd, skillsAgent, skillsCatalog, skillsFix, skillsInventory, skillsPreview, skillsRemove, skillsToggle, skillsUsage, skillsWorkspace } from "./shared/skill-contracts";
 import { memoriesSettings } from "./shared/settings";
 import { readMemoriesSettings, adoptSettingsHandle } from "./server/settings";
 
@@ -97,6 +111,18 @@ export default function contribute(server: PluginServerContext) {
   handle(exportMemories, handleExport, { maskOutput: false });
   handle(notePreview, handleNotePreview);
   handle(noteAdd, handleNoteAdd);
+  // Skills (0.4.0).
+  handle(skillsInventory, handleSkillsInventory);
+  handle(skillDetail, handleSkillDetail);
+  handle(skillsUsage, handleSkillsUsage);
+  handle(skillsCatalog, handleSkillsCatalog);
+  handle(skillsAgent, handleSkillsAgent);
+  handle(skillsWorkspace, handleSkillsWorkspace);
+  handle(skillsPreview, handleSkillsPreview);
+  handle(skillsAdd, handleSkillsAdd);
+  handle(skillsToggle, handleSkillsToggle);
+  handle(skillsRemove, handleSkillsRemove);
+  handle(skillsFix, handleSkillsFix);
 
   runStart();
   return () => {

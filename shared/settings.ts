@@ -18,6 +18,8 @@ export const memoriesSettings = defineSettings({
     codexEdits: z.boolean().default(true).describe("Allow edits to Codex's generated MEMORY.md and memory_summary.md"),
     backupsToKeep: z.number().int().min(1).max(500).default(20).describe("Backups kept per file"),
     technicalDetails: z.boolean().default(false).describe("Show file names, paths, sizes and the whole-file editors"),
+    skillsUsage: z.boolean().default(true).describe("Count which skills your agents use, from their chat history on this computer"),
+    skillsWindowDays: z.number().int().min(1).max(90).default(30).describe("Days of skill use to show"),
   }),
 });
 

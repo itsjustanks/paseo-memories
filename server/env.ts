@@ -43,3 +43,24 @@ export function claudeManagedDir(): string {
 export function truthyEnv(value: string | undefined): boolean {
   return value !== undefined && /^(1|true|yes|on)$/i.test(value.trim());
 }
+
+/** The shared skills folder most agents read and `npx skills` installs into. */
+export function sharedSkillsDir(): string {
+  return join(homedir(), ".agents", "skills");
+}
+
+/** `npx skills`' global lock file: `$XDG_STATE_HOME/skills/.skill-lock.json`, else `~/.agents/.skill-lock.json` (vercel-labs/skills `getSkillLockPath`). */
+export function skillLockPath(): string {
+  const xdg = process.env.XDG_STATE_HOME?.trim();
+  return xdg ? join(xdg, "skills", ".skill-lock.json") : join(homedir(), ".agents", ".skill-lock.json");
+}
+
+/** Claude Code's managed skills: `.claude/skills` inside the managed folder (code.claude.com/docs/en/skills). */
+export function claudeManagedSkillsDir(): string {
+  return join(claudeManagedDir(), ".claude", "skills");
+}
+
+/** Codex's admin skills (`/etc/codex/skills`). `PASEO_MEMORIES_CODEX_ADMIN_DIR` overrides it (tests only). */
+export function codexAdminSkillsDir(): string {
+  return process.env.PASEO_MEMORIES_CODEX_ADMIN_DIR?.trim() || "/etc/codex/skills";
+}

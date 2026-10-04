@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import type { FileStamp, WriteReport } from "../shared/contracts";
 import { keepTextTraits } from "../shared/text";
 import { pluginDataDir } from "./env";
 import { forgetFile, sha256, statSafe } from "./files";
-import { writableReason } from "./writable";
+import { skillFolderReason, skillParentReason, writableReason } from "./writable";
 
 export { sha256 };
 
@@ -393,5 +393,141 @@ export async function renameInPlace(session: Session, from: string, to: string, 
     return { ...report, ok: back.readBack === "ok" && spelled, readBack: back.readBack, ...(back.stamp ? { stamp: back.stamp } : {}), ...(spelled ? {} : { error: "The file is there but its name did not change." }) };
   } catch (error) {
     return { ...report, error: fsError(error, to) };
+  }
+}
+
+// ------------------------------------------------------------------ skill folders (0.4.0)
+
+export type SkillFile = { path: string; bytes: Buffer; executable: boolean };
+
+const SAFE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function safeRel(path: string): boolean {
+  if (!path || path.startsWith("/") || path.includes("\\") || path.includes("\0")) return false;
+  return path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+/**
+ * A new skill folder `<parent>/<name>`, made so no agent ever reads half of
+ * it: the folder is claimed with one mkdir (which fails if anything has that
+ * name: never an overwrite), every other file is written, and SKILL.md
+ * arrives last by rename. Until then agents see a folder without
+ * instructions and skip it. On failure, only what this call made is taken
+ * away again. Never throws.
+ */
+export async function installSkillFolder(parent: string, name: string, files: SkillFile[]): Promise<WriteReport> {
+  const target = join(parent, name);
+  const report: WriteReport = { target, ok: false, action: "created", readBack: "skipped" };
+  let claimed = false;
+  try {
+    const refused = (await skillParentReason(parent, "install")) ?? (SAFE_NAME.test(name) && name.length <= 64 ? null : `${name} is not a name this plugin will create.`);
+    if (refused) return { ...report, action: "refused", error: refused };
+    if (!files.some((file) => file.path === "SKILL.md")) return { ...report, action: "refused", error: "A skill needs an instructions file (SKILL.md)." };
+    const bad = files.find((file) => !safeRel(file.path));
+    if (bad) return { ...report, action: "refused", error: "A file in that skill has a name that would land outside its folder." };
+    await fs.mkdir(parent, { recursive: true, mode: 0o755 });
+    await fs.mkdir(target, { mode: 0o755 });
+    claimed = true;
+    const ordered = [...files.filter((file) => file.path !== "SKILL.md"), ...files.filter((file) => file.path === "SKILL.md")];
+    for (const file of ordered) {
+      const path = join(target, file.path);
+      if (!resolve(path).startsWith(`${resolve(target)}/`)) throw Object.assign(new Error("outside"), { code: "EPERM" });
+      await fs.mkdir(dirname(path), { recursive: true, mode: 0o755 });
+      const mode = file.executable ? 0o755 : 0o644;
+      const tmp = join(dirname(path), `${TEMP_PREFIX}${randomBytes(6).toString("hex")}`);
+      const handle = await fs.open(tmp, "wx", mode);
+      try {
+        await handle.writeFile(file.bytes);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await fs.chmod(tmp, mode);
+      await fs.rename(tmp, path);
+    }
+    await syncFolder(target);
+    await syncFolder(parent);
+    // Read back: every file there, byte for byte.
+    for (const file of files) {
+      const back = await fs.readFile(join(target, file.path));
+      if (!back.equals(file.bytes)) return { ...report, ok: false, readBack: "mismatch", error: "A file read back differently from what was written." };
+    }
+    return { ...report, ok: true, readBack: "ok" };
+  } catch (error) {
+    if (claimed) await fs.rm(target, { recursive: true, force: true }).catch(() => undefined);
+    return { ...report, ok: false, error: fsError(error, target) };
+  }
+}
+
+/**
+ * A link `<parent>/<name>` → `target`, relative like `npx skills` makes them
+ * (from the real parent, so a linked parent folder still resolves). Never
+ * replaces anything: an existing entry of that name is refused. Never throws.
+ */
+export async function createSkillLink(parent: string, name: string, target: string): Promise<WriteReport> {
+  const link = join(parent, name);
+  const report: WriteReport = { target: link, ok: false, action: "created", readBack: "skipped" };
+  try {
+    const refused = await skillParentReason(parent, "link");
+    if (refused) return { ...report, action: "refused", error: refused };
+    await fs.mkdir(parent, { recursive: true, mode: 0o755 });
+    const realParent = await fs.realpath(parent);
+    const realTarget = await fs.realpath(target);
+    await fs.symlink(relative(realParent, realTarget) || ".", link, "dir");
+    const back = await fs.realpath(link).catch(() => "");
+    return { ...report, ok: back === realTarget, readBack: back === realTarget ? "ok" : "mismatch", ...(back === realTarget ? {} : { error: "The link does not lead to the skill." }) };
+  } catch (error) {
+    return { ...report, ok: false, error: fsError(error, link) };
+  }
+}
+
+async function countFiles(path: string): Promise<number> {
+  const stat = await fs.lstat(path);
+  if (!stat.isDirectory()) return 1;
+  let count = 0;
+  for (const entry of await fs.readdir(path)) count += await countFiles(join(path, entry));
+  return count;
+}
+
+/**
+ * Take a skill folder, a link, an empty folder or a stray file out of a
+ * skills folder by moving it into this action's backup folder: nothing is
+ * deleted outright. A link is removed as a link (what it pointed to is
+ * written down in the backup). Across disks the move is a copy, checked
+ * file for file, then the original goes. Only direct children of the user's
+ * own skills folders; never Paseo's, claude.ai's or Codex's own (unless
+ * `paseoOrphan`: Paseo no longer ships it). Never throws.
+ */
+export async function moveToBackup(session: Session, path: string, { paseoOrphan = false } = {}): Promise<WriteReport> {
+  const report: WriteReport = { target: path, ok: false, action: "deleted", readBack: "skipped" };
+  try {
+    const refused = (await skillParentReason(dirname(path), "remove")) ?? (paseoOrphan ? null : await skillFolderReason(path));
+    if (refused) return { ...report, action: "refused", error: refused };
+    const stat = await fs.lstat(path);
+    const backupPath = join(backupsRoot(), session.stamp, mirrored(path));
+    await fs.mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+    if (stat.isSymbolicLink()) {
+      const pointsTo = await fs.readlink(path);
+      await fs.writeFile(`${backupPath}.link.json`, `${JSON.stringify({ link: path, pointsTo }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+      await fs.unlink(path);
+      report.backupPath = `${backupPath}.link.json`;
+    } else {
+      if (await statSafe(backupPath)) return { ...report, action: "refused", error: "This action already backed up something at that place." };
+      try {
+        await fs.rename(path, backupPath);
+      } catch (error) {
+        if ((error as { code?: string }).code !== "EXDEV") throw error;
+        await fs.cp(path, backupPath, { recursive: true, verbatimSymlinks: true, errorOnExist: true, force: false });
+        if ((await countFiles(path)) !== (await countFiles(backupPath))) throw Object.assign(new Error("copy incomplete"), { code: "EIO" });
+        await fs.rm(path, { recursive: true });
+      }
+      report.backupPath = backupPath;
+    }
+    forgetFile(path);
+    await syncFolder(dirname(path));
+    const gone = !(await fs.lstat(path).then(() => true, () => false));
+    return { ...report, ok: gone, readBack: gone ? "ok" : "mismatch", ...(gone ? {} : { error: "It is still there." }) };
+  } catch (error) {
+    return { ...report, ok: false, error: fsError(error, path) };
   }
 }

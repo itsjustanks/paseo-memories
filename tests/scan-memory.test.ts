@@ -124,3 +124,55 @@ test("the read budget spreads a big first scan over several passes without losin
     PASS_LIMITS.readBytes = budget;
   }
 });
+
+// ------------------------------------------------------------------ skill use (0.4.0)
+
+const usage = await import("../server/skill-usage");
+
+test("the skill-use scan keeps small tallies only, flat across passes, and forgets deleted logs", async () => {
+  const { markClientSeen } = await import("../server/presence");
+  const { claudeNoiseLine, claudeSkillLine, isoDaysAgo, writeLines } = await import("./skills-helpers");
+  markClientSeen();
+  usage.forgetUsage();
+  const dir = join(sb.root, "skills-scan", "claude");
+  const LOGS = 12;
+  const SKILLS = ["alpha", "beta", "gamma", "delta"];
+  const logPath = (i: number) => join(dir, "projects", `-w-p${i % 3}`, `sess-${i}.jsonl`);
+  // About 3 MB per log: long noise lines (the text agents write) with a skill use now and then.
+  const chunk = (i: number, round: number) => {
+    const lines: string[] = [];
+    for (let j = 0; j < 400; j += 1) {
+      lines.push(claudeNoiseLine(isoDaysAgo(j % 20), `sess-${i}`, `/w/p${i % 3}`, 7_000 + (j % 5) * 100));
+      if (j % 40 === 0) lines.push(claudeSkillLine(`${SKILLS[(i + j + round) % SKILLS.length]}`, isoDaysAgo(j % 20), `sess-${i}`, `/w/p${i % 3}`));
+    }
+    return lines;
+  };
+  for (let i = 0; i < LOGS; i += 1) writeLines(logPath(i), chunk(i, 0));
+  const accounts = [{ agent: "claude", dir, exists: true }];
+  const run = async () => {
+    usage.requestUsagePass(accounts, { force: true });
+    await usage.usageSettled();
+  };
+  const baseline = heapAfterGc();
+  const heaps: number[] = [];
+  let expected = 0;
+  for (let round = 1; round <= 5; round += 1) {
+    if (round > 1) for (let i = round > 4 ? 1 : 0; i < LOGS; i += 1) writeLines(logPath(i), chunk(i, round), true);
+    if (round === 4) rmSync(logPath(0));
+    await run();
+    heaps.push(heapAfterGc());
+    const stats = usage.usageStats();
+    assert.equal(stats.complete, true);
+    assert.equal(stats.files, round >= 4 ? LOGS - 1 : LOGS, `round ${round}: one entry per live log`);
+    assert.ok(stats.skills <= stats.files * SKILLS.length);
+    assert.ok(stats.days <= stats.skills * 20, "only days with uses are kept");
+    const total = usage.usageSummary(SKILLS, 90).totals.uses;
+    expected = (round >= 4 ? LOGS - 1 : LOGS) * 10 * round;
+    assert.equal(total, expected, `round ${round}: every use counted once`);
+  }
+  // About 36 MB of logs is read in round one and 36 MB more each round after.
+  const retained = heaps[heaps.length - 1]! - baseline;
+  assert.ok(retained < 8 * MB, `retained ${(retained / MB).toFixed(1)} MB after five rounds`);
+  assert.ok(heaps[heaps.length - 1]! <= heaps[0]! + 2 * MB, `no growth across rounds: ${heaps.map((heap) => (heap / MB).toFixed(1)).join(", ")} MB`);
+  assert.ok(expected > 0);
+});

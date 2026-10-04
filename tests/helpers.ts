@@ -29,6 +29,8 @@ const AGENT_VARS = [
   "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
   "CLAUDE_CODE_DISABLE_CLAUDE_MDS",
   "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE",
+  "XDG_STATE_HOME",
+  "PASEO_MEMORIES_CODEX_ADMIN_DIR",
 ];
 
 export const LONG_NAME = `a-very-long-project-folder-name-${"x".repeat(150)}`;

@@ -20,6 +20,12 @@ const CACHE_MS = 5_000;
 let generation = 0;
 let cached: ({ at: number } & DaemonRead) | null = null;
 let inFlight: { generation: number; read: Promise<DaemonRead> } | null = null;
+/** The provider launch settings last read, for the write allow-list (which accounts exist). */
+let knownLaunch: ProviderLaunch = {};
+
+export function lastKnownLaunch(): ProviderLaunch {
+  return knownLaunch;
+}
 
 export function readDaemonConfig(config: unknown): DaemonRead {
   const root = (config && typeof config === "object" ? config : {}) as { appendSystemPrompt?: unknown };
@@ -35,6 +41,7 @@ async function readFresh(paseo: Paseo): Promise<DaemonRead> {
   const startedAt = generation;
   const { config } = await withDeadline(paseo.config.get(), "its daemon settings");
   const read = readDaemonConfig(config);
+  knownLaunch = read.launch;
   if (startedAt === generation) cached = { at: Date.now(), ...read };
   return read;
 }

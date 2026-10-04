@@ -1,0 +1,462 @@
+import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import fs from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import type { WriteReport } from "../shared/contracts";
+import { codexSkillEnabled, setSkillEnabled } from "../shared/codex-skills-toml";
+import { maskSecrets } from "../shared/secrets";
+import { lockLooksValid, readLock, serializeLock, withoutEntry } from "../shared/skill-lock";
+import { nameKey } from "../shared/skill-md";
+import type { AddSource, ListingCost } from "../shared/skill-contracts";
+import { CATALOG, catalogName } from "../shared/skills-catalog";
+import { accountForProvider } from "./accounts";
+import { startWrite, workspaceDirectory, type Paseo } from "./daemon";
+import { skillLockPath } from "./env";
+import { Probe } from "./files";
+import { logWrite } from "./log";
+import { withDeadline } from "./run";
+import { readMemoriesSettings } from "./settings";
+import { addSkill, previewSkill } from "./skill-add";
+import { forgetAdded } from "./skill-records";
+import { projectRoots } from "./skill-roots";
+import { chatUsage, folderUsage, requestUsagePass, usageState, usageSummary } from "./skill-usage";
+import { discoverSkills, findSkill, forgetSkills, publicSkill, walkSkill, type InternalSkill, type SkillsDiscovery } from "./skills";
+import { skillParentReason } from "./writable";
+import { moveToBackup, newSession, readCurrent, safeWrite, type Session } from "./write";
+
+/**
+ * The Skills RPC handlers. Reads answer from discovery and the usage scan's
+ * last answer (never waiting for a pass, never starting a process, never
+ * using the network); writes go through `server/write.ts` with backups, one
+ * report per place.
+ */
+
+const MAX_BODY = 200 * 1024;
+
+type Ctx = Pick<PluginHandlerContext, "paseo">;
+
+function result(ok: boolean, message: string, reports: WriteReport[], warnings: string[] = []) {
+  return { ok, message, reports, warnings };
+}
+
+// ------------------------------------------------------------------ reads
+
+export async function handleSkillsInventory({ refresh }: { refresh?: boolean }, { paseo }: Ctx) {
+  const discovery = await discoverSkills(paseo, { refresh: Boolean(refresh) });
+  const usage = usageState(discovery.settings.skillsUsage);
+  return {
+    checkedAt: new Date(discovery.at).toISOString(),
+    skills: discovery.skills.map(publicSkill),
+    costs: discovery.costs,
+    findings: discovery.findings,
+    ...(discovery.nextStep ? { nextStep: discovery.nextStep } : {}),
+    usage,
+    counts: {
+      skills: discovery.skills.length,
+      places: discovery.skills.reduce((sum, skill) => sum + skill.locations.length, 0),
+      projects: discovery.projects.length,
+      accounts: discovery.accounts.accounts.filter((account) => account.exists && (account.agent === "claude" || account.agent === "codex")).length,
+    },
+    checked: discovery.checked,
+    notes: discovery.notes,
+  };
+}
+
+export async function handleSkillDetail({ skillId, reveal }: { skillId: string; reveal?: boolean }, { paseo }: Ctx) {
+  const discovery = await discoverSkills(paseo);
+  const skill = discovery.byId.get(skillId);
+  if (!skill) throw new Error("That skill is no longer there. Refresh the list.");
+  const warnings: string[] = [];
+  let body = "";
+  let truncated = false;
+  try {
+    const bytes = await fs.readFile(skill.skillMd);
+    truncated = bytes.length > MAX_BODY;
+    body = bytes.subarray(0, MAX_BODY).toString("utf8");
+  } catch {
+    warnings.push("Its instructions could not be read just now.");
+  }
+  const settings = await readMemoriesSettings();
+  if (!reveal && settings.maskSecrets) body = maskSecrets(body).text;
+  const fileList: Array<{ path: string; bytes: number; kind: string; executable: boolean }> = [];
+  await walkSkill(skill.path, fileList);
+  fileList.sort((a, b) => (a.path === "SKILL.md" ? -1 : b.path === "SKILL.md" ? 1 : a.path.localeCompare(b.path)));
+  return {
+    skill: publicSkill(skill),
+    body,
+    truncated,
+    fileList,
+    ...(skill.lockEntry ? { lock: { source: skill.lockEntry.source, sourceType: skill.lockEntry.sourceType, ...(skill.lockEntry.ref ? { ref: skill.lockEntry.ref } : {}), ...(skill.lockEntry.installedAt ? { installedAt: skill.lockEntry.installedAt } : {}), ...(skill.lockEntry.updatedAt ? { updatedAt: skill.lockEntry.updatedAt } : {}) } } : {}),
+    warnings,
+  };
+}
+
+export async function handleSkillsUsage({ days, refresh }: { days?: number; refresh?: boolean }, { paseo }: Ctx) {
+  const discovery = await discoverSkills(paseo);
+  const settings = discovery.settings;
+  const window = days ?? settings.skillsWindowDays;
+  if (settings.skillsUsage && refresh) requestUsagePass(discovery.accounts.accounts, { minGapMs: 10_000 });
+  const state = usageState(settings.skillsUsage);
+  const names = [...new Set(discovery.skills.flatMap((skill) => [skill.name, skill.folder]))];
+  const summary = usageSummary(settings.skillsUsage ? names : [], window);
+  const byName = new Map<string, InternalSkill>();
+  for (const skill of discovery.skills) {
+    byName.set(skill.name.toLowerCase(), skill);
+    if (!byName.has(skill.folder.toLowerCase())) byName.set(skill.folder.toLowerCase(), skill);
+  }
+  const notes = ["Claude records every skill it uses, so its counts are exact. Codex doesn't, so its counts are estimated from the skill files it read."];
+  if (state.note) notes.push(state.note);
+  return {
+    days: window,
+    firstDay: summary.firstDay,
+    lastDay: summary.lastDay,
+    rows: summary.rows.map((row) => {
+      const skill = byName.get(row.name.toLowerCase());
+      return { ...row, ...(skill ? { skillId: skill.id } : {}) };
+    }),
+    totals: summary.totals,
+    neverUsed: settings.skillsUsage && state.state === "ready" ? summary.neverUsed.map((name) => byName.get(name.toLowerCase())).filter((skill): skill is InternalSkill => Boolean(skill) && skill!.scope !== "project").filter((skill, i, all) => all.indexOf(skill) === i).map((skill) => ({ name: skill.name, skillId: skill.id, listingChars: Math.max(skill.listing.claude, skill.listing.codex) })) : [],
+    state,
+    notes,
+  };
+}
+
+export async function handleSkillsCatalog(_input: Record<string, never>, { paseo }: Ctx) {
+  const discovery = await discoverSkills(paseo);
+  return {
+    entries: CATALOG.map((entry) => {
+      const name = catalogName(entry);
+      const have = discovery.skills.find((skill) => nameKey(skill.folder) === nameKey(name));
+      return {
+        id: entry.id,
+        name,
+        title: entry.title,
+        blurb: entry.blurb,
+        publisher: entry.publisher,
+        source: `${entry.owner}/${entry.repo}`,
+        commit: entry.commit,
+        license: entry.license,
+        files: entry.files,
+        scripts: entry.scripts,
+        alreadyHave: Boolean(have),
+        ...(have ? { alreadyHaveId: have.id } : {}),
+      };
+    }),
+    note: "Each skill is pinned to the exact version this plugin checked; what you preview is what gets added.",
+  };
+}
+
+// ------------------------------------------------------------------ panels
+
+type PanelSkill = { skillId: string; name: string; description: string; provenance: string; scope: string; listingChars: number; state: string };
+
+function panelSkill(skill: InternalSkill, agent: string): PanelSkill {
+  return {
+    skillId: skill.id,
+    name: skill.name,
+    description: skill.description,
+    provenance: skill.provenance,
+    scope: skill.scope,
+    listingChars: agent === "codex" ? skill.listing.codex : agent === "claude" ? skill.listing.claude : 0,
+    state: skill.state[agent] ?? "on",
+  };
+}
+
+/** Skills an agent of `agent` started in `directory` with this account can use: its user-level ones plus the project's. */
+async function skillsFor(discovery: SkillsDiscovery, agent: string, accountId: string | undefined, directory: string): Promise<InternalSkill[]> {
+  const projectPaths = new Set((await projectRoots(new Probe(), directory)).filter((root) => root.agents.includes(agent)).map((root) => resolve(root.path)));
+  return discovery.skills.filter((skill) => {
+    if (!skill.readBy.includes(agent)) return false;
+    if (skill.scope === "project") return skill.locations.some((location) => projectPaths.has(resolve(join(location.path, ".."))));
+    if (agent === "claude") return accountId ? skill.claudeAccounts.includes(accountId) : true;
+    if (agent === "codex") return accountId ? skill.codexAccounts.includes(accountId) : true;
+    return true;
+  });
+}
+
+function costOf(discovery: SkillsDiscovery, agent: string, accountId: string | undefined, skills: InternalSkill[]): ListingCost | undefined {
+  const base = discovery.costs.find((cost) => cost.agent === agent && (!accountId || cost.accountId === accountId));
+  if (!base) return undefined;
+  const chars = skills.reduce((sum, skill) => sum + (agent === "claude" ? skill.listing.claude : skill.listing.codex), 0);
+  const count = skills.filter((skill) => (agent === "claude" ? skill.listing.claude : skill.listing.codex) > 0).length;
+  return { ...base, skills: count, chars, tokens: Math.ceil(chars / 4), overBudget: chars > base.budgetChars, note: "Including this project's own skills." };
+}
+
+function named(discovery: SkillsDiscovery, counts: Map<string, number>) {
+  const byName = new Map<string, InternalSkill>();
+  for (const skill of discovery.skills) {
+    byName.set(skill.name.toLowerCase(), skill);
+    if (!byName.has(skill.folder.toLowerCase())) byName.set(skill.folder.toLowerCase(), skill);
+  }
+  return [...counts]
+    .map(([name, count]) => {
+      const skill = byName.get(name.toLowerCase()) ?? byName.get(name.toLowerCase().split(":").pop() ?? "");
+      return { name: skill?.name ?? name, count, ...(skill ? { skillId: skill.id } : {}) };
+    })
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/** Keep a logged name when the model chose it, or when it names a skill here. */
+function keepFor(discovery: SkillsDiscovery): (name: string, modelUses: number) => boolean {
+  const known = new Set(discovery.skills.flatMap((skill) => [skill.name.toLowerCase(), skill.folder.toLowerCase()]));
+  return (name, modelUses) => modelUses > 0 || known.has(name.toLowerCase()) || known.has(name.toLowerCase().split(":").pop() ?? "");
+}
+
+type AgentFacts = { sessionIds: string[]; cwd?: string; createdAt?: number; provider?: string };
+
+/** What Paseo says about one agent: its chat ids (Claude session, Codex thread) when the SDK has them. Never throws. */
+async function agentFacts(paseo: Paseo, agentId: string): Promise<AgentFacts | null> {
+  const agents = (paseo as unknown as { agents?: { ref?: (id: string) => { refresh?: () => Promise<unknown>; current?: () => unknown } } }).agents;
+  if (!agents?.ref) return null;
+  try {
+    const handle = agents.ref(agentId);
+    if (handle.refresh) await withDeadline(handle.refresh(), "the agent's details", 5_000);
+    const snap = handle.current?.() as { cwd?: string; createdAt?: string; provider?: string; persistence?: { sessionId?: string; nativeHandle?: string } | null } | null | undefined;
+    if (!snap) return null;
+    const created = snap.createdAt ? Date.parse(snap.createdAt) : NaN;
+    return {
+      sessionIds: [snap.persistence?.sessionId, snap.persistence?.nativeHandle].filter((value): value is string => typeof value === "string" && value.length > 0),
+      ...(snap.cwd ? { cwd: snap.cwd } : {}),
+      ...(Number.isFinite(created) ? { createdAt: created } : {}),
+      ...(snap.provider ? { provider: snap.provider } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function handleSkillsAgent({ workspaceId, providerId, agentId }: { workspaceId: string; providerId: string; agentId?: string }, { paseo }: Ctx) {
+  const directory = await workspaceDirectory(paseo, workspaceId);
+  const discovery = await discoverSkills(paseo);
+  const { agent, account } = accountForProvider(discovery.accounts, providerId);
+  const notes: string[] = [];
+  const skills = await skillsFor(discovery, agent, account?.id, directory);
+  if (agent !== "claude" && agent !== "codex") notes.push("This plugin counts skill use for Claude and Codex only.");
+  let chat = { match: "unknown", skills: [] as Array<{ name: string; count: number; skillId?: string }>, note: "Which skills this chat used can't be told for this agent." };
+  const usageOn = discovery.settings.skillsUsage;
+  if (!usageOn) chat = { ...chat, note: "Counting skill use is turned off in the settings." };
+  else if (agentId && (agent === "claude" || agent === "codex")) {
+    const facts = await agentFacts(paseo, agentId);
+    const exact = facts?.sessionIds.length ? chatUsage(facts.sessionIds, keepFor(discovery)) : null;
+    if (exact && exact.size) chat = { match: "exact", skills: named(discovery, exact), note: "" };
+    else if (facts?.sessionIds.length && usageState(true).state === "ready") chat = { match: "exact", skills: [], note: "" };
+    else if (facts?.createdAt) {
+      const guessed = folderUsage(facts.cwd ?? directory, facts.createdAt, keepFor(discovery), agent);
+      chat = { match: "folder-time", skills: named(discovery, guessed), note: "Matched by this agent's folder and start time, so other chats in the same folder since then are counted too." };
+    }
+  }
+  return {
+    agent,
+    directory,
+    skills: skills.map((skill) => panelSkill(skill, agent)),
+    ...(costOf(discovery, agent, account?.id, skills) ? { cost: costOf(discovery, agent, account?.id, skills)! } : {}),
+    chat,
+    notes,
+  };
+}
+
+export async function handleSkillsWorkspace({ workspaceId }: { workspaceId: string }, { paseo }: Ctx) {
+  const directory = await workspaceDirectory(paseo, workspaceId);
+  const discovery = await discoverSkills(paseo);
+  const agents = [];
+  for (const agent of ["claude", "codex"]) {
+    const account = discovery.accounts.accounts.find((entry) => entry.agent === agent && entry.origin === "default" && entry.exists);
+    const skills = await skillsFor(discovery, agent, account?.id, directory);
+    const cost = costOf(discovery, agent, account?.id, skills);
+    agents.push({ agent, skills: skills.map((skill) => panelSkill(skill, agent)), ...(cost ? { cost } : {}) });
+  }
+  const notes: string[] = [];
+  let used: Array<{ name: string; count: number; skillId?: string }> = [];
+  if (!discovery.settings.skillsUsage) notes.push("Counting skill use is turned off in the settings.");
+  else {
+    used = named(discovery, folderUsage(directory, Date.now() - discovery.settings.skillsWindowDays * 86_400_000, keepFor(discovery)));
+    const state = usageState(true);
+    if (state.note) notes.push(state.note);
+  }
+  return { directory, agents, used, notes };
+}
+
+// ------------------------------------------------------------------ add
+
+export async function handleSkillsPreview({ source }: { source: AddSource }, { paseo }: Ctx) {
+  return previewSkill(paseo, source);
+}
+
+export async function handleSkillsAdd(input: { source: AddSource; planHash: string; confirmScripts?: boolean }, { paseo }: Ctx) {
+  const settings = await readMemoriesSettings();
+  return addSkill(paseo, input, settings.backupsToKeep);
+}
+
+// ------------------------------------------------------------------ turn off / on
+
+const OVERRIDE_KEY = "skillOverrides";
+
+/** Claude's user settings with one skill's override set (off) or taken out (on). */
+function claudeSettingsText(current: string | null, name: string, on: boolean): { text: string } | { error: string } {
+  let value: Record<string, unknown> = {};
+  if (current !== null && current.trim() !== "") {
+    try {
+      const parsed = JSON.parse(current) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: "Claude's settings file isn't a settings object, so it was left as it is." };
+      value = parsed as Record<string, unknown>;
+    } catch {
+      return { error: "Claude's settings file can't be read (it isn't valid JSON), so it was left as it is." };
+    }
+  }
+  const existing = value[OVERRIDE_KEY];
+  if (existing !== undefined && (typeof existing !== "object" || existing === null || Array.isArray(existing))) return { error: "Claude's settings set skill switches in a shape this plugin doesn't change." };
+  const overrides = { ...((existing as Record<string, unknown>) ?? {}) };
+  if (on) delete overrides[name];
+  else overrides[name] = "off";
+  const next = { ...value };
+  if (Object.keys(overrides).length) next[OVERRIDE_KEY] = overrides;
+  else delete next[OVERRIDE_KEY];
+  const newline = current === null || current.endsWith("\n") ? "\n" : "";
+  return { text: `${JSON.stringify(next, null, 2)}${newline}` };
+}
+
+function claudeOverrideOf(text: string, name: string): string | undefined {
+  try {
+    const value = (JSON.parse(text) as { skillOverrides?: Record<string, unknown> }).skillOverrides?.[name];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The name Codex keys its switches on: the skill's own name, else its folder's. */
+function codexName(skill: InternalSkill): string {
+  return skill.header.name || skill.folder;
+}
+
+export async function handleSkillsToggle({ skillId, agent, on, accountId }: { skillId: string; agent: string; on: boolean; accountId?: string }, { paseo }: Ctx) {
+  const found = await findSkill(paseo, skillId);
+  if (!found) return result(false, "That skill is no longer there. Refresh the list.", []);
+  const { skill, discovery } = found;
+  if (!skill.can.turnOff.includes(agent)) return result(false, skill.can.turnOffReason ?? `This skill can't be turned ${on ? "on" : "off"} for that agent here.`, []);
+  const accountIds = (agent === "claude" ? skill.claudeAccounts : skill.codexAccounts).filter((id) => !accountId || id === accountId);
+  if (!accountIds.length) return result(false, "No account of that agent reads this skill.", []);
+  startWrite();
+  forgetSkills();
+  const settings = await readMemoriesSettings();
+  const session = newSession(settings.backupsToKeep);
+  const reports: WriteReport[] = [];
+  for (const id of accountIds) {
+    const account = discovery.accounts.accounts.find((entry) => entry.id === id);
+    if (!account) continue;
+    if (agent === "claude") {
+      const path = join(account.dir, "settings.json");
+      const current = await readCurrent(path);
+      const next = claudeSettingsText(current.exists ? current.text : null, skill.name, on);
+      if ("error" in next) {
+        reports.push({ target: path, ok: false, action: "refused", readBack: "skipped", error: next.error });
+        continue;
+      }
+      const report = await safeWrite(session, path, next.text, { newMode: 0o600, current, check: (text) => (claudeOverrideOf(text, skill.name) === "off") === !on });
+      reports.push(report);
+      logWrite("skills-toggle", path, report.ok ? report.action : "failed");
+    } else {
+      const path = join(account.dir, "config.toml");
+      const current = await readCurrent(path);
+      const name = codexName(skill);
+      const next = setSkillEnabled(current.exists ? current.text : "", name, on);
+      if ("error" in next) {
+        reports.push({ target: path, ok: false, action: "refused", readBack: "skipped", error: next.error });
+        continue;
+      }
+      const report = await safeWrite(session, path, next.text, { newMode: 0o600, current, check: (text) => codexSkillEnabled(text, name) === on });
+      reports.push(report);
+      logWrite("skills-toggle", path, report.ok ? report.action : "failed");
+    }
+  }
+  forgetSkills();
+  const ok = reports.length > 0 && reports.every((report) => report.ok);
+  const who = agent === "claude" ? "Claude" : "Codex";
+  return result(ok, ok ? `${skill.name} is ${on ? "on" : "off"} for ${who}. New chats see the change; open ones may need a restart.` : reports.find((report) => !report.ok)?.error ?? "Nothing was changed.", reports);
+}
+
+// ------------------------------------------------------------------ remove
+
+async function removeLockEntry(session: Session, name: string): Promise<WriteReport | null> {
+  const path = skillLockPath();
+  const current = await readCurrent(path);
+  if (!current.exists) return null;
+  const read = readLock(current.text);
+  if (!read.ok) return { target: path, ok: false, action: "refused", readBack: "skipped", error: read.reason };
+  if (!(name in read.lock.skills)) return null;
+  return safeWrite(session, path, serializeLock(withoutEntry(read.lock, name)), { newMode: 0o644, current, check: lockLooksValid });
+}
+
+export async function handleSkillsRemove({ skillId }: { skillId: string; confirm?: boolean }, { paseo }: Ctx) {
+  const found = await findSkill(paseo, skillId);
+  if (!found) return result(false, "That skill is no longer there. Refresh the list.", []);
+  const { skill } = found;
+  if (!skill.can.remove) return result(false, skill.can.removeReason ?? "This plugin won't remove that skill.", []);
+  // Every link must be one this plugin may take away, or nothing is done (no half-removed skill).
+  for (const location of skill.locations) {
+    if (!location.link) continue;
+    const refused = await skillParentReason(dirname(location.path), "remove");
+    if (refused) return result(false, `Something outside your own skills folders links to ${skill.name} (${location.root.startsWith("project") ? "a project" : "a folder this plugin doesn't change"}), so it was left as it is. Remove that link first.`, []);
+  }
+  startWrite();
+  forgetSkills();
+  const settings = await readMemoriesSettings();
+  const session = newSession(settings.backupsToKeep);
+  const reports: WriteReport[] = [];
+  const home = skill.homeRoot!;
+  const homeReal = await fs.realpath(home.path).catch(() => home.path);
+  const ownsFolder = resolve(join(skill.path, "..")) === resolve(homeReal) && home.userFolder;
+  // Links first (each in a folder of the user's own), then the folder itself.
+  for (const location of skill.locations) {
+    if (!location.link) continue;
+    const report = await moveToBackup(session, location.path);
+    reports.push(report);
+    logWrite("skills-remove", location.path, report.ok ? "link removed" : report.action);
+  }
+  if (ownsFolder) {
+    const report = await moveToBackup(session, skill.path);
+    reports.push(report);
+    logWrite("skills-remove", skill.path, report.ok ? "moved to backups" : report.action);
+    if (report.ok) {
+      if (skill.provenance === "npx-skills" || skill.provenance === "added-here") {
+        const lock = await removeLockEntry(session, skill.folder);
+        if (lock) reports.push(lock);
+      }
+      await forgetAdded(skill.path);
+    }
+  }
+  forgetSkills();
+  const ok = reports.length > 0 && reports.every((report) => report.ok);
+  const linkOnly = !ownsFolder;
+  return result(
+    ok,
+    ok
+      ? linkOnly
+        ? `Removed the link to ${skill.name}; the folder it pointed to is untouched.`
+        : `Removed ${skill.name}. A copy is in this plugin's backups if you want it back.`
+      : reports.find((report) => !report.ok)?.error ?? "Nothing was removed.",
+    reports,
+  );
+}
+
+// ------------------------------------------------------------------ fix ("Worth a look")
+
+export async function handleSkillsFix({ findingId }: { findingId: string }, { paseo }: Ctx) {
+  const discovery = await discoverSkills(paseo, { refresh: true });
+  const plan = discovery.fixes.get(findingId);
+  if (!plan) return result(false, "That's already sorted, or it changed since you looked. Refresh the list.", []);
+  startWrite();
+  forgetSkills();
+  const settings = await readMemoriesSettings();
+  const session = newSession(settings.backupsToKeep);
+  const reports: WriteReport[] = [];
+  if (plan.kind === "unlink" || plan.kind === "move-to-backup") reports.push(await moveToBackup(session, plan.path));
+  else if (plan.kind === "remove-orphan") for (const path of plan.paths) reports.push(await moveToBackup(session, path, { paseoOrphan: true }));
+  else if (plan.kind === "forget-lock-entry") {
+    const report = await removeLockEntry(session, plan.name);
+    if (report) reports.push(report);
+  }
+  for (const report of reports) logWrite("skills-fix", report.target, report.ok ? report.action : "failed");
+  forgetSkills();
+  const ok = reports.length > 0 && reports.every((report) => report.ok);
+  return result(ok, ok ? "Done. Anything taken out is in this plugin's backups." : reports.find((report) => !report.ok)?.error ?? "Nothing was changed.", reports);
+}
