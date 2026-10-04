@@ -23,10 +23,13 @@ const SOURCE = `${sb.home}/code/app/CLAUDE.md`;
 
 test("params round trip: tab, source and open entry come back after a reload", () => {
   const params = nav.toScreenParams({ tab: "projects", sourceId: SOURCE, entryKey: "deploy_notes.md" });
-  assert.deepEqual(params, { tab: "projects", source: SOURCE, entry: "deploy_notes.md" });
-  // A reload: nothing in memory, only the URL's params.
+  assert.deepEqual(params, { tab: "projects", source: nav.sourceRef(SOURCE), entry: nav.entryRef(SOURCE, "deploy_notes.md") });
+  // A reload: nothing in memory, only the URL's params, matched against the list again.
   assert.equal(nav.takeDestination(), null);
-  assert.deepEqual(landing(params), { tab: "projects", sourceId: SOURCE, entryKey: "deploy_notes.md" });
+  const back = landing(params);
+  assert.deepEqual(back, { tab: "projects", sourceRef: nav.sourceRef(SOURCE), entryRef: nav.entryRef(SOURCE, "deploy_notes.md") });
+  assert.equal(nav.resolveSource(back.sourceRef, [{ id: SOURCE }]), SOURCE);
+  assert.equal(nav.resolveEntry(SOURCE, back.entryRef, ["deploy_notes.md"]), "deploy_notes.md");
   assert.deepEqual(nav.fromScreenParams(nav.toScreenParams({ tab: "guide" })), { tab: "guide" });
   assert.deepEqual(nav.toScreenParams({ tab: "overview" }), {}, "the Overview needs no params");
   assert.deepEqual(nav.fromScreenParams(nav.toScreenParams({ addNote: { workspaceId: "ws-1" } })), { addNote: { workspaceId: "ws-1" } });
@@ -73,8 +76,8 @@ test("Paseo 0.11: openMemories opens the screen with params and hands over the r
   // A move inside the page records new params; the same params record nothing.
   nav.syncScreenParams({ tab: "user" }, { tab: "user" });
   assert.equal(opened.length, 1);
-  nav.syncScreenParams({ tab: "user", source: SOURCE }, { tab: "user" });
-  assert.deepEqual(opened.at(-1), ["memories", { tab: "user", source: SOURCE }]);
+  nav.syncScreenParams({ tab: "user", source: nav.sourceRef(SOURCE) }, { tab: "user" });
+  assert.deepEqual(opened.at(-1), ["memories", { tab: "user", source: nav.sourceRef(SOURCE) }]);
   nav.registerSurfaceOpener(null);
 });
 
@@ -99,7 +102,7 @@ test("a panel's Open Memories jumps straight to this project's file", () => {
   assert.deepEqual(nav.panelDestination([{ items: [item({ scope: "user", sourceId: "u" }), item({})] }]), { tab: "projects", sourceId: SOURCE });
   assert.deepEqual(nav.panelDestination([{ items: [item({ when: "missing" })] }]), { tab: "projects" }, "nothing loads: the Projects tab");
   assert.deepEqual(nav.itemDestination(item({ kind: "paseo-prompt", scope: "project" })), { tab: "user", sourceId: SOURCE });
-  assert.deepEqual(nav.toScreenParams(nav.panelDestination([{ items: [item({})] }])), { tab: "projects", source: SOURCE });
+  assert.deepEqual(nav.toScreenParams(nav.panelDestination([{ items: [item({})] }])), { tab: "projects", source: nav.sourceRef(SOURCE) });
 });
 
 // ------------------------------------------------------------------ live settings

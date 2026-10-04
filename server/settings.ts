@@ -57,6 +57,8 @@ type SettingsHandle = { read(): Promise<HandleState>; subscribe(listener: (state
 let handle: SettingsHandle | null = null;
 /** The values in force until the handle says they changed; null means ask again. */
 let current: MemoriesSettings | null = null;
+/** Bumped on every change (and handle swap): a read that started before one is older than what it would overwrite. */
+let generation = 0;
 
 function isHandle(value: unknown): value is SettingsHandle {
   return Boolean(value) && typeof (value as SettingsHandle).read === "function" && typeof (value as SettingsHandle).subscribe === "function";
@@ -76,6 +78,7 @@ function fromState(state: HandleState | null | undefined): MemoriesSettings | nu
  */
 export function adoptSettingsHandle(registered: unknown): () => void {
   current = null;
+  generation += 1;
   if (!isHandle(registered)) {
     handle = null;
     return () => undefined;
@@ -85,6 +88,7 @@ export function adoptSettingsHandle(registered: unknown): () => void {
   try {
     unsubscribe = registered.subscribe((state) => {
       // A change: take the new values, or ask again on the next read.
+      generation += 1;
       current = fromState(state);
     });
   } catch {
@@ -94,6 +98,7 @@ export function adoptSettingsHandle(registered: unknown): () => void {
     if (handle === registered) {
       handle = null;
       current = null;
+      generation += 1;
     }
     try {
       unsubscribe();
@@ -104,21 +109,22 @@ export function adoptSettingsHandle(registered: unknown): () => void {
 }
 
 export async function readMemoriesSettings(): Promise<MemoriesSettings> {
-  if (handle) {
-    if (current) return current;
-    const asked = handle;
-    let state: HandleState | null = null;
-    try {
-      state = await asked.read();
-    } catch {
-      // A failed read: the file below, and ask again next time.
-    }
-    const values = fromState(state);
-    if (values) return handle === asked ? (current = values) : values;
-    // Stored values Paseo calls invalid: rescue them field by field, and keep that until the next change.
-    const rescued = await readSettingsDocument(memoriesSettings, MEMORIES_DEFAULTS);
-    if (state && handle === asked) current = rescued;
-    return rescued;
+  if (!handle) return readSettingsDocument(memoriesSettings, MEMORIES_DEFAULTS);
+  if (current) return current;
+  const asked = generation;
+  let state: HandleState | null = null;
+  try {
+    state = await handle.read();
+  } catch {
+    // A failed read: the file below, and ask again next time.
   }
-  return readSettingsDocument(memoriesSettings, MEMORIES_DEFAULTS);
+  // A change arrived while this read was out: it is newer, so it wins.
+  if (asked !== generation) return readMemoriesSettings();
+  const values = fromState(state);
+  if (values) return (current = values);
+  // Stored values Paseo calls invalid: rescue them field by field, and keep that until the next change.
+  const rescued = await readSettingsDocument(memoriesSettings, MEMORIES_DEFAULTS);
+  if (asked !== generation) return readMemoriesSettings();
+  if (state) current = rescued;
+  return rescued;
 }

@@ -1,13 +1,14 @@
 /**
  * Regression tests for the 0.3.0 review (memories-research/review-030.md)
  * and the fix round after it: header status after a write, "Projects →",
- * stale-link and technical titles, and the popover's kept draft.
+ * technical titles, and the popover's kept draft. (The stale-link title
+ * test went with firstTimeStale: an unknown source now keeps its tab.)
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { findingsKey, headerStatus, refreshAfterWrite, writeKey } from "../client/freshness";
-import { firstTimeStale, moveToTab, rememberTitleMode, screenTitle, toScreenParams } from "../client/navigate";
+import { moveToTab, rememberTitleMode, screenTitle, toScreenParams } from "../client/navigate";
 import { noteDrafts } from "../client/note-draft";
 
 // ------------------------------------------------------------------ 1. header status
@@ -69,18 +70,10 @@ test("review 2: going to Projects or User closes a note left open, and the param
   const state = { tab: "overview" as const, sourceId: "/demo/memory", entryKey: "deploy_notes.md" };
   const moved = moveToTab(state, "projects");
   assert.deepEqual(moved, { tab: "projects", sourceId: "/demo/memory", entryKey: null });
-  assert.deepEqual(toScreenParams({ tab: moved.tab, sourceId: moved.sourceId!, ...(moved.entryKey ? { entryKey: moved.entryKey } : {}) }), { tab: "projects", source: "/demo/memory" });
+  const params = toScreenParams({ tab: moved.tab, sourceId: moved.sourceId!, ...(moved.entryKey ? { entryKey: moved.entryKey } : {}) });
+  assert.deepEqual(Object.keys(params), ["tab", "source"]);
   assert.equal(moveToTab(state, "user").entryKey, null);
   assert.equal(moveToTab(state, "guide").entryKey, "deploy_notes.md", "other tabs don't show it, and keep it");
-});
-
-// ------------------------------------------------------------------ 4. stale-link title
-
-test("caveat 4: a stale link moves to the Overview once (title follows); Back to it falls back quietly", () => {
-  const link = { tab: "projects", source: "/demo/gone/CLAUDE.md" };
-  assert.equal(firstTimeStale(link), true, "first time: new params, so the title says Memories");
-  assert.equal(firstTimeStale({ ...link }), false, "seen again: quiet, so Back is never a loop");
-  assert.equal(firstTimeStale({ tab: "user", source: "/demo/gone/CLAUDE.md" }), true, "another link is its own");
 });
 
 // ------------------------------------------------------------------ 5. technical titles

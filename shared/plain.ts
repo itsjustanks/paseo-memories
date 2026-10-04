@@ -220,6 +220,7 @@ export const PLAIN = {
     on: (host: string) => `Your agents' notes on ${host}`,
     worth: (count: number) => (count === 1 ? "1 thing worth a look" : `${count} things worth a look`),
     tidy: "everything looks tidy",
+    cantCheck: "Couldn't check just now",
     none: "no notes yet",
   },
   /** The top of each tab: a title, one or two plain sentences, and what you can do there. */

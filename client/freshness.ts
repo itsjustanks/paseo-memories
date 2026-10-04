@@ -24,14 +24,15 @@ export async function refreshAfterWrite(client: QueryClient, hostId: string, fet
   ]);
 }
 
-export type HeaderStatus = { status: "ok" | "attention" | "error" | "neutral" | "busy"; caption: string };
+export type HeaderStatus = { status: "ok" | "attention" | "error" | "neutral" | "busy"; caption: string; /** Offer Try again: the last check failed. */ retry?: boolean };
 
 type Finding = { kind: string; severity: string; sourceIds: string[] };
 type Source = { id: string; kind: string; path?: string };
 
 /**
  * The header's one line: which computer, and how its notes are doing.
- * Findings read before the last write don't count: "Checking…" instead.
+ * Findings read before the last write don't count: "Checking…" while the
+ * check runs, "Couldn't check just now" (with Try again) when it failed.
  */
 export function headerStatus(input: {
   hostLabel: string;
@@ -41,13 +42,18 @@ export function headerStatus(input: {
   findings: { findings: Finding[] } | undefined;
   findingsAt: number;
   lastWrite: number;
+  /** When fetching the findings last failed (0: never). */
+  findingsErrorAt?: number;
 }): HeaderStatus {
   const S = PLAIN.status;
   const { inventory, hostLabel } = input;
   if (!inventory) return input.inventoryError ? { status: "error", caption: S.cantRead(hostLabel) } : { status: "busy", caption: S.checking(hostLabel) };
   if (inventory.counts.sources === 0) return { status: "neutral", caption: `${S.on(hostLabel)} · ${S.none}` };
   if (!input.findings) return { status: "neutral", caption: S.on(hostLabel) };
-  if (input.lastWrite > 0 && input.findingsAt < input.lastWrite) return { status: "neutral", caption: S.checking(hostLabel) };
+  if (input.lastWrite > 0 && input.findingsAt < input.lastWrite) {
+    const failed = (input.findingsErrorAt ?? 0) >= input.lastWrite;
+    return failed ? { status: "attention", caption: `${S.on(hostLabel)} · ${S.cantCheck}`, retry: true } : { status: "neutral", caption: S.checking(hostLabel) };
+  }
   const shown = input.plain ? plainFindings(input.findings.findings, inventory.sources) : input.findings.findings;
   const status = shown.some((finding) => finding.severity === "error") ? "error" : shown.length ? "attention" : "ok";
   return { status, caption: `${S.on(hostLabel)} · ${shown.length ? S.worth(shown.length) : S.tidy}` };

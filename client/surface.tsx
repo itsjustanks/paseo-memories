@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { PLAIN, isCodexInternal } from "../shared/plain";
 import { AddNote } from "./add-note";
-import { QueryState, useCachedFindings, useInvalidate, useInventory, useLastWrite, useWorkspaceFolders } from "./data";
+import { QueryState, useCachedFindings, useInvalidate, useInventory, useLastWrite, useSourceDetail, useWorkspaceFolders } from "./data";
 import { headerStatus } from "./freshness";
 import { ModeProvider, usePlain } from "./mode";
 import { Guide } from "./guide";
-import { firstTimeStale, isStaleSource, landing, moveToTab, onDestination, opensTransfer, syncScreenParams, takeDestination, toScreenParams, type Destination } from "./navigate";
+import { isStaleSource, landing, moveToTab, resolveEntry, resolveSource, unknownSourceLanding, onDestination, opensTransfer, syncScreenParams, takeDestination, toScreenParams, type Destination } from "./navigate";
 import type { MemoriesScreenProps } from "./register";
 import { TabBar, TabIntro, type SectionId } from "./navigation";
 import { Overview } from "./overview";
@@ -16,11 +16,20 @@ import { Button, Header, Screen, TokensProvider, useTokens, useUi, type Status }
 /** The Memories page: Overview · User · Projects · Import & Export · Guide. */
 
 /** The header's one line: which computer, and how its notes are doing (client/freshness.ts). Reads only cached findings, so other tabs cost no extra scan. */
-function useHeaderStatus(hostId: string, hostLabel: string, plain: boolean): { status: Status; caption: string } {
+function useHeaderStatus(hostId: string, hostLabel: string, plain: boolean): { status: Status; caption: string; retry?: boolean } {
   const inventory = useInventory(hostId);
   const cached = useCachedFindings(hostId);
   const lastWrite = useLastWrite(hostId);
-  return headerStatus({ hostLabel, plain, inventory: inventory.data, inventoryError: Boolean(inventory.error), findings: cached.data, findingsAt: cached.dataUpdatedAt, lastWrite });
+  return headerStatus({ hostLabel, plain, inventory: inventory.data, inventoryError: Boolean(inventory.error), findings: cached.data, findingsAt: cached.dataUpdatedAt, findingsErrorAt: cached.errorUpdatedAt, lastWrite });
+}
+
+/** The unmatched part of a landing: refs only when no real id came with it. */
+function linkRefs(destination: Destination): { sourceRef?: string; entryRef?: string } {
+  if (destination.sourceId) return {};
+  return {
+    ...(destination.sourceRef ? { sourceRef: destination.sourceRef } : {}),
+    ...(destination.sourceRef && destination.entryRef ? { entryRef: destination.entryRef } : {}),
+  };
 }
 
 export function MemoriesSurface(props: MemoriesScreenProps) {
@@ -43,6 +52,8 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
   const [sourceId, setSourceId] = useState<string | null>(first.sourceId ?? null);
   const [entryKey, setEntryKey] = useState<string | null>(first.entryKey ?? null);
   const [transfer, setTransfer] = useState<Destination | null>(opensTransfer(first) ? first : null);
+  // A link's source and note, until matched against what this host lists (client/navigate.ts resolveSource).
+  const [unmatched, setUnmatched] = useState(() => linkRefs(first));
   const inventory = useInventory(hostId);
   const workspaces = useWorkspaceFolders(hostId);
   const refreshAll = useInvalidate(hostId);
@@ -84,15 +95,22 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
     setSourceId(destination.sourceId ?? null);
     setEntryKey(destination.entryKey ?? null);
     setTransfer(opensTransfer(destination) ? destination : null);
+    setUnmatched(linkRefs(destination));
   }, [paramsKey]);
-  const here = toScreenParams({
-    tab,
-    ...(sourceId ? { sourceId } : {}),
-    ...(entryKey ? { entryKey } : {}),
-    ...(adding ? { addNote: adding } : {}),
-  });
+  const placeParams = (over: { sourceId?: string | null; entryKey?: string | null; refs?: { sourceRef?: string; entryRef?: string } } = {}) => {
+    const shownSource = over.sourceId !== undefined ? over.sourceId : sourceId;
+    const shownEntry = over.entryKey !== undefined ? over.entryKey : entryKey;
+    return toScreenParams({
+      tab,
+      ...(shownSource ? { sourceId: shownSource } : {}),
+      ...(shownEntry ? { entryKey: shownEntry } : {}),
+      ...(over.refs ?? unmatched),
+      ...(adding ? { addNote: adding } : {}),
+    });
+  };
+  const here = placeParams();
   const hereKey = JSON.stringify(here);
-  // Set when a stale link falls back quietly (client/navigate.ts firstTimeStale).
+  // Set when a link's source or note can't be found: the page lands without a new history entry.
   const quietKey = useRef<string | null>(null);
   useEffect(() => {
     const quiet = quietKey.current === hereKey;
@@ -100,14 +118,35 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
     if (quiet) return;
     syncScreenParams(here, params, tab === "transfer" ? transfer : null);
   }, [hereKey]);
-  // A source this host no longer has (an old link, a deleted file): back to the Overview.
+  // A link's source, once the list is in: the source it means, or (gone) the same tab with nothing selected.
   const sourcesNow = inventory.data?.sources;
   useEffect(() => {
+    if (!unmatched.sourceRef || !sourcesNow) return;
+    const id = resolveSource(unmatched.sourceRef, sourcesNow);
+    if (id) {
+      setSourceId(id);
+      setUnmatched(unmatched.entryRef ? { entryRef: unmatched.entryRef } : {});
+      return;
+    }
+    quietKey.current = JSON.stringify(placeParams({ sourceId: null, entryKey: null, refs: {} }));
+    setUnmatched({});
+  }, [unmatched.sourceRef, sourcesNow]);
+  // A link's note, once that source's notes are in.
+  const linkedDetail = useSourceDetail(hostId, unmatched.entryRef && !unmatched.sourceRef ? sourceId : null);
+  useEffect(() => {
+    if (!unmatched.entryRef || unmatched.sourceRef || !sourceId || !linkedDetail.data) return;
+    const key = resolveEntry(sourceId, unmatched.entryRef, linkedDetail.data.entries.map((entry) => entry.key));
+    if (key) setEntryKey(key);
+    else quietKey.current = JSON.stringify(placeParams({ entryKey: null, refs: {} }));
+    setUnmatched({});
+  }, [unmatched.entryRef, unmatched.sourceRef, sourceId, linkedDetail.data]);
+  // A source this host doesn't list (deleted, or one only a workspace plan shows): the same tab, nothing selected.
+  useEffect(() => {
     if (!isStaleSource(sourceId, sourcesNow)) return;
-    if (!firstTimeStale(params)) quietKey.current = JSON.stringify(toScreenParams(adding ? { addNote: adding } : {}));
-    setTab("overview");
-    setSourceId(null);
-    setEntryKey(null);
+    const landed = unknownSourceLanding({ tab, sourceId, entryKey });
+    quietKey.current = JSON.stringify(placeParams({ sourceId: landed.sourceId, entryKey: landed.entryKey, refs: {} }));
+    setSourceId(landed.sourceId);
+    setEntryKey(landed.entryKey);
   }, [sourceId, sourcesNow]);
 
   /** The tab bar and the Overview's links: User and Projects open on their list, not on a note left open earlier. */
@@ -147,7 +186,7 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
         icon="Brain"
         status={header.status}
         caption={header.caption}
-        trailing={lists ? <Button label={PLAIN.refresh} icon="RefreshCw" variant="ghost" onPress={() => void refreshAll()} loading={inventory.isFetching} /> : null}
+        trailing={header.retry ? <Button label="Try again" icon="RefreshCw" variant="ghost" onPress={() => void refreshAll()} /> : lists ? <Button label={PLAIN.refresh} icon="RefreshCw" variant="ghost" onPress={() => void refreshAll()} loading={inventory.isFetching} /> : null}
       />
       <TabBar
         active={tab}
