@@ -27,7 +27,7 @@ import { PLAIN, PLAIN_MEMORY_TYPES, plainAgents, plainDetailWarning, plainMemory
 import { KEY, QueryState, WriteReportView, useInvalidate, useSourceDetail } from "./data";
 import { edit, isDirty, keepEditing, receive, reload, type Draft } from "./draft";
 import { usePlain, useSourceNames } from "./mode";
-import { Button, Card, CodeBlock, ConfirmButton, ConfirmLink, Disclosure, Facts, Field, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
+import { Button, Card, CodeBlock, ConfirmButton, ConfirmLink, Disclosure, Facts, Field, IconBadge, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
 
 /**
  * One source: what it is, who reads it, and a viewer or editor. Read-only
@@ -47,28 +47,49 @@ function agents(list: string[]): string {
   return list.map((agent) => AGENT_LABELS[agent] ?? agent).join(", ");
 }
 
-function SourceHeader({ source }: { source: Source }) {
+/** The icon a source is drawn with: what kind of notes it holds, or a lock when it can't be changed here. */
+function sourceIcon(source: Source): string {
+  if (source.access === "online") return "Cloud";
+  if (source.access !== "editable") return "Lock";
+  if (source.kind === "claude-auto-memory") return "Brain";
+  if (source.kind === "paseo-prompt") return "Monitor";
+  if (source.kind === "codex-memory") return "BookOpenText";
+  return "ScrollText";
+}
+
+/** A source's header card: its icon beside the title, tags and facts. */
+function HeaderCard({ source, children }: { source: Source; children: React.ReactNode }) {
   const t = useTokens();
   return (
     <Card>
-      <View style={{ gap: t.space.xs }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
-          <Text style={[t.text.heading, { flexShrink: 1 }]}>{source.kind === "claude-auto-memory" ? `Claude memory · ${source.projectPath ? folderName(source.projectPath) : "project path unknown"}` : kindLabel(source.kind)}</Text>
-          <Tag label={scopeLabel(source.scope)} />
-          {source.access === "editable" ? null : <Tag label={source.access === "online" ? "Stored online" : "Read-only"} tone="neutral" />}
-          {source.exists ? null : <Tag label="Not there yet" tone="attention" />}
-        </View>
-        <PathText path={source.path} full />
-        <Facts
-          items={[
-            source.exists ? { value: source.isDirectory ? plural(source.files ?? 0, "file") : `${formatBytes(source.bytes)} · ${plural(source.lines, "line")}` } : null,
-            source.loaded.tokens ? { value: `${formatTokens(source.loaded.tokens)} at launch` } : { value: "nothing at launch" },
-            source.readBy.length ? { value: `read by ${agents(source.readBy)}` } : null,
-          ]}
-        />
-        {source.loaded.note ? <Text style={t.text.caption}>{source.loaded.note}</Text> : null}
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.md }}>
+        <IconBadge name={sourceIcon(source)} tone={source.access === "editable" ? "accent" : "neutral"} size={40} />
+        <View style={{ flex: 1, minWidth: 0, gap: t.space.xs }}>{children}</View>
       </View>
     </Card>
+  );
+}
+
+function SourceHeader({ source }: { source: Source }) {
+  const t = useTokens();
+  return (
+    <HeaderCard source={source}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
+        <Text style={[t.text.section, { flexShrink: 1 }]}>{source.kind === "claude-auto-memory" ? `Claude memory · ${source.projectPath ? folderName(source.projectPath) : "project path unknown"}` : kindLabel(source.kind)}</Text>
+        <Tag label={scopeLabel(source.scope)} />
+        {source.access === "editable" ? null : <Tag label={source.access === "online" ? "Stored online" : "Read-only"} tone="neutral" />}
+        {source.exists ? null : <Tag label="Not there yet" tone="attention" />}
+      </View>
+      <PathText path={source.path} full />
+      <Facts
+        items={[
+          source.exists ? { value: source.isDirectory ? plural(source.files ?? 0, "file") : `${formatBytes(source.bytes)} · ${plural(source.lines, "line")}` } : null,
+          source.loaded.tokens ? { value: `${formatTokens(source.loaded.tokens)} at launch` } : { value: "nothing at launch" },
+          source.readBy.length ? { value: `read by ${agents(source.readBy)}` } : null,
+        ]}
+      />
+      {source.loaded.note ? <Text style={t.text.caption}>{source.loaded.note}</Text> : null}
+    </HeaderCard>
   );
 }
 
@@ -82,9 +103,9 @@ function Notes({ source, warnings, codex }: { source: Source; warnings: string[]
       {codex ? <Text style={t.text.caption}>{`Codex's clean-up lock: ${codex.lock === "free" ? "free" : codex.lock === "locked" ? "held" : "unclear"}. ${codex.lockReason}`}</Text> : null}
       {source.versionControlled ? <Notice tone="attention">This file is in a git repository: a change here shows up in git and may be shared with your team.</Notice> : null}
       {warnings.map((warning) => (
-        <Text key={warning} style={t.text.caption}>
+        <Notice key={warning} tone="attention">
           {warning}
-        </Text>
+        </Notice>
       ))}
     </View>
   );
@@ -223,8 +244,8 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
     <Card>
       <View style={{ gap: t.space.md }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: t.space.sm }}>
-          <Text style={[t.text.heading, { flexShrink: 1 }]}>{creating ? (plain ? M.newTitle : "New memory") : form.name || entryKey}</Text>
-          <Button label={M.back} variant="ghost" onPress={() => onDone(null)} />
+          <Text style={[t.text.section, { flexShrink: 1 }]}>{creating ? (plain ? M.newTitle : "New memory") : form.name || entryKey}</Text>
+          <Button label={M.back} icon="ArrowLeft" variant="ghost" onPress={() => onDone(null)} />
         </View>
         {!creating ? <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} /> : null}
         {draft?.newer ? <ChangedOnDisk onReload={() => setDraft(reload(draft))} onKeep={() => setDraft(keepEditing(draft))} /> : null}
@@ -270,9 +291,9 @@ function MemoryList({ entries, index, onOpen, editable }: { entries: Entry[]; in
   const plain = usePlain();
   const M = PLAIN.memory;
   return (
-    <Section title={plain ? M.heading(entries.length) : plural(entries.length, "memory", "memories")} trailing={editable ? <Button label={plain ? M.new : "New memory"} onPress={() => onOpen("__new__")} /> : null}>
+    <Section title={plain ? M.heading(entries.length) : plural(entries.length, "memory", "memories")} icon="StickyNote" trailing={editable ? <Button label={plain ? M.new : "New memory"} icon="Plus" onPress={() => onOpen("__new__")} /> : null}>
       {entries.length === 0 ? (
-        <Text style={t.text.caption}>{plain ? PLAIN.notes.none : "No memory files in this folder yet."}</Text>
+        <Text style={t.text.body}>{plain ? PLAIN.notes.none : "No memory files in this folder yet."}</Text>
       ) : (
         <Card padded={false}>
           {entries.map((entry, i) => (
@@ -293,8 +314,8 @@ function MemoryList({ entries, index, onOpen, editable }: { entries: Entry[]; in
           ))}
         </Card>
       )}
-      {index?.missingFiles.length && plain ? <Text style={t.text.caption}>{PLAIN.missingNotes}</Text> : null}
-      {index?.missingFiles.length && !plain ? <Text style={t.text.caption}>{`MEMORY.md lists ${index.missingFiles.join(", ")}, which ${index.missingFiles.length === 1 ? "does" : "do"} not exist.`}</Text> : null}
+      {index?.missingFiles.length && plain ? <Text style={t.text.body}>{PLAIN.missingNotes}</Text> : null}
+      {index?.missingFiles.length && !plain ? <Text style={t.text.body}>{`MEMORY.md lists ${index.missingFiles.join(", ")}, which ${index.missingFiles.length === 1 ? "does" : "do"} not exist.`}</Text> : null}
     </Section>
   );
 }
@@ -436,27 +457,25 @@ const NOTE_KINDS = new Set(["claude-md", "claude-local", "claude-rule", "agents-
 function PlainHeader({ source, name }: { source: Source; name: string }) {
   const t = useTokens();
   return (
-    <Card>
-      <View style={{ gap: t.space.xs }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
-          <Text style={[t.text.heading, { flexShrink: 1 }]}>{name}</Text>
-          {source.access === "editable" ? null : <Tag label={source.access === "online" ? "Kept online" : "Can't be changed here"} tone="neutral" />}
-          {source.exists ? null : <Tag label="Not written yet" tone="attention" />}
-        </View>
-        <Facts
-          items={[
-            source.exists && !source.isDirectory ? { value: plainWords(Math.ceil(source.bytes / 4)) } : null,
-            source.loaded.tokens ? { value: PLAIN.overview.readAtStart(plainWords(source.loaded.tokens)) } : { value: "Not read at the start" },
-            source.readBy.length ? { value: `Followed by ${plainAgents(source.readBy)}` } : null,
-          ]}
-        />
-        {source.path.startsWith("paseo:") || source.path.startsWith("copilot:") ? null : (
-          <Disclosure title={PLAIN.whereSaved}>
-            <PathText path={source.path} full />
-          </Disclosure>
-        )}
+    <HeaderCard source={source}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
+        <Text style={[t.text.section, { flexShrink: 1 }]}>{name}</Text>
+        {source.access === "editable" ? null : <Tag label={source.access === "online" ? "Kept online" : "Can't be changed here"} tone="neutral" />}
+        {source.exists ? null : <Tag label="Not written yet" tone="attention" />}
       </View>
-    </Card>
+      <Facts
+        items={[
+          source.exists && !source.isDirectory ? { value: plainWords(Math.ceil(source.bytes / 4)) } : null,
+          source.loaded.tokens ? { value: PLAIN.overview.readAtStart(plainWords(source.loaded.tokens)) } : { value: "Not read at the start" },
+          source.readBy.length ? { value: `Followed by ${plainAgents(source.readBy)}` } : null,
+        ]}
+      />
+      {source.path.startsWith("paseo:") || source.path.startsWith("copilot:") ? null : (
+        <Disclosure title={PLAIN.whereSaved}>
+          <PathText path={source.path} full />
+        </Disclosure>
+      )}
+    </HeaderCard>
   );
 }
 
@@ -471,9 +490,9 @@ function PlainNotices({ source, warnings, codex }: { source: Source; warnings: s
       {codex && codex.lock !== "free" ? <Text style={t.text.caption}>{codex.lock === "locked" ? PLAIN.codexBusy : PLAIN.codexUnsure}</Text> : null}
       {source.versionControlled ? <Notice tone="attention">{PLAIN.shared}</Notice> : null}
       {plainWarnings.map((warning) => (
-        <Text key={warning} style={t.text.caption}>
+        <Notice key={warning} tone="attention">
           {warning}
-        </Text>
+        </Notice>
       ))}
     </View>
   );
@@ -532,7 +551,7 @@ function NoteCard({
   return (
     <Card>
       <View style={{ gap: t.space.sm }}>
-        <Text style={t.text.bodyStrong}>{note.headless ? N.topTitle : note.title}</Text>
+        <Text style={t.text.heading}>{note.headless ? N.topTitle : note.title}</Text>
         {note.body ? <Text style={t.text.body}>{note.body}</Text> : <Text style={t.text.caption}>{N.emptyBody}</Text>}
         {editable ? (
           <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap", alignItems: "center" }}>
@@ -556,14 +575,14 @@ function AddToFile({ busy, onAdd }: { busy: boolean; onAdd: (note: { title: stri
   if (!open) {
     return (
       <View style={{ flexDirection: "row" }}>
-        <Button label={N.add} onPress={() => setOpen(true)} />
+        <Button label={N.add} icon="Plus" onPress={() => setOpen(true)} />
       </View>
     );
   }
   return (
     <Card>
       <View style={{ gap: t.space.sm }}>
-        <Text style={t.text.bodyStrong}>{N.add}</Text>
+        <Text style={t.text.section}>{N.add}</Text>
         <Field label={N.titleLabel} value={title} onChangeText={setTitle} placeholder="Invoices" />
         <Field label={N.textLabel} value={body} onChangeText={setBody} multiline minHeight={120} placeholder="Invoices go out on the 1st of each month." />
         <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
@@ -649,8 +668,8 @@ function NoteCards({ hostId, source, workspaceId, onCopy }: { hostId: string; so
   return (
     <View style={{ gap: t.space.md }}>
       <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
-      {!editable && cards.length ? <Text style={t.text.caption}>{PLAIN.notes.readOnly}</Text> : null}
-      {cards.length === 0 ? <Text style={t.text.caption}>{PLAIN.notes.none}</Text> : null}
+      {!editable && cards.length ? <Text style={t.text.body}>{PLAIN.notes.readOnly}</Text> : null}
+      {cards.length === 0 ? <Text style={t.text.body}>{PLAIN.notes.none}</Text> : null}
       {cards.map((card) => (
         <NoteCard
           key={`${card.key}:${card.original.length}`}

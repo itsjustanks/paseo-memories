@@ -3,11 +3,13 @@
  * the real buttons. Pure text; the jargon test reads every line.
  */
 
-export type PlainGuide = { title: string; steps: string[] };
+/** `icon` is a Lucide name the app draws beside the title. */
+export type PlainGuide = { title: string; icon: string; steps: string[] };
 
 export const PLAIN_GUIDES: PlainGuide[] = [
   {
     title: "What your agents remember, and where it comes from",
+    icon: "Map",
     steps: [
       "Open the Overview tab. Under \"What your agents remember\" you can see each agent and roughly how many words it reads when it starts.",
       "Your own instructions go with you into every project. You'll find them under Everywhere.",
@@ -18,6 +20,7 @@ export const PLAIN_GUIDES: PlainGuide[] = [
   },
   {
     title: "Add something every agent should know",
+    icon: "NotebookPen",
     steps: [
       "On the Overview, press Add a note.",
       "Write what your agents should remember, in plain sentences. One idea per note works best.",
@@ -28,6 +31,7 @@ export const PLAIN_GUIDES: PlainGuide[] = [
   },
   {
     title: "Fix a note an agent keeps getting wrong",
+    icon: "Wrench",
     steps: [
       "Type a word from the note into \"Find a note\" on the Overview, or open Everywhere or Projects and pick where it lives.",
       "Find the note and press Change. Fix the title or the text, then press Save.",
@@ -38,6 +42,7 @@ export const PLAIN_GUIDES: PlainGuide[] = [
   },
   {
     title: "Keep passwords and keys out of notes",
+    icon: "KeyRound",
     steps: [
       "Every agent that reads a note can see everything in it, including passwords and keys.",
       "When a note holds something that looks like one, the Overview lists it under \"Worth a look\". Press Show me.",
@@ -47,6 +52,7 @@ export const PLAIN_GUIDES: PlainGuide[] = [
   },
   {
     title: "Move your notes to another Paseo computer",
+    icon: "ArrowLeftRight",
     steps: [
       "On this computer, open Import & Export. Under Export, choose Everything (or one project) and \"To bring into another computer\".",
       "Press Export, then Download (or Copy).",
@@ -57,6 +63,7 @@ export const PLAIN_GUIDES: PlainGuide[] = [
   },
   {
     title: "What you can't change here, and why",
+    icon: "Lock",
     steps: [
       "Instructions your organisation sets: they come from your IT or admin team.",
       "Codex's working notes: Codex rebuilds them itself, so a change would be lost. \"What Codex has learned\" can be changed, but Codex rewrites it in its own words the next time it runs.",

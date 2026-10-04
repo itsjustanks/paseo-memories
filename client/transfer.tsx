@@ -12,7 +12,7 @@ import { moveBlocker, type ImportItem } from "../shared/transfer";
 import { QueryState, WriteReportView, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
 import { projectNamer, usePlain } from "./mode";
 import type { Destination } from "./navigate";
-import { Button, Card, CodeBlock, ComboBox, Disclosure, ErrorText, Field, Notice, PathText, Row, Section, Segmented, Tag, Toggle, copyToClipboard, useTokens, type Status } from "./ui";
+import { Button, Card, CodeBlock, ComboBox, Disclosure, ErrorText, Field, Notice, PathText, Row, Segmented, Tag, Toggle, copyToClipboard, useTokens, type Status } from "./ui";
 import { canDownload, canPickFiles, downloadText, pickTextFiles } from "./web";
 
 /**
@@ -195,8 +195,8 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
 
   const count = from.length || items.length;
   return (
-    <Section title={T.import}>
-      <Card>
+    <View style={{ gap: t.space.md }}>
+      <Card title={T.import} icon="FileInput">
         <View style={{ gap: t.space.md }}>
           {from.length ? (
             <Notice tone="neutral">
@@ -218,11 +218,11 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
               <Field value={text} onChangeText={setText} multiline mono={!plain} minHeight={140} placeholder={T.pastePlaceholder} />
               <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "center", flexWrap: "wrap" }}>
                 <Segmented options={[{ value: "auto", label: T.formatAuto }, { value: "markdown", label: plain ? T.formatHeadings : "Markdown" }, { value: "claude-ai", label: plain ? T.formatClaudeAi : "claude.ai lines" }]} value={format} onChange={setFormat} />
-                {canPickFiles() ? <Button label={files.length ? `${plural(files.length, "file")} picked` : T.pick} variant="ghost" onPress={() => void pickTextFiles().then(setFiles)} /> : null}
-                <Button label={T.read} onPress={() => void read(false)} loading={busy === "read"} disabled={!text.trim() && !files.length} />
+                {canPickFiles() ? <Button label={files.length ? `${plural(files.length, "file")} picked` : T.pick} icon="Paperclip" variant="ghost" onPress={() => void pickTextFiles().then(setFiles)} /> : null}
+                <Button label={T.read} icon="FileSearch" onPress={() => void read(false)} loading={busy === "read"} disabled={!text.trim() && !files.length} />
               </View>
               {notes.map((note) => (
-                <Text key={note} style={t.text.caption}>
+                <Text key={note} style={t.text.body}>
                   {note}
                 </Text>
               ))}
@@ -230,7 +230,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
           )}
           {count ? (
             <View style={{ gap: t.space.sm }}>
-              <Text style={t.text.label}>{T.whereTo}</Text>
+              <Text style={t.text.heading}>{T.whereTo}</Text>
               <Segmented
                 options={[{ value: "claude-memory", label: plain ? T.toClaude : "New Claude memories" }, { value: "append", label: plain ? T.toFile : "Add to an instruction file" }]}
                 value={kind}
@@ -252,7 +252,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
                 hint={plain ? (kind === "append" ? T.targetHintAppend : T.targetHintClaude) : kind === "append" ? "Each item is added as a section at the end. To copy into Codex, pick its AGENTS.md; Codex's generated memory is never a target." : "Each item becomes one memory file with its line in MEMORY.md."}
               />
               <View style={{ flexDirection: "row" }}>
-                <Button label={plain ? T.preview : "Preview"} onPress={() => void showPreview()} loading={busy === "preview"} disabled={!targetInput} />
+                <Button label={plain ? T.preview : "Preview"} icon="Eye" onPress={() => void showPreview()} loading={busy === "preview"} disabled={!targetInput} />
               </View>
             </View>
           ) : null}
@@ -302,7 +302,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
         </View>
       ) : null}
       {result ? <WriteReportView result={result} /> : null}
-    </Section>
+    </View>
   );
 }
 
@@ -337,15 +337,15 @@ function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolea
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
-    <Section title={T.export}>
-      <Card>
+    <View style={{ gap: t.space.md }}>
+      <Card title={T.export} icon="FileOutput">
         <View style={{ gap: t.space.md }}>
           <Segmented options={[{ value: "all", label: T.everything }, { value: "user", label: plain ? T.yours : "User files" }, { value: "project", label: T.oneProject }]} value={scope} onChange={setScope} />
           {scope === "project" ? <ComboBox label={T.project} value={project} allowCustom={false} onChange={setProject} options={projects.map((path) => ({ value: path, label: folderName(path), ...(plain ? {} : { description: path }) }))} placeholder="Pick a project" /> : null}
           <Segmented options={[{ value: "bundle", label: plain ? T.toImport : "Bundle (to import elsewhere)" }, { value: "markdown", label: plain ? T.toRead : "Markdown (to read)" }]} value={format} onChange={setFormat} />
           <LabelledToggle label={plain ? T.includeSecrets : "Include values that look like secrets (off: they are hidden)"} value={secrets} onChange={setSecrets} />
           <View style={{ flexDirection: "row" }}>
-            <Button label={T.exportButton} onPress={() => void run()} loading={busy} disabled={scope === "project" && !project} />
+            <Button label={T.exportButton} icon="FileOutput" onPress={() => void run()} loading={busy} disabled={scope === "project" && !project} />
           </View>
           {error ? <ErrorText>{error}</ErrorText> : null}
         </View>
@@ -365,7 +365,7 @@ function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolea
           </View>
         </Card>
       ) : null}
-    </Section>
+    </View>
   );
 }
 

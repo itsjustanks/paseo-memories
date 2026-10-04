@@ -1,17 +1,19 @@
-import React from "react";
-import { Text, View } from "react-native";
+import React, { useState } from "react";
+import { Pressable, Text, View } from "react-native";
 import { PLAIN_GUIDES, PLAIN_GUIDE_TECHNICAL_HINT } from "../shared/guides";
 import { PLAIN } from "../shared/plain";
+import { canOpenLinks, openLink } from "./links";
 import { usePlain } from "./mode";
-import { Card, Disclosure, Section, useTokens } from "./ui";
+import { Bullets, Card, Disclosure, HostIcon, NumberedStep, useTokens } from "./ui";
 
 /** How each agent loads memory, with the real numbers, and what is read-only and why. */
 
-type Block = { title: string; lines: string[] };
+type Block = { title: string; icon: string; lines: string[] };
 
 const LOADING: Block[] = [
   {
     title: "Claude Code",
+    icon: "Bot",
     lines: [
       "Loads, broadest first: your organisation's managed CLAUDE.md, your own CLAUDE.md and rules, then CLAUDE.md (or .claude/CLAUDE.md) and CLAUDE.local.md in every folder from the top of the disk down to where the agent starts.",
       "@path imports are followed up to 4 hops. A CLAUDE.md over 4 MiB is skipped.",
@@ -22,6 +24,7 @@ const LOADING: Block[] = [
   },
   {
     title: "Codex",
+    icon: "Bot",
     lines: [
       "Loads your AGENTS.override.md, or else AGENTS.md, from its home folder, then one file per folder from the git root down: AGENTS.override.md, else AGENTS.md.",
       "Project files share a 32 KiB budget: the file that crosses it is cut, and nothing after it loads.",
@@ -30,12 +33,14 @@ const LOADING: Block[] = [
   },
   {
     title: "Paseo",
+    icon: "Monitor",
     lines: [
       "The appended system prompt reaches Claude, Codex, OpenCode, pi and Oh My Pi agents started or relaunched after a change. Running agents keep what they started with. Copilot, Cursor and Gemini (ACP) never get it.",
     ],
   },
   {
     title: "OpenCode, pi, Oh My Pi and Copilot",
+    icon: "Users",
     lines: [
       "OpenCode: its own AGENTS.md, or Claude's user CLAUDE.md when it has none; in the project, AGENTS.md, else CLAUDE.md, else CONTEXT.md.",
       "pi: the first of AGENTS.override.md, AGENTS.md and CLAUDE.md in each folder up to the top of the disk. SYSTEM.md replaces pi's own prompt.",
@@ -47,6 +52,7 @@ const LOADING: Block[] = [
 
 const READ_ONLY: Block = {
   title: "What you cannot edit here, and why",
+  icon: "Lock",
   lines: [
     "Managed CLAUDE.md: set by your organisation.",
     "Codex's raw_memories.md, rollout summaries, extensions, working diff and database: Codex rebuilds them, so edits are lost or confuse it. Its MEMORY.md and memory_summary.md can be edited: Codex folds your edit in at its next run, and the wording may change.",
@@ -57,6 +63,7 @@ const READ_ONLY: Block = {
 
 const SAFETY: Block = {
   title: "How saving works",
+  icon: "ShieldCheck",
   lines: [
     "Every save first copies the old file to Paseo's plugin-data folder (never next to the file), writes the new text in one step, reads it back and shows you a report.",
     "If the file changed since you opened it, the save stops. Values that look like secrets stay hidden until you reveal them, and a save with hidden values in it is refused.",
@@ -64,21 +71,48 @@ const SAFETY: Block = {
   ],
 };
 
+/** Where the numbers above come from: each agent's own documentation. */
+const DOCS = [
+  { label: "Claude Code: how Claude remembers your project", url: "https://code.claude.com/docs/en/memory" },
+  { label: "Codex: memories", url: "https://learn.chatgpt.com/docs/customization/memories?surface=app" },
+  { label: "Codex: AGENTS.md", url: "https://learn.chatgpt.com/docs/agent-configuration/agents-md" },
+  { label: "OpenCode: rules", url: "https://opencode.ai/docs/rules/" },
+  { label: "Copilot CLI: custom instructions", url: "https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions" },
+  { label: "Copilot Memory", url: "https://docs.github.com/en/copilot/concepts/agents/copilot-memory" },
+] as const;
+
+/** The agents' own docs, opened in the browser. Only on apps that can open links (Paseo 0.10+). */
+function DocsCard() {
+  const t = useTokens();
+  const [message, setMessage] = useState("");
+  if (!canOpenLinks()) return null;
+  const open = (url: string) =>
+    void openLink(url).then((outcome) => setMessage(outcome === "opened" ? "" : outcome === "copied" ? `Couldn't open a browser, so the link was copied: ${url}` : `Couldn't open a browser. The link is ${url}`));
+  return (
+    <Card title="The agents' own docs" icon="ExternalLink" subtitle="Where the numbers above come from. Opens in your browser.">
+      <View style={{ gap: 2 }}>
+        {DOCS.map((doc) => (
+          <Pressable key={doc.url} accessibilityRole="link" accessibilityLabel={`${doc.label} (opens in your browser)`} onPress={() => open(doc.url)} hitSlop={t.control.hit} style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, paddingVertical: 6, alignSelf: "flex-start" }}>
+            {HostIcon ? <HostIcon name="ExternalLink" size={16} color={t.color.accent} /> : null}
+            <Text style={[t.text.body, { color: t.color.accent, fontWeight: "600", flexShrink: 1 }]}>{doc.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {message ? <Text style={t.text.caption}>{message}</Text> : null}
+    </Card>
+  );
+}
+
 function Reference() {
   const t = useTokens();
   return (
     <View style={{ gap: t.space.lg }}>
       {[...LOADING, READ_ONLY, SAFETY].map((block) => (
-        <Section key={block.title} title={block.title}>
-          <Card>
-            {block.lines.map((line) => (
-              <Text key={line} style={t.text.body}>
-                {`•  ${line}`}
-              </Text>
-            ))}
-          </Card>
-        </Section>
+        <Card key={block.title} title={block.title} icon={block.icon}>
+          <Bullets items={block.lines} icon="Dot" />
+        </Card>
       ))}
+      <DocsCard />
     </View>
   );
 }
@@ -91,21 +125,16 @@ export function Guide() {
   return (
     <View style={{ gap: t.space.lg }}>
       {PLAIN_GUIDES.map((guide) => (
-        <Section key={guide.title} title={guide.title}>
-          <Card>
-            <View style={{ gap: t.space.sm }}>
-              {guide.steps.map((step, index) => (
-                <View key={step} style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-start" }}>
-                  <Text style={[t.text.bodyStrong, { width: 20, flexShrink: 0 }]}>{`${index + 1}.`}</Text>
-                  <Text style={[t.text.body, { flex: 1, minWidth: 0 }]}>{step}</Text>
-                </View>
-              ))}
-            </View>
-          </Card>
-        </Section>
+        <Card key={guide.title} title={guide.title} icon={guide.icon}>
+          {guide.steps.map((step, index) => (
+            <NumberedStep key={step} n={index + 1}>
+              {step}
+            </NumberedStep>
+          ))}
+        </Card>
       ))}
       <Disclosure title={PLAIN.technical}>
-        <Text style={t.text.caption}>{PLAIN_GUIDE_TECHNICAL_HINT}</Text>
+        <Text style={t.text.body}>{PLAIN_GUIDE_TECHNICAL_HINT}</Text>
         <Reference />
       </Disclosure>
     </View>

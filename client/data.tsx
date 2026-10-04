@@ -34,6 +34,12 @@ export function useFindings(hostId: string) {
   });
 }
 
+/** The findings the Overview last read, without asking the host: for the page header on every tab. */
+export function useCachedFindings(hostId: string) {
+  const call = useRpc(findings);
+  return useQuery({ queryKey: [KEY, hostId, "findings"], queryFn: () => call({}), enabled: false });
+}
+
 export function useSourceDetail(hostId: string, sourceId: string | null, workspaceId?: string) {
   const call = useRpc(sourceDetail);
   return useQuery({

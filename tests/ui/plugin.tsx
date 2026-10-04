@@ -221,6 +221,8 @@ export function useSettings(_definition: unknown) {
 }
 export function useToast() { return { show: (message: string) => console.info("[toast]", message), error: (message: string) => console.info("[toast:error]", message) }; }
 export async function copyText(_text: string) {}
+// Paseo 0.10+ apps open links in the browser; ?nolinks stands in for an older app without it.
+export const openExternalUrl = params.has("nolinks") ? undefined : async (url: string) => { console.info("[open-url]", url); };
 export const ScrollView = RNScrollView;
 export const TextInput = RNTextInput;
 const row = (label: string, hint?: string, children?: React.ReactNode) => <View style={{ padding: 12, gap: 4 }}><Text style={{ fontWeight: "600" }}>{label}</Text>{hint ? <Text style={{ opacity: 0.7 }}>{hint}</Text> : null}{children}</View>;

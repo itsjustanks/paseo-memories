@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 (2026-10-04)
+
+Memories now looks and reads like AI Router and the other Paseo plugins: the same text sizes, header, tabs and plain-English Overview. Every option, setting, safety check and memory operation is unchanged, and so is the technical view.
+
+- **Easier to read.** One type scale everywhere: body text at 15 px, hints at 14, nothing below 13; section titles at 17, tab titles at 20, the page title at 22. Notes and warnings use the full text colour; grey is only for hints, paths and times.
+- **A header that says how things are.** The Memories icon and name, then one line with a coloured dot: "Your agents' notes on demo-host · 7 things worth a look", or "everything looks tidy". It reuses the Overview's last check, so other tabs never start a new scan. Refresh sits on the right.
+- **Every tab opens with an intro**: an icon, a title, one or two plain sentences, and "What you can do here" (folded behind "Learn more" on a phone). The tab bar shows icons with labels, and icons plus the open tab's name when the labels don't fit.
+- **The Overview teaches.** A status card at the top says the state in words ("All set: everything looks tidy", "3 things are worth a look", "Something needs your attention"), with what each agent remembers, the next step, Show me and Add a note. Then Worth a look, Find a note, and a short guide: What is Memories?, How it works (four steps with arrows), How to use it (numbered), and Words you'll see. While it reads, or if the first read fails, the card says so, with Try again.
+- **Icon cards throughout**: groups on Everywhere and Projects, the note header, Claude's notes, Import, Export, Add a note, each how-to in the Guide and each part of the reference. Warnings about a note show as notices with an icon. Buttons carry icons and are easier to press.
+- **Links to the agents' own docs** at the end of the Guide's reference (Claude Code, Codex, OpenCode, Copilot), opened in your browser. Only on Paseo apps that can open links (0.10 and later); older apps show the Guide as before.
+- **A native Memories screen on Paseo 0.11 and later**: the page has its proper title, "Memories", in the app's header (with the 0.2 registration, 0.11 titles it with its id, "memories"), and its sidebar row is the app's own, highlighted while the page is open. Older apps keep the 0.2 sidebar item and page, and every way in (the panels, the command menu, Show me) opens the same page.
+- Layout: the page is 980 px wide like the other plugins, the list beside a note is a little narrower, and everything works in light and dark, wide and narrow.
+- For developers: no settings change (the settings version is unchanged), no new dependencies, no new RPCs. `client/register.ts` holds the version-gated page registration (tested in `tests/register.test.ts`); `client/links.ts` looks up `openExternalUrl` at runtime. Preview: `?nolinks` stands in for an app without `openExternalUrl`.
+
 ## 0.2.1 (2026-09-25)
 
 - Memories uses far less memory on computers with many projects: the background check for code names that no longer exist now remembers only the names your notes mention, forgets deleted files and projects, and reads at most 128 MB per pass.

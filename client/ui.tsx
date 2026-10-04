@@ -1,6 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
+import * as HostRN from "@getpaseo/plugin/client/react-native";
 import React, { createContext, useContext, useMemo, useState } from "react";
-import { ActivityIndicator, Clipboard, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
+import { ActivityIndicator, Clipboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
 import { middlePath } from "../shared/labels";
 
 /**
@@ -86,6 +87,31 @@ const WARNING = { dark: "#e0a33e", light: "#a16207" };
  */
 export const wrapAnywhere = (Platform.OS === "web" ? { overflowWrap: "anywhere", wordBreak: "break-word" } : {}) as TextStyle;
 
+// ---------------------------------------------------------------------- type
+
+/**
+ * One type scale for every view, the same as the other Paseo plugins (AI
+ * Router's `TYPE`): nothing below 13 px, body text at 15, secondary at 14,
+ * section titles at 17, tab titles at 20, the page title at 22 and headline
+ * numbers at 26. Views use it through `t.text.*`.
+ */
+export const TYPE = {
+  page: { fontSize: 22, lineHeight: 28, fontWeight: "700" },
+  tabTitle: { fontSize: 20, lineHeight: 26, fontWeight: "700" },
+  section: { fontSize: 17, lineHeight: 23, fontWeight: "600" },
+  lead: { fontSize: 16, lineHeight: 24 },
+  item: { fontSize: 15, lineHeight: 21, fontWeight: "600" },
+  body: { fontSize: 15, lineHeight: 22 },
+  secondary: { fontSize: 14, lineHeight: 20 },
+  small: { fontSize: 13, lineHeight: 18 },
+  mono: { fontSize: 13, lineHeight: 19, fontFamily: "monospace" },
+  /** A headline number. */
+  figure: { fontSize: 26, lineHeight: 32, fontWeight: "700" },
+} as const;
+
+/** The app's icon component (Lucide names), when the host provides one; looked up at runtime so an app without it still renders. */
+export const HostIcon = (HostRN as unknown as { Icon?: React.ComponentType<{ name: string; size?: number; color?: string }> }).Icon;
+
 // -------------------------------------------------------------------- tokens
 
 export type Tokens = ReturnType<typeof tokens>;
@@ -106,6 +132,7 @@ export function tokens(theme: PluginTheme, compact: boolean) {
   const danger = theme.colors.statusDanger;
   const success = colors.statusSuccess || (dark ? SUCCESS.dark : SUCCESS.light);
   const warning = colors.statusWarning || (dark ? WARNING.dark : WARNING.light);
+  const mono = compact ? "monospace" : "Menlo";
 
   return {
     compact,
@@ -127,6 +154,7 @@ export function tokens(theme: PluginTheme, compact: boolean) {
       border: colors.border || alpha(muted, 0.24),
       borderStrong: alpha(muted, 0.4),
       accentWash: alpha(accent, 0.14),
+      accentSoft: alpha(accent, 0.07),
       accentLine: alpha(accent, 0.45),
       dangerWash: alpha(danger, 0.14),
       dangerLine: alpha(danger, 0.45),
@@ -137,28 +165,27 @@ export function tokens(theme: PluginTheme, compact: boolean) {
       // sits above the disabled tint contrast-wise without shouting.
       placeholder: alpha(fg, 0.5),
     },
-    // Compact means narrow, not cramped: type grows a point and padding grows,
-    // because a phone is held further from nobody's face than a monitor.
+    // The shared scale. Body notes use the full text colour; muted grey is
+    // only for hints, times and paths (`caption`).
     text: {
-      display: { fontSize: 20, fontWeight: "700" as const, lineHeight: 26, color: fg, ...wrapAnywhere },
-      value: { fontSize: compact ? 24 : 28, fontWeight: "700" as const, lineHeight: compact ? 30 : 34, color: fg, ...wrapAnywhere },
-      heading: { fontSize: 15, fontWeight: "600" as const, lineHeight: 20, color: fg, ...wrapAnywhere },
-      body: { fontSize: compact ? 14 : 13, fontWeight: "400" as const, lineHeight: compact ? 20 : 18, color: fg, ...wrapAnywhere },
-      bodyStrong: { fontSize: compact ? 14 : 13, fontWeight: "600" as const, lineHeight: compact ? 20 : 18, color: fg, ...wrapAnywhere },
-      label: { fontSize: 12, fontWeight: "500" as const, lineHeight: 16, color: muted, ...wrapAnywhere },
-      caption: { fontSize: compact ? 12 : 11, fontWeight: "400" as const, lineHeight: 16, color: muted, ...wrapAnywhere },
-      mono: {
-        fontSize: compact ? 12 : 11,
-        lineHeight: 17,
-        color: muted,
-        fontFamily: compact ? "monospace" : "Menlo",
-        ...wrapAnywhere,
-      },
+      page: { ...TYPE.page, color: fg, ...wrapAnywhere },
+      display: { ...TYPE.tabTitle, color: fg, ...wrapAnywhere },
+      section: { ...TYPE.section, color: fg, ...wrapAnywhere },
+      lead: { ...TYPE.lead, color: fg, ...wrapAnywhere },
+      value: { ...TYPE.figure, color: fg, ...wrapAnywhere },
+      heading: { ...TYPE.item, color: fg, ...wrapAnywhere },
+      body: { ...TYPE.body, fontWeight: "400" as const, color: fg, ...wrapAnywhere },
+      bodyStrong: { ...TYPE.body, fontWeight: "600" as const, color: fg, ...wrapAnywhere },
+      label: { ...TYPE.secondary, fontWeight: "600" as const, color: fg, ...wrapAnywhere },
+      caption: { ...TYPE.secondary, fontWeight: "400" as const, color: muted, ...wrapAnywhere },
+      small: { ...TYPE.small, fontWeight: "600" as const, color: muted, ...wrapAnywhere },
+      mono: { ...TYPE.mono, fontFamily: mono, color: fg, ...wrapAnywhere },
     },
     space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, indent: 18 },
-    radius: { sm: 6, md: 10, pill: 999 },
-    control: { min: compact ? 40 : 28, hit: { top: 6, bottom: 6, left: 6, right: 6 } },
-    maxWidth: 1100,
+    radius: { sm: 8, md: 12, lg: 16, pill: 999 },
+    control: { min: compact ? 44 : 40, hit: { top: 6, bottom: 6, left: 6, right: 6 } },
+    /** The page width every plugin uses on a wide screen. */
+    maxWidth: 980,
   };
 }
 
@@ -204,7 +231,7 @@ export function Screen({
   /** A header rendered above the scroll area already carries the top padding. */
   paddingTop?: number;
 }) {
-  const pad = t.compact ? 16 : 20;
+  const pad = t.compact ? 16 : 24;
   const body = (
     <View style={{ maxWidth: t.maxWidth, width: "100%", alignSelf: "center", gap: t.space.lg }}>{children}</View>
   );
@@ -224,94 +251,61 @@ export function Screen({
   );
 }
 
-/** Title, "Selected host: …" caption, and one status pill — the header every Paseo plugin shares. */
-export function Header({ title, caption, pill }: { title: string; caption: string; pill?: React.ReactNode }) {
+/** A soft circle with an icon in it: the visual anchor of headers, cards and steps. Nothing without the app's icons. */
+export function IconBadge({ name, tone = "accent", size = 32 }: { name: string; tone?: Status | "accent"; size?: number }) {
   const t = useTokens();
+  if (!HostIcon) return null;
+  const color = tone === "accent" ? t.color.accent : statusColor(t, tone);
   return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: t.space.md }}>
-      <View style={{ gap: 3, flexShrink: 1, minWidth: 0 }}>
-        <Text style={t.text.display}>{title}</Text>
-        <Text style={t.text.label}>{caption}</Text>
-      </View>
-      {pill}
+    <View accessible={false} importantForAccessibility="no-hide-descendants" style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: alpha(color, 0.14), alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <HostIcon name={name} size={Math.round(size * 0.5)} color={color} />
     </View>
   );
 }
 
-/** Fixed-width cards that wrap on wide layouts and stack in compact ones. */
-export function Grid({ children, min = 240 }: { children: React.ReactNode; min?: number }) {
-  const t = useTokens();
-  return (
-    <View style={{ flexDirection: t.compact ? "column" : "row", flexWrap: t.compact ? "nowrap" : "wrap", alignItems: "stretch", gap: t.space.md }}>
-      {React.Children.map(children, (child) =>
-        child ? (
-          <View style={{ width: t.compact ? "100%" : undefined, flexGrow: 1, flexBasis: t.compact ? undefined : min, minWidth: t.compact ? undefined : min }}>
-            {child}
-          </View>
-        ) : null,
-      )}
-    </View>
-  );
+/** A status as an icon colour: the accent unless it says something (ok, attention, error). */
+function badgeTone(tone: Status | undefined): Status | "accent" {
+  return tone && tone !== "neutral" && tone !== "busy" ? tone : "accent";
 }
 
-/** A numbered heading for a walkthrough card. Index 0 draws no number. */
-export function Step({ index, title }: { index: number; title: string }) {
+/** A small dot in a status colour, beside words that say the same thing. */
+export function Dot({ status }: { status: Status }) {
+  const t = useTokens();
+  return <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor(t, status), flexShrink: 0 }} />;
+}
+
+/**
+ * The page header every plugin shares: the plugin's icon and name, one line
+ * of status beside a coloured dot, and the page's own actions on the right.
+ */
+export function Header({ title, icon = "Brain", status, caption, trailing, panel }: { title: string; icon?: string; status?: Status; caption: string; trailing?: React.ReactNode; /** A side panel: the title a step smaller. */ panel?: boolean }) {
   const t = useTokens();
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm }}>
-      {index > 0 ? (
-        <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: t.color.accentWash, alignItems: "center", justifyContent: "center" }}>
-          <Text style={{ fontSize: 12, fontWeight: "700", color: t.color.accent }}>{index}</Text>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: t.compact || panel ? t.space.md : 14 }}>
+      <IconBadge name={icon} size={panel ? 36 : t.compact ? 40 : 46} />
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <Text accessibilityRole="header" style={panel ? t.text.display : t.text.page}>
+          {title}
+        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm }}>
+          {status ? <Dot status={status} /> : null}
+          <Text style={[t.text.caption, { flexShrink: 1 }]}>{caption}</Text>
         </View>
-      ) : null}
-      <Text style={[t.text.heading, { flexShrink: 1 }]}>{title}</Text>
-    </View>
-  );
-}
-
-/** Title, one sentence of orientation, and the actions for the whole surface. */
-export function Toolbar({
-  title,
-  subtitle,
-  actions,
-  below,
-}: {
-  title?: string;
-  subtitle?: string;
-  actions?: React.ReactNode;
-  below?: React.ReactNode;
-}) {
-  const t = useTokens();
-  return (
-    <View style={{ gap: t.space.md }}>
-      <View
-        style={{
-          flexDirection: t.compact ? "column" : "row",
-          alignItems: t.compact ? "stretch" : "flex-end",
-          justifyContent: "space-between",
-          gap: t.space.md,
-        }}
-      >
-        {title || subtitle ? (
-          <View style={{ gap: 2, flexShrink: 1, minWidth: 0 }}>
-            {title ? <Text style={t.text.display}>{title}</Text> : null}
-            {subtitle ? <Text style={t.text.caption}>{subtitle}</Text> : null}
-          </View>
-        ) : null}
-        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm, flexShrink: 1, minWidth: 0 }}>{actions}</View> : null}
       </View>
-      {below}
+      {trailing ? <View style={{ flexShrink: 0 }}>{trailing}</View> : null}
     </View>
   );
 }
 
-export function Section({ title, trailing, children }: { title?: string; trailing?: React.ReactNode; children: React.ReactNode }) {
+/** A heading over a group, with an optional icon and something on the right (a count, an action). */
+export function Section({ title, icon, trailing, children }: { title?: string; icon?: string; trailing?: React.ReactNode; children: React.ReactNode }) {
   const t = useTokens();
   return (
     <View style={{ gap: t.space.sm }}>
       {title ? (
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: t.space.sm }}>
-          <Text style={[t.text.label, { flexShrink: 1 }]}>{title.toUpperCase()}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm }}>
+          {icon ? <IconBadge name={icon} size={28} /> : null}
+          <Text style={[t.text.section, { flex: 1, minWidth: 0 }]}>{title}</Text>
           {trailing}
         </View>
       ) : null}
@@ -320,34 +314,128 @@ export function Section({ title, trailing, children }: { title?: string; trailin
   );
 }
 
+/**
+ * A card. With `title` it gets a header (icon, title, subtitle, something on
+ * the right). Unpadded cards hold a list of Rows, which bring their own
+ * padding and dividers; their header keeps its padding.
+ */
 export function Card({
   children,
   level = 1,
   padded = true,
   tone,
+  title,
+  icon,
+  iconTone,
+  subtitle,
+  trailing,
 }: {
   children: React.ReactNode;
   level?: 1 | 2;
   padded?: boolean;
+  /** Tints the card's edge, for a card whose whole content is in that state. */
   tone?: Status;
+  title?: string;
+  /** The header icon's colour, when it says a state without tinting the whole card. */
+  iconTone?: Status;
+  icon?: string;
+  subtitle?: string;
+  trailing?: React.ReactNode;
 }) {
   const t = useTokens();
+  const pad = t.compact ? t.space.lg : 18;
+  const header = title ? (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.md, ...(padded ? {} : { padding: pad, borderBottomWidth: 1, borderBottomColor: t.color.borderSubtle }) }}>
+      {icon ? <IconBadge name={icon} tone={badgeTone(iconTone ?? tone)} size={34} /> : null}
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <Text style={t.text.section}>{title}</Text>
+        {subtitle ? <Text style={t.text.caption}>{subtitle}</Text> : null}
+      </View>
+      {trailing}
+    </View>
+  ) : null;
   return (
     <View
       style={{
         backgroundColor: level === 1 ? t.color.surface1 : t.color.surface2,
-        borderRadius: t.radius.md,
+        borderRadius: t.radius.lg,
         borderWidth: 1,
-        borderColor: tone ? alpha(statusColor(t, tone), 0.35) : t.color.borderSubtle,
-        padding: padded ? (t.compact ? t.space.md : t.space.lg) : 0,
+        borderColor: tone ? alpha(statusColor(t, tone), 0.4) : t.color.border,
+        padding: padded ? pad : 0,
         // An unpadded card holds a list of Rows, which bring their own padding and dividers.
-        gap: padded ? t.space.md : 0,
+        gap: padded ? 14 : 0,
         overflow: "hidden",
       }}
     >
+      {header}
       {children}
     </View>
   );
+}
+
+/**
+ * The big status card at the top of the Overview: a tinted band with an icon
+ * and the state in words, then the details and actions. Neutral uses the
+ * accent, so "checking" does not read as a warning.
+ */
+export function HeroCard({ tone, icon, title, lead, children }: { tone: Status; icon: string; title: string; lead?: React.ReactNode; children?: React.ReactNode }) {
+  const t = useTokens();
+  const color = tone === "neutral" || tone === "busy" ? t.color.accent : statusColor(t, tone);
+  const pad = t.compact ? t.space.lg : 18;
+  return (
+    <View style={{ backgroundColor: t.color.surface1, borderColor: alpha(color, 0.4), borderWidth: 1, borderRadius: 18, overflow: "hidden" }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.lg, padding: pad, backgroundColor: alpha(color, 0.09) }}>
+        <IconBadge name={icon} tone={tone === "neutral" || tone === "busy" ? "accent" : tone} size={t.compact ? 44 : 52} />
+        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+          <Text accessibilityRole="header" style={[t.text.display, tone === "error" ? { color } : null]}>
+            {title}
+          </Text>
+          {lead ? <Text style={t.text.body}>{lead}</Text> : null}
+        </View>
+      </View>
+      {children ? <View style={{ padding: pad, gap: t.space.md }}>{children}</View> : null}
+    </View>
+  );
+}
+
+/** Short lines, each with a check mark in the accent colour; two across when `columns` and there is room. */
+export function Bullets({ items, columns, icon = "Check" }: { items: readonly string[]; columns?: boolean; icon?: string }) {
+  const t = useTokens();
+  return (
+    <View style={{ flexDirection: columns ? "row" : "column", flexWrap: columns ? "wrap" : "nowrap", columnGap: 20, rowGap: t.space.sm }}>
+      {items.map((line) => (
+        <View key={line} style={{ flexDirection: "row", alignItems: "flex-start", gap: 10, ...(columns ? { flexBasis: "45%", minWidth: 240, flexGrow: 1, flexShrink: 1 } : {}) }}>
+          {HostIcon ? (
+            <View style={{ paddingTop: 3 }}>
+              <HostIcon name={icon} size={16} color={t.color.accent} />
+            </View>
+          ) : (
+            <Text style={[t.text.body, { color: t.color.accent }]}>•</Text>
+          )}
+          <Text style={[t.text.body, { flex: 1, minWidth: 0 }]}>{line}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** A numbered step: a filled circle with the number, then the words. */
+export function NumberedStep({ n, children }: { n: number; children: React.ReactNode }) {
+  const t = useTokens();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.md }}>
+      <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: t.color.accent, alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Text style={{ ...TYPE.secondary, color: t.color.accentFg, fontWeight: "700" }}>{n}</Text>
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 2, paddingTop: 3 }}>{typeof children === "string" ? <Text style={t.text.body}>{children}</Text> : children}</View>
+    </View>
+  );
+}
+
+/** A thin rule between the parts of a card. */
+export function Divider() {
+  const t = useTokens();
+  return <View style={{ height: 1, backgroundColor: t.color.border }} />;
 }
 
 /**
@@ -418,11 +506,11 @@ export function Row({
   );
 
   const style = {
-    paddingVertical: t.compact ? t.space.md : t.space.sm + 2,
-    paddingHorizontal: t.space.md,
+    paddingVertical: t.space.md,
+    paddingHorizontal: t.compact ? t.space.md : t.space.lg,
     borderTopWidth: first ? 0 : 1,
     borderTopColor: t.color.borderSubtle,
-    borderLeftWidth: tone ? 2 : 0,
+    borderLeftWidth: tone ? 3 : 0,
     borderLeftColor: tone ? statusColor(t, tone) : "transparent",
     backgroundColor: selected ? t.color.accentWash : "transparent",
   };
@@ -450,7 +538,7 @@ export function Facts({ items }: { items: Array<{ value: string; tone?: Status }
       {list.map((item, index) => (
         <React.Fragment key={`${item.value}-${index}`}>
           {index > 0 ? <Text style={[t.text.caption, { opacity: 0.5 }]}>·</Text> : null}
-          <Text style={[t.text.caption, { flexShrink: 1 }, item.tone ? { color: statusColor(t, item.tone) } : null]}>{item.value}</Text>
+          <Text style={[t.text.caption, { flexShrink: 1 }, item.tone ? { color: statusColor(t, item.tone), fontWeight: "600" } : null]}>{item.value}</Text>
         </React.Fragment>
       ))}
     </View>
@@ -459,14 +547,24 @@ export function Facts({ items }: { items: Array<{ value: string; tone?: Status }
 
 // ------------------------------------------------------------------- atoms
 
-/** A dot and a word, always both — colour is never the only channel. */
-export function StatusPill({ status, label }: { status: Status; label: string }) {
+/** A small pill: a short state or count. Toned pills get a soft fill and a tinted edge. */
+export function Tag({ label, tone }: { label: string; tone?: Status }) {
   const t = useTokens();
-  const color = statusColor(t, status);
+  const color = tone && tone !== "neutral" ? statusColor(t, tone) : t.color.muted;
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
-      <Text style={[t.text.caption, { color, fontWeight: "600" }]}>{label}</Text>
+    <View
+      style={{
+        backgroundColor: tone && tone !== "neutral" ? alpha(color, 0.1) : t.color.surface2,
+        borderColor: tone && tone !== "neutral" ? alpha(color, 0.55) : t.color.border,
+        borderWidth: 1,
+        borderRadius: t.radius.pill,
+        paddingVertical: 1,
+        paddingHorizontal: 10,
+        flexShrink: 1,
+        minWidth: 0,
+      }}
+    >
+      <Text style={[{ ...TYPE.small, fontWeight: "600", color: tone && tone !== "neutral" ? color : t.color.fg }, wrapAnywhere]}>{label}</Text>
     </View>
   );
 }
@@ -475,63 +573,18 @@ export function StatusPill({ status, label }: { status: Status; label: string })
  * One line of an at-a-glance list: what it is, its state as a pill, a short
  * hint, and a link to where it is dealt with.
  */
-export function StatusLine({
-  label,
-  value,
-  status,
-  hint,
-  action,
-}: {
-  label: string;
-  value: string;
-  status: Status;
-  hint?: string | null;
-  action?: { label: string; onPress: () => void } | null;
-}) {
+export function StatusLine({ label, value, status, hint, action }: { label: string; value: string; status: Status; hint?: string | null; action?: { label: string; onPress: () => void } | null }) {
   const t = useTokens();
-  const link = action ? <Button label={`${action.label} →`} variant="ghost" onPress={action.onPress} /> : null;
-  const state = (
-    <>
-      <StatusPill status={status} label={value} />
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 10, rowGap: 4, paddingVertical: 3 }}>
+      <Text style={[t.text.body, { fontWeight: "500", width: t.compact ? "100%" : 220 }]}>{label}</Text>
+      <Tag label={value} tone={status} />
       {hint ? <Text style={[t.text.caption, { flexShrink: 1 }]}>{hint}</Text> : null}
-    </>
-  );
-  // Narrow: the name and its link on one line, the state under it, so the link never wraps onto a line of its own.
-  if (t.compact) {
-    return (
-      <View style={{ gap: 2 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: t.space.sm, minHeight: 24 }}>
-          <Text style={t.text.label}>{label}</Text>
-          {link}
-        </View>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: t.space.sm, rowGap: 2 }}>{state}</View>
-      </View>
-    );
-  }
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, minHeight: 28 }}>
-      <Text style={[t.text.label, { width: 96 }]}>{label}</Text>
-      <View style={{ flex: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: t.space.sm, rowGap: 2 }}>{state}</View>
-      {link}
-    </View>
-  );
-}
-
-export function Tag({ label, tone }: { label: string; tone?: Status }) {
-  const t = useTokens();
-  const color = tone ? statusColor(t, tone) : t.color.muted;
-  return (
-    <View
-      style={{
-        backgroundColor: tone ? alpha(color, 0.16) : t.color.surface2,
-        borderRadius: t.radius.sm,
-        paddingVertical: 2,
-        paddingHorizontal: 7,
-        flexShrink: 1,
-        minWidth: 0,
-      }}
-    >
-      <Text style={[{ fontSize: 11, lineHeight: 15, fontWeight: "600", color }, wrapAnywhere]}>{label}</Text>
+      {action ? (
+        <Pressable accessibilityRole="link" accessibilityLabel={action.label} onPress={action.onPress} hitSlop={t.control.hit}>
+          <Text style={[t.text.caption, { color: t.color.accent, fontWeight: "600" }]}>{`${action.label} →`}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -546,6 +599,7 @@ export function Button({
   disabled,
   loading,
   grow,
+  icon,
 }: {
   label: string;
   onPress: () => void;
@@ -553,6 +607,8 @@ export function Button({
   disabled?: boolean;
   loading?: boolean;
   grow?: boolean;
+  /** A Lucide icon name, drawn before the label when the app has icons. */
+  icon?: string;
 }) {
   const t = useTokens();
   const off = Boolean(disabled) || Boolean(loading);
@@ -564,6 +620,7 @@ export function Button({
     "quiet-danger": { bg: "transparent", border: "transparent", fg: t.color.danger },
   }[variant];
   const quiet = variant === "ghost" || variant === "quiet-danger";
+  const ink = off ? t.color.disabled : palette.fg;
   return (
     <Pressable
       accessibilityRole="button"
@@ -579,22 +636,31 @@ export function Button({
         minWidth: 0,
         maxWidth: "100%",
         minHeight: t.control.min,
-        paddingHorizontal: quiet ? 8 : 12,
-        borderRadius: t.radius.sm,
+        paddingHorizontal: quiet ? 8 : 14,
+        paddingVertical: quiet ? 4 : 8,
+        borderRadius: 10,
         borderWidth: 1,
         borderColor: off && !quiet ? t.color.borderSubtle : palette.border,
         backgroundColor: off && variant === "primary" ? alpha(t.color.accent, 0.25) : palette.bg,
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",
-        gap: 6,
+        gap: 8,
         opacity: pressed ? 0.75 : 1,
       })}
     >
-      {loading ? <ActivityIndicator size="small" color={off ? t.color.disabled : palette.fg} /> : null}
-      <Text style={[{ fontSize: t.compact ? 13 : 12, fontWeight: "600", color: off ? t.color.disabled : palette.fg, flexShrink: 1, textAlign: "center" }, wrapAnywhere]}>
-        {label}
-      </Text>
+      {loading ? <ActivityIndicator size="small" color={ink} /> : icon && HostIcon ? <HostIcon name={icon} size={16} color={ink} /> : null}
+      <Text style={[{ ...TYPE.body, fontWeight: "600", color: ink, flexShrink: 1, textAlign: "center" }, wrapAnywhere]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** A quiet text action in the accent colour, for "Open the Guide" style links. */
+export function Link({ label, onPress, accessibilityLabel }: { label: string; onPress: () => void; accessibilityLabel?: string }) {
+  const t = useTokens();
+  return (
+    <Pressable accessibilityRole="link" accessibilityLabel={accessibilityLabel ?? label} onPress={onPress} hitSlop={t.control.hit} style={{ paddingVertical: 4, alignSelf: "flex-start" }}>
+      <Text style={[t.text.body, { color: t.color.accent, fontWeight: "600" }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -615,7 +681,6 @@ export function Toggle({
 }) {
   const t = useTokens();
   const off = Boolean(disabled) || Boolean(loading);
-  const color = value ? t.color.success : t.color.muted;
   return (
     <Pressable
       accessibilityRole="switch"
@@ -626,21 +691,24 @@ export function Toggle({
       disabled={off}
       hitSlop={t.control.hit}
       onPress={() => onChange(!value)}
-      style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: t.control.min, opacity: off ? 0.6 : 1 }}
+      style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, minHeight: t.control.min, opacity: off ? 0.6 : 1 }}
     >
       <View
         style={{
-          width: 32,
-          height: 18,
-          borderRadius: 9,
+          width: 44,
+          height: 26,
+          borderRadius: 13,
           padding: 2,
-          backgroundColor: value ? alpha(t.color.success, 0.35) : alpha(t.color.muted, 0.25),
+          backgroundColor: value ? t.color.accent : t.color.surface2,
+          borderWidth: 1,
+          borderColor: value ? t.color.accent : t.color.border,
           alignItems: value ? "flex-end" : "flex-start",
+          justifyContent: "center",
         }}
       >
-        <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: color }} />
+        <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: value ? t.color.accentFg : t.color.muted }} />
       </View>
-      {loading ? <ActivityIndicator size="small" color={t.color.muted} /> : <Text style={[t.text.caption, { color, fontWeight: "600" }]}>{value ? "on" : "off"}</Text>}
+      {loading ? <ActivityIndicator size="small" color={t.color.muted} /> : <Text style={[t.text.caption, { fontWeight: "600", color: value ? t.color.accent : t.color.muted }]}>{value ? "on" : "off"}</Text>}
     </Pressable>
   );
 }
@@ -661,7 +729,7 @@ export function ConfirmButton({
   const [armed, setArmed] = useState(false);
   if (!armed) return <Button label={label} variant={variant} onPress={() => setArmed(true)} />;
   return (
-    <View style={{ flexDirection: "row", gap: t.space.sm }}>
+    <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
       <Button
         label={confirmLabel}
         variant="danger"
@@ -715,9 +783,10 @@ export function Segmented<T extends string>({
     <View
       style={{
         flexDirection: "row",
+        flexWrap: "wrap",
         backgroundColor: t.color.surface2,
-        borderRadius: t.radius.sm,
-        padding: 2,
+        borderRadius: 10,
+        padding: 3,
         alignSelf: "flex-start",
         maxWidth: "100%",
         flexShrink: 1,
@@ -734,13 +803,15 @@ export function Segmented<T extends string>({
             onPress={() => onChange(option.value)}
             hitSlop={t.control.hit}
             style={{
-              paddingVertical: t.compact ? 8 : 5,
+              paddingVertical: 6,
               paddingHorizontal: 12,
-              minHeight: t.control.min,
+              minHeight: t.control.min - 6,
               alignItems: "center",
               justifyContent: "center",
-              borderRadius: t.radius.sm - 2,
+              borderRadius: 8,
               backgroundColor: active ? t.color.surface0 : "transparent",
+              borderWidth: 1,
+              borderColor: active ? t.color.border : "transparent",
               flexShrink: 1,
               minWidth: 0,
             }}
@@ -748,7 +819,7 @@ export function Segmented<T extends string>({
             <Text
               style={[
                 {
-                  fontSize: t.compact ? 13 : 12,
+                  ...TYPE.secondary,
                   fontWeight: "600",
                   textAlign: "center",
                   color: option.disabled ? t.color.disabled : active ? t.color.fg : t.color.muted,
@@ -788,7 +859,7 @@ export function Field({
 }) {
   const t = useTokens();
   return (
-    <View style={{ gap: 4 }}>
+    <View style={{ gap: 6 }}>
       {label ? <Text style={t.text.label}>{label}</Text> : null}
       <TextInput
         value={value}
@@ -804,14 +875,14 @@ export function Field({
         style={{
           borderWidth: 1,
           borderColor: t.color.border,
-          borderRadius: t.radius.sm,
+          borderRadius: 10,
           backgroundColor: t.color.surface0,
-          paddingVertical: t.compact ? 10 : 7,
-          paddingHorizontal: 10,
+          paddingVertical: 10,
+          paddingHorizontal: 12,
           color: t.color.fg,
           minHeight: minHeight ?? (multiline ? 120 : t.control.min),
           textAlignVertical: multiline ? "top" : "center",
-          ...(mono ? { fontFamily: t.compact ? "monospace" : "Menlo", fontSize: t.compact ? 12 : 11.5 } : { fontSize: t.compact ? 14 : 13 }),
+          ...(mono ? { fontFamily: t.text.mono.fontFamily, fontSize: TYPE.mono.fontSize, lineHeight: TYPE.mono.lineHeight } : { fontSize: TYPE.body.fontSize }),
           // Soft-wrap long lines in the editor; a textarea would otherwise scroll sideways on some engines.
           ...(multiline ? { ...wrapAnywhere, ...(Platform.OS === "web" ? ({ whiteSpace: "pre-wrap" } as object) : {}) } : {}),
         }}
@@ -846,7 +917,7 @@ export function ComboBox({
     .filter((option) => !query || option.value.toLowerCase().includes(query) || option.label.toLowerCase().includes(query))
     .slice(0, 12);
   return (
-    <View style={{ gap: 4 }}>
+    <View style={{ gap: 6 }}>
       <Text style={t.text.label}>{label}</Text>
       <TextInput
         value={value}
@@ -865,18 +936,18 @@ export function ComboBox({
         style={{
           borderWidth: 1,
           borderColor: !allowCustom && value && !known ? t.color.danger : t.color.border,
-          borderRadius: t.radius.sm,
+          borderRadius: 10,
           backgroundColor: t.color.surface0,
-          paddingVertical: t.compact ? 10 : 7,
-          paddingHorizontal: 10,
+          paddingVertical: 10,
+          paddingHorizontal: 12,
           color: t.color.fg,
           minHeight: t.control.min,
-          fontFamily: t.compact ? "monospace" : "Menlo",
-          fontSize: t.compact ? 12 : 11.5,
+          fontFamily: t.text.mono.fontFamily,
+          fontSize: TYPE.mono.fontSize,
         }}
       />
       {open && matches.length > 0 ? (
-        <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.sm, overflow: "hidden" }}>
+        <View style={{ backgroundColor: t.color.surface2, borderRadius: 10, overflow: "hidden" }}>
           {matches.map((option, index) => (
             <Pressable
               key={option.value}
@@ -886,8 +957,8 @@ export function ComboBox({
                 setOpen(false);
               }}
               style={({ pressed }) => ({
-                paddingVertical: t.compact ? 10 : 7,
-                paddingHorizontal: 10,
+                paddingVertical: 10,
+                paddingHorizontal: 12,
                 borderTopWidth: index === 0 ? 0 : 1,
                 borderTopColor: t.color.borderSubtle,
                 backgroundColor: pressed ? t.color.accentWash : option.value === value ? t.color.surface0 : "transparent",
@@ -950,10 +1021,10 @@ export function CodeBlock({ children, tone, copy = true }: { children: string; t
         alignItems: "flex-start",
         gap: t.space.sm,
         backgroundColor: t.color.surface2,
-        borderRadius: t.radius.sm,
-        borderLeftWidth: tone ? 2 : 0,
+        borderRadius: 10,
+        borderLeftWidth: tone ? 3 : 0,
         borderLeftColor: tone ? statusColor(t, tone) : "transparent",
-        padding: t.space.sm,
+        padding: t.space.md,
       }}
     >
       <Text selectable style={[t.text.mono, { flex: 1, minWidth: 0 }]}>
@@ -976,7 +1047,7 @@ export function PathText({ path, style, full }: { path: string; style?: StylePro
   if (full) {
     return (
       <View style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.sm, minWidth: 0 }}>
-        <Text selectable style={[t.text.mono, { flex: 1, minWidth: 0 }, style]}>
+        <Text selectable style={[t.text.mono, { color: t.color.muted, flex: 1, minWidth: 0 }, style]}>
           {path}
         </Text>
         <CopyLink text={path} label="Copy path" />
@@ -986,7 +1057,7 @@ export function PathText({ path, style, full }: { path: string; style?: StylePro
   const flat = StyleSheet.flatten([t.text.caption, style]);
   const mono = /mono|menlo|courier/i.test(String(flat.fontFamily ?? ""));
   // A rough character width: enough to pick how much to cut; the one-line clip catches the rest.
-  const perChar = (flat.fontSize ?? 12) * (mono ? 0.62 : 0.55);
+  const perChar = (flat.fontSize ?? 14) * (mono ? 0.62 : 0.55);
   const max = width > 0 ? Math.max(16, Math.floor(width / perChar)) : 48;
   return (
     <View style={{ minWidth: 0, alignSelf: "stretch" }} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
@@ -997,6 +1068,9 @@ export function PathText({ path, style, full }: { path: string; style?: StylePro
   );
 }
 
+const NOTICE_ICON: Record<Status, string> = { ok: "CircleCheck", attention: "TriangleAlert", error: "CircleAlert", neutral: "Info", busy: "Loader" };
+
+/** A sentence that needs noticing, on a soft fill of its tone with an icon. Neutral uses the accent. */
 export function Notice({
   tone = "neutral",
   children,
@@ -1007,36 +1081,40 @@ export function Notice({
   onDismiss?: () => void;
 }) {
   const t = useTokens();
-  const color = statusColor(t, tone);
+  const color = tone === "neutral" ? t.color.accent : statusColor(t, tone);
   return (
     <View
       style={{
         flexDirection: "row",
-        alignItems: "center",
-        gap: t.space.sm,
-        backgroundColor: alpha(color, 0.12),
-        borderRadius: t.radius.sm,
-        borderLeftWidth: 2,
-        borderLeftColor: color,
-        paddingVertical: t.space.sm,
+        alignItems: "flex-start",
+        gap: 10,
+        backgroundColor: alpha(color, 0.08),
+        borderRadius: t.radius.md,
+        borderWidth: 1,
+        borderColor: alpha(color, 0.3),
+        paddingVertical: t.space.md,
         paddingHorizontal: t.space.md,
       }}
     >
-      <View style={{ flex: 1, minWidth: 0 }}>
-        {typeof children === "string" ? <Text style={t.text.body}>{children}</Text> : children}
-      </View>
+      {HostIcon ? (
+        <View style={{ paddingTop: 3 }}>
+          <HostIcon name={NOTICE_ICON[tone]} size={16} color={color} />
+        </View>
+      ) : null}
+      <View style={{ flex: 1, minWidth: 0 }}>{typeof children === "string" ? <Text style={t.text.body}>{children}</Text> : children}</View>
       {onDismiss ? <Button label="Dismiss" variant="ghost" onPress={onDismiss} /> : null}
     </View>
   );
 }
 
-export function EmptyState({ title, body, action }: { title: string; body: string; action?: React.ReactNode }) {
+export function EmptyState({ title, body, action, icon = "Inbox" }: { title: string; body: string; action?: React.ReactNode; icon?: string }) {
   const t = useTokens();
   return (
-    <View style={{ padding: t.space.xl, gap: t.space.sm, alignItems: "flex-start" }}>
-      <Text style={t.text.heading}>{title}</Text>
-      <Text style={[t.text.body, { color: t.color.muted, maxWidth: 520 }]}>{body}</Text>
-      {action ? <View style={{ paddingTop: t.space.sm }}>{action}</View> : null}
+    <View style={{ padding: t.space.xl, gap: t.space.md, alignItems: "flex-start", backgroundColor: t.color.surface1, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.color.border }}>
+      <IconBadge name={icon} size={40} />
+      <Text style={t.text.section}>{title}</Text>
+      <Text style={[t.text.body, { maxWidth: 560 }]}>{body}</Text>
+      {action ? <View style={{ paddingTop: t.space.xs }}>{action}</View> : null}
     </View>
   );
 }
@@ -1053,7 +1131,7 @@ export function Loading({ label }: { label?: string }) {
 
 export function ErrorText({ children }: { children: string }) {
   const t = useTokens();
-  return <Text style={[t.text.caption, { color: t.color.danger }]}>{children}</Text>;
+  return <Text style={[t.text.body, { color: t.color.danger }]}>{children}</Text>;
 }
 
 /**
@@ -1066,11 +1144,11 @@ export function StaleNote({ what, at, reason, onRetry }: { what: string; at: str
   return (
     <Notice tone="attention">
       <View style={{ gap: t.space.xs }}>
-        <Text style={t.text.body}>{`Could not refresh ${what}. Showing what was read at ${at}.`}</Text>
-        <Text style={t.text.caption}>{reason}</Text>
+        <Text style={t.text.bodyStrong}>{`Could not refresh ${what}. Showing what was read at ${at}.`}</Text>
+        <Text style={t.text.body}>{reason}</Text>
         {onRetry ? (
           <View style={{ flexDirection: "row" }}>
-            <Button label="Try again" variant="ghost" onPress={onRetry} />
+            <Button label="Try again" variant="ghost" icon="RefreshCw" onPress={onRetry} />
           </View>
         ) : null}
       </View>
@@ -1078,150 +1156,25 @@ export function StaleNote({ what, at, reason, onRetry }: { what: string; at: str
   );
 }
 
-export function Disclosure({ title, children, open: initial = false }: { title: string; children: React.ReactNode; open?: boolean }) {
+/** A "Learn more" style toggle: a chevron and a label; the children show while it is open. */
+export function Disclosure({ title, openTitle, children, open: initial = false }: { title: string; openTitle?: string; children: React.ReactNode; open?: boolean }) {
   const t = useTokens();
   const [open, setOpen] = useState(initial);
+  const shown = open && openTitle ? openTitle : title;
   return (
     <View style={{ gap: t.space.sm }}>
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel={shown}
         accessibilityState={{ expanded: open }}
         onPress={() => setOpen((value) => !value)}
         hitSlop={t.control.hit}
-        style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: t.control.min, justifyContent: "flex-start" }}
+        style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 4, alignSelf: "flex-start" }}
       >
-        <Text style={{ fontSize: 11, color: t.color.muted }}>{open ? "▾" : "▸"}</Text>
-        <Text style={[t.text.caption, { fontWeight: "600" }]}>{title}</Text>
+        {HostIcon ? <HostIcon name={open ? "ChevronDown" : "ChevronRight"} size={16} color={t.color.accent} /> : <Text style={[t.text.body, { color: t.color.accent }]}>{open ? "▾" : "▸"}</Text>}
+        <Text style={[t.text.body, { color: t.color.accent, fontWeight: "600" }]}>{shown}</Text>
       </Pressable>
-      {open ? <View style={{ gap: t.space.sm, paddingLeft: t.space.indent }}>{children}</View> : null}
-    </View>
-  );
-}
-
-/** "3 of 7 destinations" as a bar plus its number — never a bare bar. */
-export function Coverage({ present, total, label }: { present: number; total: number; label?: string }) {
-  const t = useTokens();
-  const fraction = total > 0 ? present / total : 0;
-  const status: Status = fraction === 1 ? "ok" : fraction === 0 ? "neutral" : "attention";
-  return (
-    <View style={{ gap: 4, minWidth: 120, flexGrow: 1 }}>
-      <View style={{ height: 4, borderRadius: 2, backgroundColor: alpha(t.color.muted, 0.2), overflow: "hidden" }}>
-        <View style={{ width: `${Math.round(fraction * 100)}%`, height: "100%", backgroundColor: statusColor(t, status) }} />
-      </View>
-      <Text style={t.text.caption}>{label ?? `${present} of ${total}`}</Text>
-    </View>
-  );
-}
-
-export function Meter({ fraction, label, tone = "neutral" }: { fraction: number; label: string; tone?: Status }) {
-  const t = useTokens();
-  const value = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
-  return (
-    <View style={{ gap: 4, flexGrow: 1, minWidth: 120 }}>
-      <View style={{ height: 4, borderRadius: 2, backgroundColor: alpha(t.color.muted, 0.2), overflow: "hidden" }}>
-        <View style={{ width: `${Math.round(value * 100)}%`, height: "100%", backgroundColor: statusColor(t, tone) }} />
-      </View>
-      <Text style={t.text.caption}>{label}</Text>
-    </View>
-  );
-}
-
-export function Spark({ values, tone = "neutral" }: { values: number[]; tone?: Status }) {
-  const t = useTokens();
-  const max = Math.max(1, ...values);
-  return (
-    <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 2, height: 16 }}>
-      {values.map((value, index) => (
-        <View
-          key={index}
-          style={{
-            width: 5,
-            height: Math.max(2, Math.round((value / max) * 16)),
-            borderRadius: 1,
-            backgroundColor: value > 0 ? statusColor(t, tone) : alpha(t.color.muted, 0.25),
-          }}
-        />
-      ))}
-    </View>
-  );
-}
-
-/**
- * The preview stage: a rendered artifact, sized from its own aspect ratio and
- * whatever width the pane happens to have.
- */
-export function Figure({
-  uri,
-  width,
-  height,
-  label,
-  loading,
-  note,
-  placeholder,
-}: {
-  uri?: string;
-  width?: number;
-  height?: number;
-  label: string;
-  loading?: boolean;
-  note?: string;
-  placeholder?: React.ReactNode;
-}) {
-  const t = useTokens();
-  const [stage, setStage] = useState(0);
-  const aspect = width && height && width > 0 ? height / width : 0.62;
-  const drawWidth = stage > 0 ? stage : 320;
-  return (
-    <View style={{ gap: t.space.sm }} onLayout={(event) => setStage(event.nativeEvent.layout.width)}>
-      <View
-        style={{
-          borderRadius: t.radius.md,
-          borderWidth: 1,
-          borderColor: t.color.borderSubtle,
-          backgroundColor: t.color.surface1,
-          overflow: "hidden",
-          minHeight: 160,
-          justifyContent: "center",
-        }}
-      >
-        {uri ? (
-          <Image
-            accessibilityLabel={label}
-            source={{ uri }}
-            resizeMode="contain"
-            style={{ width: drawWidth, height: Math.max(160, Math.round(drawWidth * aspect)) }}
-          />
-        ) : loading ? (
-          <Loading label="Rendering…" />
-        ) : (
-          placeholder ?? null
-        )}
-      </View>
-      {note ? <Text style={t.text.caption}>{note}</Text> : null}
-    </View>
-  );
-}
-
-/** List beside detail on a wide screen; one at a time on a phone. */
-export function SplitView({
-  list,
-  detail,
-  showDetail,
-  listWidth = 320,
-}: {
-  list: React.ReactNode;
-  detail: React.ReactNode;
-  showDetail: boolean;
-  listWidth?: number;
-}) {
-  const t = useTokens();
-  if (t.compact) return <View style={{ flex: 1 }}>{showDetail ? detail : list}</View>;
-  return (
-    <View style={{ flexDirection: "row", gap: t.space.lg, alignItems: "flex-start" }}>
-      {/* ponytail: fixed cap — a long list must not scroll the detail away;
-          go viewport-relative via useWindowDimensions if 640 ever feels wrong */}
-      <ScrollView style={{ width: listWidth, flexShrink: 0, maxHeight: 640 }}>{list}</ScrollView>
-      <View style={{ flex: 1, minWidth: 0 }}>{detail}</View>
+      {open ? <View style={{ gap: t.space.sm }}>{children}</View> : null}
     </View>
   );
 }

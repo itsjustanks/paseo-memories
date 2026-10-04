@@ -1,19 +1,35 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import React, { useEffect, useMemo, useState } from "react";
-import { View } from "react-native";
-import { PLAIN, isCodexInternal } from "../shared/plain";
+import { PLAIN, isCodexInternal, plainFindings } from "../shared/plain";
 import { AddNote } from "./add-note";
-import { QueryState, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
+import { QueryState, useCachedFindings, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
 import { ModeProvider, usePlain } from "./mode";
 import { Guide } from "./guide";
 import { onDestination, takeDestination, type Destination } from "./navigate";
-import { SectionHeading, TabBar, type SectionId } from "./navigation";
+import { TabBar, TabIntro, type SectionId } from "./navigation";
 import { Overview } from "./overview";
 import { SourcesTab, projectGroups, userGroups } from "./sources";
 import { TransferTab } from "./transfer";
-import { Button, Header, Screen, Tag, TokensProvider, useTokens, useUi } from "./ui";
+import { Button, Header, Screen, TokensProvider, useTokens, useUi, type Status } from "./ui";
 
 /** The Memories page: Overview · User · Projects · Import & Export · Guide. */
+
+/**
+ * The header's one line: which computer, and how its notes are doing. The
+ * tidy count comes from the checks the Overview already ran (read from the
+ * cache, never fetched here), so other tabs cost no extra scan.
+ */
+function useHeaderStatus(hostId: string, hostLabel: string, plain: boolean): { status: Status; caption: string } {
+  const inventory = useInventory(hostId);
+  const tidy = useCachedFindings(hostId).data;
+  const S = PLAIN.status;
+  if (!inventory.data) return inventory.error ? { status: "error", caption: S.cantRead(hostLabel) } : { status: "busy", caption: S.checking(hostLabel) };
+  if (inventory.data.counts.sources === 0) return { status: "neutral", caption: `${S.on(hostLabel)} · ${S.none}` };
+  if (!tidy) return { status: "neutral", caption: S.on(hostLabel) };
+  const shown = plain ? plainFindings(tidy.findings, inventory.data.sources) : tidy.findings;
+  const status: Status = shown.some((finding) => finding.severity === "error") ? "error" : shown.length ? "attention" : "ok";
+  return { status, caption: `${S.on(hostLabel)} · ${shown.length ? S.worth(shown.length) : S.tidy}` };
+}
 
 export function MemoriesSurface(props: PluginSurfaceProps) {
   const t = useUi(props.theme, props.layout.compact);
@@ -82,12 +98,16 @@ function MemoriesBody({ host }: PluginSurfaceProps) {
     return path ? (workspaces.data ?? []).find((entry) => entry.path === path || path.startsWith(`${entry.path}/`))?.id : undefined;
   };
   const addNote = (workspaceId?: string) => setAdding(workspaceId ? { workspaceId } : {});
+  const header = useHeaderStatus(hostId, host.label ?? hostId, plain);
+  const lists = tab === "overview" || tab === "user" || tab === "projects";
   return (
     <Screen t={t}>
       <Header
         title="Memories"
-        caption={`${plain ? PLAIN.header.caption : "What your coding agents remember"} · ${host.label ?? hostId}`}
-        pill={inventory.isFetching ? <Tag label={PLAIN.checking} tone="busy" /> : null}
+        icon="Brain"
+        status={header.status}
+        caption={header.caption}
+        trailing={lists ? <Button label={PLAIN.refresh} icon="RefreshCw" variant="ghost" onPress={() => void refreshAll()} loading={inventory.isFetching} /> : null}
       />
       <TabBar
         active={tab}
@@ -97,15 +117,21 @@ function MemoriesBody({ host }: PluginSurfaceProps) {
           if (next === "user" || next === "projects") setEntryKey(null);
         }}
       />
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: t.space.sm }}>
-        <View style={{ flex: 1 }}>
-          <SectionHeading section={tab} />
-        </View>
-        {!adding && (tab === "user" || tab === "projects") ? <Button label={PLAIN.overview.primary} onPress={() => addNote(tab === "projects" ? workspaceFor(sourceId) : undefined)} /> : null}
-        {tab === "overview" || tab === "user" || tab === "projects" ? <Button label="Refresh" variant="ghost" onPress={() => void refreshAll()} loading={inventory.isFetching} /> : null}
-      </View>
+      <TabIntro
+        key={tab}
+        section={tab}
+        actions={!adding && (tab === "user" || tab === "projects") ? <Button label={PLAIN.overview.primary} icon="Plus" onPress={() => addNote(tab === "projects" ? workspaceFor(sourceId) : undefined)} /> : null}
+      />
       {adding ? <AddNote key={adding.workspaceId ?? "everywhere"} hostId={hostId} {...(adding.workspaceId ? { workspaceId: adding.workspaceId } : {})} onClose={() => setAdding(null)} /> : null}
-      {!adding && tab === "overview" ? <Overview hostId={hostId} onOpen={open} onAddNote={() => addNote()} /> : null}
+      {!adding && tab === "overview" ? <Overview
+          hostId={hostId}
+          onOpen={open}
+          onAddNote={() => addNote()}
+          onGo={(next) => {
+            setAdding(null);
+            setTab(next);
+          }}
+        /> : null}
       {!adding && (tab === "user" || tab === "projects") ? (
         inventory.data ? (
           <SourcesTab

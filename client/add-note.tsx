@@ -88,9 +88,8 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
 
   if (result?.ok) {
     return (
-      <Card>
+      <Card title={A.title} icon="CircleCheck" iconTone="ok">
         <View style={{ gap: t.space.md }}>
-          <Text style={t.text.heading}>{A.title}</Text>
           <Notice tone="ok">
             <View style={{ gap: t.space.xs }}>
               <Text style={t.text.bodyStrong}>{result.message}</Text>
@@ -113,15 +112,11 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
   // Saved on Save: places the agent reads the note from, without the same note already.
   const fresh = preview?.targets.filter((target) => !target.blocked && target.duplicate !== "exact") ?? [];
   return (
-    <Card>
+    <Card title={A.title} icon="NotebookPen" trailing={<Button label="Back" icon="ArrowLeft" variant="ghost" onPress={onClose} />}>
       <View style={{ gap: t.space.md }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: t.space.sm }}>
-          <Text style={[t.text.heading, { flexShrink: 1 }]}>{A.title}</Text>
-          <Button label="Back" variant="ghost" onPress={onClose} />
-        </View>
         {preview ? (
           <View style={{ gap: t.space.md }}>
-            <Text style={t.text.bodyStrong}>{A.addsTo}</Text>
+            <Text style={t.text.heading}>{A.addsTo}</Text>
             <View style={{ gap: t.space.sm }}>
               {preview.targets.map((target) => (
                 <View key={target.id} style={{ gap: 2 }}>
@@ -142,10 +137,10 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
                 </View>
               ))}
               {preview.skipped.map((entry) => (
-                <Text key={entry.agent} style={t.text.caption}>{entry.covered ? entry.reason : `${A.skipped} ${plainAgent(entry.agent)}: ${entry.reason}`}</Text>
+                <Text key={entry.agent} style={t.text.body}>{entry.covered ? entry.reason : `${A.skipped} ${plainAgent(entry.agent)}: ${entry.reason}`}</Text>
               ))}
             </View>
-            <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.sm, padding: t.space.md }}>
+            <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.md, padding: t.space.md }}>
               <Text style={t.text.body}>{text.trim()}</Text>
             </View>
             {preview.warnings.map((warning) => (
@@ -153,7 +148,7 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
                 {warning}
               </Notice>
             ))}
-            {preview.targets.length > 0 && fresh.length === 0 ? <Text style={t.text.caption}>{A.nothingNew}</Text> : null}
+            {preview.targets.length > 0 && fresh.length === 0 ? <Text style={t.text.body}>{A.nothingNew}</Text> : null}
             <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
               <Button label={A.save} variant="primary" onPress={() => void save()} loading={busy === "save"} disabled={fresh.length === 0} />
               <Button label={A.edit} variant="ghost" onPress={() => setPreview(null)} />
@@ -163,11 +158,11 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
           <View style={{ gap: t.space.md }}>
             <Field label={A.what} value={text} onChangeText={setText} multiline minHeight={120} placeholder={A.whatPlaceholder} autoFocus />
             <View style={{ gap: t.space.sm }}>
-              <Text style={t.text.label}>{A.who}</Text>
+              <Text style={t.text.heading}>{A.who}</Text>
               <Segmented options={[{ value: "all", label: A.whoAll }, { value: "claude", label: A.whoClaude }, { value: "codex", label: A.whoCodex }]} value={who} onChange={setWho} />
             </View>
             <View style={{ gap: t.space.sm }}>
-              <Text style={t.text.label}>{A.where}</Text>
+              <Text style={t.text.heading}>{A.where}</Text>
               <Segmented
                 options={[{ value: "everywhere", label: A.everywhere }, { value: "project", label: A.onlyIn, disabled: workspaces.length === 0 }]}
                 value={where}
@@ -177,7 +172,7 @@ export function AddNote({ hostId, workspaceId: initialWorkspace, onClose }: { ho
               {workspaces.length === 0 && folders.data ? <Text style={t.text.caption}>{A.noProjects}</Text> : null}
             </View>
             <View style={{ flexDirection: "row" }}>
-              <Button label={A.next} variant="primary" onPress={() => void check()} loading={busy === "check"} disabled={!ready} />
+              <Button label={A.next} icon="Eye" variant="primary" onPress={() => void check()} loading={busy === "check"} disabled={!ready} />
             </View>
           </View>
         )}

@@ -30,11 +30,11 @@ function PlainPlanCard({ plan, showMissing }: { plan: LoadPlan; showMissing?: bo
   const P = PLAIN.panel;
   const shown = plan.items.filter((item) => (showMissing || item.when !== "missing") && !isCodexInternal(item) && item.kind !== "copilot-memory");
   return (
-    <Section title={`${plainAgent(plan.agent)} · ${P.readAtStart(plainWords(plan.total.tokens))}`}>
+    <Section title={`${plainAgent(plan.agent)} · ${P.readAtStart(plainWords(plan.total.tokens))}`} icon="Bot">
       <Card padded={false}>
         {shown.length === 0 ? (
           <View style={{ padding: t.space.md }}>
-            <Text style={t.text.caption}>{P.nothing}</Text>
+            <Text style={t.text.body}>{P.nothing}</Text>
           </View>
         ) : (
           shown.map((item, index) => (
@@ -60,12 +60,12 @@ function PlanCard({ plan, showMissing }: { plan: LoadPlan; showMissing?: boolean
   const shown = plan.items.filter((item) => showMissing || item.when !== "missing");
   const launch = shown.filter((item) => item.when === "launch").length;
   return (
-    <Section title={`${AGENT_LABELS[plan.agent] ?? plan.agent} · ${formatTokens(plan.total.tokens)} at launch`} trailing={<Tag label={`${launch} at launch`} />}>
+    <Section title={`${AGENT_LABELS[plan.agent] ?? plan.agent} · ${formatTokens(plan.total.tokens)} at launch`} icon="Bot" trailing={<Tag label={`${launch} at launch`} />}>
       {plan.configDir ? <Text style={t.text.caption}>{`Config folder: ${plan.configDir}`}</Text> : null}
       <Card padded={false}>
         {shown.length === 0 ? (
           <View style={{ padding: t.space.md }}>
-            <Text style={t.text.caption}>Nothing loads for this agent here.</Text>
+            <Text style={t.text.body}>Nothing loads for this agent here.</Text>
           </View>
         ) : (
           shown.map((item, index) => (
@@ -115,17 +115,18 @@ function WorkspacePanel({ theme, layout, host, workspaceId }: PluginWorkspacePan
   return (
     <Screen t={t}>
       <Header
+        panel
         title="Memories"
         caption={plain ? (query.data ? PLAIN.panel.caption(folderName(query.data.directory)) : PLAIN.panel.captionAny) : query.data ? `What an agent started in ${folderName(query.data.directory)} loads` : "What an agent started here loads"}
       />
       <QueryState query={query} what={plain ? "what agents read here" : "this workspace's memory"} />
-      {query.data && plans.length === 0 ? (plain ? <EmptyState title={PLAIN.panel.nothingHere.title} body={PLAIN.panel.nothingHere.body} /> : <EmptyState title="Nothing loads here" body={`Checked every agent's files for ${query.data.directory}: none apply.`} />) : null}
+      {query.data && plans.length === 0 ? (plain ? <EmptyState icon="Inbox" title={PLAIN.panel.nothingHere.title} body={PLAIN.panel.nothingHere.body} /> : <EmptyState title="Nothing loads here" body={`Checked every agent's files for ${query.data.directory}: none apply.`} />) : null}
       {plans.map((plan) => (
         <PlanCard key={plan.agent} plan={plan} />
       ))}
       {canOpenMemories() ? (
         <View style={{ flexDirection: "row" }}>
-          <Button label={PLAIN.panel.open} variant="ghost" onPress={() => openMemories({ tab: "projects" })} />
+          <Button label={PLAIN.panel.open} icon="Brain" variant="ghost" onPress={() => openMemories({ tab: "projects" })} />
         </View>
       ) : null}
     </Screen>
@@ -155,6 +156,7 @@ function AgentPanel({ theme, layout, host, workspaceId, agentId }: PluginAgentPa
   return (
     <Screen t={t}>
       <Header
+        panel
         title="Memories"
         caption={plain ? (provider ? PLAIN.panel.agentCaption(plainAgent(provider)) : PLAIN.panel.captionAny) : provider ? `What this ${AGENT_LABELS[provider] ?? provider} agent loads` : "What this agent loads"}
       />

@@ -1,5 +1,5 @@
 import { useRpc } from "@getpaseo/plugin/client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Text, View } from "react-native";
 import { AGENT_LABELS } from "../shared/agents";
@@ -8,16 +8,36 @@ import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, scopeLabel } from "../shared/labels";
 import { PLAIN, isCodexInternal, plainAgent, plainFinding, plainFindings, plainNextStep, plainWords, scanProgressNote } from "../shared/plain";
+import { OverviewGuide } from "./about";
 import { KEY, QueryState, useFindings, useInventory } from "./data";
 import { usePlain, useSourceNames } from "./mode";
-import { Button, Card, Disclosure, EmptyState, ErrorText, Facts, Field, Loading, PathText, Row, Section, Tag, useTokens, type Status } from "./ui";
+import type { SectionId } from "./navigation";
+import { Button, Card, Divider, ErrorText, Facts, Field, HeroCard, Link, Loading, PathText, Row, StatusLine, Tag, useTokens, type Status } from "./ui";
 
 /**
- * "What do my agents remember, and what needs tidying?" Totals per agent and
- * account, the top findings, exactly one next step, and a search box.
+ * "What do my agents remember, and what needs tidying?" The hero says the
+ * state in words with the totals per agent and the one next step; then the
+ * list of things worth a look, a search box, and the guide (what Memories is,
+ * how it works, how to use it, the words).
  */
 
 const TONE: Record<string, Status> = { error: "error", warn: "attention", info: "neutral" };
+
+type Props = { hostId: string; onOpen: (sourceId: string, key?: string) => void; onAddNote: () => void; onGo: (tab: SectionId) => void };
+type Hero = { tone: Status; icon: string; title: string; lead: string };
+
+/** The state in words, from the first thing worth a look (findings are sorted most serious first). */
+function heroFor(shown: Finding[], lead: string | undefined): Hero {
+  const first = shown[0];
+  if (!first) return { tone: "ok", icon: "CircleCheck", title: PLAIN.hero.tidy, lead: PLAIN.tidy.allGood.detail };
+  const tone = TONE[first.severity] ?? "neutral";
+  return { tone, icon: tone === "error" ? "ShieldAlert" : "ListChecks", title: tone === "error" ? PLAIN.hero.attention : PLAIN.hero.worth(shown.length), lead: lead ?? "" };
+}
+
+/** Before the checks answer: still checking, or they failed (the totals still show). */
+function waitingHero(failed: boolean): Hero {
+  return failed ? { tone: "attention", icon: "TriangleAlert", ...PLAIN.hero.checksFailed } : { tone: "neutral", icon: "Loader", ...PLAIN.hero.checking };
+}
 
 function FindingRow({ finding, first, onOpen }: { finding: Finding; first: boolean; onOpen: (action: FindingAction) => void }) {
   const t = useTokens();
@@ -29,8 +49,8 @@ function FindingRow({ finding, first, onOpen }: { finding: Finding; first: boole
       <Row
         first={first}
         tone={TONE[finding.severity] ?? "neutral"}
-        title={<Text style={t.text.body}>{words.title}</Text>}
-        meta={words.detail ? <Text style={t.text.caption}>{words.detail}</Text> : null}
+        title={<Text style={t.text.bodyStrong}>{words.title}</Text>}
+        meta={words.detail ? <Text style={t.text.body}>{words.detail}</Text> : null}
         trailing={finding.action?.sourceId ? <Button label={PLAIN.tidy.show} variant="ghost" onPress={() => onOpen(finding.action!)} /> : null}
       />
     );
@@ -43,6 +63,44 @@ function FindingRow({ finding, first, onOpen }: { finding: Finding; first: boole
       meta={finding.heuristic ? <Text style={t.text.caption}>A guess: check before acting on it.</Text> : null}
       trailing={finding.action?.sourceId ? <Button label={finding.action.kind === "delete" ? "Review" : "Open"} variant="ghost" onPress={() => onOpen(finding.action!)} /> : null}
     />
+  );
+}
+
+/** The bottom strip of a list card: padding, a rule above, and what it holds. */
+function CardFooter({ children }: { children: React.ReactNode }) {
+  const t = useTokens();
+  return <View style={{ gap: t.space.xs, paddingVertical: t.space.md, paddingHorizontal: t.compact ? t.space.md : t.space.lg, borderTopWidth: 1, borderTopColor: t.color.borderSubtle }}>{children}</View>;
+}
+
+/** Up to five things worth a look, the rest behind "N more", and the lines that say what was checked. */
+function TidyCard({ title, findings, none, notes, onOpen }: { title: string; findings: Finding[] | null; none: string; notes: string[]; onOpen: (action: FindingAction) => void }) {
+  const t = useTokens();
+  const [all, setAll] = useState(false);
+  const count = findings?.length ?? 0;
+  const tone: Status = findings?.some((finding) => finding.severity === "error") ? "error" : count ? "attention" : "ok";
+  return (
+    <Card padded={false} title={title} icon="ListChecks" {...(findings ? { iconTone: tone } : {})} trailing={findings ? <Tag label={String(count)} tone={tone} /> : null}>
+      {findings && count ? findings.slice(0, all ? 100 : 5).map((finding, index) => <FindingRow key={finding.id} finding={finding} first={index === 0} onOpen={onOpen} />) : null}
+      {findings && count > 5 ? (
+        <CardFooter>
+          <Link label={all ? PLAIN.tidy.fewer : PLAIN.tidy.more(count - 5)} onPress={() => setAll(!all)} />
+        </CardFooter>
+      ) : null}
+      {findings && !count ? (
+        <View style={{ padding: t.compact ? t.space.md : t.space.lg }}>
+          <Text style={t.text.body}>{none}</Text>
+        </View>
+      ) : null}
+      {notes.length ? (
+        <CardFooter>
+          {notes.map((line) => (
+            <Text key={line} style={t.text.caption}>
+              {line}
+            </Text>
+          ))}
+        </CardFooter>
+      ) : null}
+    </Card>
   );
 }
 
@@ -59,20 +117,20 @@ function SearchBox({ hostId, onOpen }: { hostId: string; onOpen: (sourceId: stri
   const internal = new Set((inventory.data?.sources ?? []).filter(isCodexInternal).map((source) => source.id));
   const hits = (results.data?.results ?? []).filter((hit) => !plain || !internal.has(hit.sourceId));
   return (
-    <Section title={plain ? PLAIN.search.title : "Search"}>
+    <Card title={plain ? PLAIN.search.title : "Search"} icon="Search">
       <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-end" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Field value={draft} onChangeText={setDraft} placeholder={plain ? PLAIN.search.placeholder : "Search every memory and instruction file, e.g. webhooks"} />
         </View>
-        <Button label={PLAIN.search.button} onPress={() => setQuery(draft.trim())} disabled={!draft.trim()} />
+        <Button label={PLAIN.search.button} icon="Search" onPress={() => setQuery(draft.trim())} disabled={!draft.trim()} />
       </View>
       {results.isFetching ? <Loading label={PLAIN.search.busy} /> : null}
       {results.error ? <ErrorText>{plainError(results.error)}</ErrorText> : null}
       {results.data ? (
         <View style={{ gap: t.space.sm }}>
-          {plain ? (hits.length ? null : <Text style={t.text.caption}>{`No note mentions "${results.data.query}".`}</Text>) : <Text style={t.text.caption}>{results.data.checked}</Text>}
+          {plain ? (hits.length ? null : <Text style={t.text.body}>{`No note mentions "${results.data.query}".`}</Text>) : <Text style={t.text.caption}>{results.data.checked}</Text>}
           {hits.length ? (
-            <Card padded={false}>
+            <Card padded={false} level={2}>
               {hits.map((hit, index) => (
                 <Row
                   key={`${hit.sourceId}#${hit.key}`}
@@ -87,7 +145,7 @@ function SearchBox({ hostId, onOpen }: { hostId: string; onOpen: (sourceId: stri
           ) : null}
         </View>
       ) : null}
-    </Section>
+    </Card>
   );
 }
 
@@ -97,12 +155,47 @@ function useHostId(): string {
   return React.useContext(HostContext);
 }
 
-export function Overview(props: { hostId: string; onOpen: (sourceId: string, key?: string) => void; onAddNote: () => void }) {
+export function Overview(props: Props) {
   const plain = usePlain();
-  return <HostContext.Provider value={props.hostId}>{plain ? <PlainOverview {...props} /> : <TechnicalOverview {...props} />}</HostContext.Provider>;
+  const inventory = useInventory(props.hostId);
+  // The agents with notes here, for "What is Memories?".
+  const agents = [...new Set((inventory.data?.accounts ?? []).filter((account) => account.exists && inventory.data!.sources.some((source) => source.accountId === account.id && source.exists)).map((account) => plainAgent(account.agent)))];
+  return (
+    <HostContext.Provider value={props.hostId}>
+      {plain ? <PlainOverview {...props} /> : <TechnicalOverview {...props} />}
+      <OverviewGuide agents={agents} onGuide={() => props.onGo("guide")} />
+    </HostContext.Provider>
+  );
 }
 
-function PlainOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: (sourceId: string, key?: string) => void; onAddNote: () => void }) {
+/** Before the first answer: the hero says it is reading, or why it couldn't, with a way to try again. */
+function FirstLoad({ query }: { query: UseQueryResult<unknown> }) {
+  const t = useTokens();
+  if (!query.error) return <HeroCard tone="neutral" icon="Loader" title={PLAIN.hero.loading.title} lead={PLAIN.hero.loading.lead} />;
+  return (
+    <HeroCard tone="error" icon="CircleAlert" title={PLAIN.hero.cantRead} lead={plainError(query.error)}>
+      <View style={{ flexDirection: "row", gap: t.space.sm }}>
+        <Button label={PLAIN.hero.tryAgain} icon="RefreshCw" variant="primary" loading={query.isFetching} onPress={() => void query.refetch()} />
+      </View>
+    </HeroCard>
+  );
+}
+
+/** The actions under every hero: the next step when there is one, and Add a note. */
+function HeroActions({ show, onShow, onAddNote }: { show: boolean; onShow: () => void; onAddNote: () => void }) {
+  const t = useTokens();
+  return (
+    <>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
+        {show ? <Button label={PLAIN.tidy.show} icon="ArrowRight" variant="primary" onPress={onShow} /> : null}
+        <Button label={PLAIN.overview.primary} icon="Plus" variant={show ? "secondary" : "primary"} onPress={onAddNote} />
+      </View>
+      <Text style={t.text.caption}>{PLAIN.overview.primaryHint}</Text>
+    </>
+  );
+}
+
+function PlainOverview({ hostId, onOpen, onAddNote, onGo }: Props) {
   const t = useTokens();
   const inventory = useInventory(hostId);
   const findings = useFindings(hostId);
@@ -110,19 +203,14 @@ function PlainOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: 
   const inv = inventory.data;
   const tidy = findings.data;
   const O = PLAIN.overview;
-  const add = (
-    <Card>
-      <View style={{ gap: t.space.sm }}>
-        <Text style={t.text.heading}>{O.primary}</Text>
-        <Text style={t.text.body}>{O.primaryHint}</Text>
-        <View style={{ flexDirection: "row" }}>
-          <Button label={O.primary} variant="primary" onPress={onAddNote} />
-        </View>
-      </View>
-    </Card>
-  );
-  if (!inv) return <QueryState query={inventory} what="what your agents remember" />;
-  if (inv.counts.sources === 0) return <View style={{ gap: t.space.lg }}>{add}<EmptyState title={PLAIN.nothingYet.title} body={PLAIN.nothingYet.body} /></View>;
+  if (!inv) return <FirstLoad query={inventory} />;
+  if (inv.counts.sources === 0) {
+    return (
+      <HeroCard tone="neutral" icon="Sparkles" title={PLAIN.nothingYet.title} lead={PLAIN.nothingYet.body}>
+        <HeroActions show={false} onShow={() => undefined} onAddNote={onAddNote} />
+      </HeroCard>
+    );
+  }
   const openAction = (action: FindingAction) => action.sourceId && onOpen(action.sourceId, action.key === "MEMORY.md" ? undefined : action.key);
   // Counted from the sources, leaving out Codex's own working files.
   const listed = inv.sources.filter((source) => !isCodexInternal(source));
@@ -134,81 +222,48 @@ function PlainOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: 
     })
     .filter((row) => row.account.exists && row.files > 0);
   const projectFiles = count(listed.filter((source) => source.scope === "project" && !source.accountId));
-  const shown = plainFindings(tidy?.findings ?? [], inv.sources);
+  const shown = tidy ? plainFindings(tidy.findings, inv.sources) : [];
   const next = tidy ? plainNextStep(tidy.nextStep, shown[0], shown.length, names.byId) : null;
   const scanNote = tidy ? scanProgressNote(tidy.symbolScan) : null;
   const notes = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
+  const hero = tidy ? heroFor(shown, next?.title) : waitingHero(Boolean(findings.error));
+  const action = shown[0]?.action?.sourceId ? shown[0].action : null;
   return (
-    <View style={{ gap: t.space.lg }}>
+    <>
       <QueryState query={inventory} what="what your agents remember" />
-      {add}
-      <Card tone={shown.length ? "attention" : "ok"}>
-        <Text style={t.text.label}>{O.nextStep}</Text>
-        {tidy && next ? (
-          <>
-            <Text style={t.text.heading}>{next.title}</Text>
-            <Text style={t.text.body}>{next.detail}</Text>
-            {shown[0]?.action?.sourceId ? (
-              <View style={{ flexDirection: "row" }}>
-                <Button label={PLAIN.tidy.show} variant="primary" onPress={() => openAction(shown[0]!.action!)} />
-              </View>
-            ) : null}
-          </>
-        ) : (
-          <QueryState query={findings} what="the checks" />
-        )}
-      </Card>
-      <Section title={O.remember}>
-        <Card padded={false}>
-          {accountRows.map((row, index) => (
-            <Row
-              key={row.account.id}
-              first={index === 0}
-              title={`${plainAgent(row.account.agent)}${row.account.origin !== "default" ? ` · ${row.account.email ?? row.account.label}` : ""}`}
-              meta={<Facts items={[{ value: notes(row.files) }, { value: O.readAtStart(plainWords(row.tokens)) }]} />}
-            />
+      <HeroCard tone={hero.tone} icon={hero.icon} title={hero.title} lead={hero.lead}>
+        <Text style={t.text.label}>{O.remember}</Text>
+        <View style={{ gap: 6 }}>
+          {accountRows.map((row) => (
+            <StatusLine key={row.account.id} label={`${plainAgent(row.account.agent)}${row.account.origin !== "default" ? ` · ${row.account.email ?? row.account.label}` : ""}`} value={notes(row.files)} status="neutral" hint={O.readAtStart(plainWords(row.tokens))} />
           ))}
-          <Row first={accountRows.length === 0} title={O.projectNotes} subtitle={O.projectNotesHint} meta={<Facts items={[{ value: notes(projectFiles) }]} />} />
-        </Card>
-      </Section>
-      <Section title={PLAIN.tidy.title} trailing={tidy ? <Tag label={String(shown.length)} tone={shown.length ? "attention" : "ok"} /> : null}>
-        {tidy ? (
-          shown.length ? (
-            <>
-              <Card padded={false}>
-                {shown.slice(0, 5).map((finding, index) => (
-                  <FindingRow key={finding.id} finding={finding} first={index === 0} onOpen={openAction} />
-                ))}
-              </Card>
-              {shown.length > 5 ? (
-                <Disclosure title={PLAIN.tidy.more(shown.length - 5)}>
-                  <Card padded={false}>
-                    {shown.slice(5, 100).map((finding, index) => (
-                      <FindingRow key={finding.id} finding={finding} first={index === 0} onOpen={openAction} />
-                    ))}
-                  </Card>
-                </Disclosure>
-              ) : null}
-            </>
-          ) : (
-            <Text style={t.text.caption}>{PLAIN.tidy.none}</Text>
-          )
-        ) : null}
-        {scanNote ? <Text style={t.text.caption}>{scanNote}</Text> : null}
-      </Section>
+          <StatusLine label={O.projectNotes} value={notes(projectFiles)} status="neutral" hint={O.projectNotesHint} action={{ label: PLAIN.tabLabels.projects, onPress: () => onGo("projects") }} />
+        </View>
+        <Divider />
+        {tidy && shown.length && next ? <Text style={t.text.body}>{next.detail}</Text> : null}
+        {!tidy ? <QueryState query={findings} what="the checks" /> : null}
+        <HeroActions show={Boolean(action)} onShow={() => action && openAction(action)} onAddNote={onAddNote} />
+      </HeroCard>
+      <TidyCard title={PLAIN.tidy.title} findings={tidy ? shown : null} none={PLAIN.tidy.none} notes={scanNote ? [scanNote] : []} onOpen={openAction} />
       <SearchBox hostId={hostId} onOpen={onOpen} />
-    </View>
+    </>
   );
 }
 
-function TechnicalOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOpen: (sourceId: string, key?: string) => void; onAddNote: () => void }) {
+function TechnicalOverview({ hostId, onOpen, onAddNote }: Props) {
   const t = useTokens();
   const inventory = useInventory(hostId);
   const findings = useFindings(hostId);
   const inv = inventory.data;
   const tidy = findings.data;
-  if (!inv) return <QueryState query={inventory} what="what your agents remember" />;
-  if (inv.counts.sources === 0) return <EmptyState title="Nothing to show yet" body={inv.checked[0] ?? "No agent on this host has written memory or instruction files yet."} />;
+  if (!inv) return <FirstLoad query={inventory} />;
+  if (inv.counts.sources === 0) {
+    return (
+      <HeroCard tone="neutral" icon="Sparkles" title="Nothing to show yet" lead={inv.checked[0] ?? "No agent on this host has written memory or instruction files yet."}>
+        <HeroActions show={false} onShow={() => undefined} onAddNote={onAddNote} />
+      </HeroCard>
+    );
+  }
   const openAction = (action: FindingAction) => action.sourceId && onOpen(action.sourceId, action.key === "MEMORY.md" ? undefined : action.key);
   const accountRows = inv.accounts
     .map((account) => {
@@ -217,87 +272,47 @@ function TechnicalOverview({ hostId, onOpen, onAddNote }: { hostId: string; onOp
     })
     .filter((row) => row.account.exists && row.files > 0);
   const projectFiles = inv.groups.filter((group) => group.scope === "project" && !group.accountId);
+  const hero = tidy ? heroFor(tidy.findings, tidy.nextStep.title) : waitingHero(Boolean(findings.error));
+  const action = tidy?.nextStep.action?.sourceId ? tidy.nextStep.action : null;
   return (
-    <View style={{ gap: t.space.lg }}>
+    <>
       <QueryState query={inventory} what="what your agents remember" />
-      <View style={{ flexDirection: "row" }}>
-        <Button label={PLAIN.overview.primary} variant="primary" onPress={onAddNote} />
-      </View>
-      <Card tone={tidy?.findings.length ? "attention" : "ok"}>
-        <Text style={t.text.label}>NEXT STEP</Text>
-        {tidy ? (
-          <>
-            <Text style={t.text.heading}>{tidy.nextStep.title}</Text>
-            <Text style={t.text.body}>{tidy.nextStep.detail}</Text>
-            {tidy.nextStep.action?.sourceId ? (
-              <View style={{ flexDirection: "row" }}>
-                <Button label="Show me" variant="primary" onPress={() => openAction(tidy.nextStep.action!)} />
-              </View>
-            ) : null}
-          </>
-        ) : (
-          <QueryState query={findings} what="the tidy checks" />
-        )}
-      </Card>
-      <Section title="What your agents remember">
+      <HeroCard tone={hero.tone} icon={hero.icon} title={hero.title} lead={hero.lead}>
         <Text style={t.text.body}>
           {`${plural(inv.counts.claudeMemoryFiles, "Claude memory file")} in ${plural(inv.counts.claudeMemoryFolders, "project")}, ${plural(inv.counts.codexHomes, "Codex home")}, ${plural(inv.counts.sources, "source")} in all (${formatBytes(inv.counts.bytes)}).`}
         </Text>
-        <Card padded={false}>
-          {accountRows.map((row, index) => (
-            <Row
-              key={row.account.id}
-              first={index === 0}
-              title={`${AGENT_LABELS[row.account.agent] ?? row.account.agent}${row.account.email ? ` · ${row.account.email}` : ""}`}
-              subtitle={<PathText path={row.account.dir} />}
-              meta={<Facts items={[{ value: plural(row.files, "file") }, { value: formatBytes(row.bytes) }, { value: `${formatTokens(row.tokens)} at launch` }]} />}
-              trailing={row.account.origin === "default" ? null : <Tag label={row.account.origin === "agent-link" ? "AgentLink" : row.account.origin === "provider-env" ? "Provider" : "Slot"} />}
-            />
-          ))}
+        <Divider />
+        {tidy && tidy.findings.length ? <Text style={t.text.body}>{tidy.nextStep.detail}</Text> : null}
+        {!tidy ? <QueryState query={findings} what="the tidy checks" /> : null}
+        <HeroActions show={Boolean(action)} onShow={() => action && openAction(action)} onAddNote={onAddNote} />
+      </HeroCard>
+      <Card padded={false} title="What your agents remember" icon="Brain">
+        {accountRows.map((row, index) => (
           <Row
-            first={accountRows.length === 0}
-            title="Project files"
-            subtitle="CLAUDE.md, AGENTS.md and the like inside your projects"
-            meta={<Facts items={[{ value: plural(projectFiles.reduce((sum, group) => sum + group.files, 0), "file") }, { value: formatBytes(projectFiles.reduce((sum, group) => sum + group.bytes, 0)) }]} />}
+            key={row.account.id}
+            first={index === 0}
+            title={`${AGENT_LABELS[row.account.agent] ?? row.account.agent}${row.account.email ? ` · ${row.account.email}` : ""}`}
+            subtitle={<PathText path={row.account.dir} />}
+            meta={<Facts items={[{ value: plural(row.files, "file") }, { value: formatBytes(row.bytes) }, { value: `${formatTokens(row.tokens)} at launch` }]} />}
+            trailing={row.account.origin === "default" ? null : <Tag label={row.account.origin === "agent-link" ? "AgentLink" : row.account.origin === "provider-env" ? "Provider" : "Slot"} />}
           />
-        </Card>
-        {[...inv.checked, ...inv.notes].map((line) => (
-          <Text key={line} style={t.text.caption}>
-            {line}
-          </Text>
         ))}
-      </Section>
-      <Section title="Needs tidying" trailing={tidy ? <Tag label={String(tidy.findings.length)} tone={tidy.findings.length ? "attention" : "ok"} /> : null}>
-        {tidy ? (
-          tidy.findings.length ? (
-            <>
-              <Card padded={false}>
-                {tidy.findings.slice(0, 5).map((finding, index) => (
-                  <FindingRow key={finding.id} finding={finding} first={index === 0} onOpen={openAction} />
-                ))}
-              </Card>
-              {tidy.findings.length > 5 ? (
-                <Disclosure title={`${tidy.findings.length - 5} more`}>
-                  <Card padded={false}>
-                    {tidy.findings.slice(5, 100).map((finding, index) => (
-                      <FindingRow key={finding.id} finding={finding} first={index === 0} onOpen={openAction} />
-                    ))}
-                  </Card>
-                </Disclosure>
-              ) : null}
-            </>
-          ) : (
-            <Text style={t.text.caption}>{tidy.checked[0]} Nothing needs tidying.</Text>
-          )
-        ) : null}
-        {tidy ? <Text style={t.text.caption}>{tidy.symbolScan.note}</Text> : null}
-        {(tidy?.notes ?? []).map((note) => (
-          <Text key={note} style={t.text.caption}>
-            {note}
-          </Text>
-        ))}
-      </Section>
+        <Row
+          first={accountRows.length === 0}
+          title="Project files"
+          subtitle="CLAUDE.md, AGENTS.md and the like inside your projects"
+          meta={<Facts items={[{ value: plural(projectFiles.reduce((sum, group) => sum + group.files, 0), "file") }, { value: formatBytes(projectFiles.reduce((sum, group) => sum + group.bytes, 0)) }]} />}
+        />
+        <CardFooter>
+          {[...inv.checked, ...inv.notes].map((line) => (
+            <Text key={line} style={t.text.caption}>
+              {line}
+            </Text>
+          ))}
+        </CardFooter>
+      </Card>
+      <TidyCard title="Needs tidying" findings={tidy ? tidy.findings : null} none={`${tidy?.checked[0] ?? ""} Nothing needs tidying.`.trim()} notes={tidy ? [tidy.symbolScan.note, ...tidy.notes] : []} onOpen={openAction} />
       <SearchBox hostId={hostId} onOpen={onOpen} />
-    </View>
+    </>
   );
 }

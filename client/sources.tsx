@@ -7,7 +7,7 @@ import { folderName, kindLabel, shortPath } from "../shared/labels";
 import { PLAIN, plainAgent, plainAgents, plainWords } from "../shared/plain";
 import { SourceDetail } from "./detail";
 import { usePlain, useSourceNames } from "./mode";
-import { Card, EmptyState, Facts, PathText, Row, Section, Tag, useTokens } from "./ui";
+import { Button, Card, EmptyState, Facts, PathText, Row, Section, Tag, useTokens } from "./ui";
 
 /**
  * User and Projects: a list of sources on the left, the chosen one on the
@@ -16,7 +16,7 @@ import { Card, EmptyState, Facts, PathText, Row, Section, Tag, useTokens } from 
  * Claude memory for projects whose path is unknown.
  */
 
-type Group = { key: string; title: string; caption?: string; path?: string; sources: Source[] };
+type Group = { key: string; title: string; icon: string; caption?: string; path?: string; sources: Source[] };
 
 function accountTitle(account: Account | undefined, agent: string): string {
   const name = AGENT_LABELS[agent] ?? agent;
@@ -38,7 +38,8 @@ export function userGroups(sources: Source[], accounts: Account[], plain = false
     const title = plain
       ? source.scope === "managed" ? "Set by your organisation" : source.scope === "host" ? "Every agent on this computer" : plainAccountTitle(account, source.agent)
       : source.scope === "managed" ? "Managed by your organisation" : source.scope === "host" ? "Paseo (every agent on this host)" : accountTitle(account, source.agent);
-    const group = groups.get(key) ?? { key, title, ...(account && !plain ? { path: account.dir } : {}), sources: [] };
+    const icon = source.scope === "managed" ? "Building2" : source.scope === "host" ? "Monitor" : "Bot";
+    const group = groups.get(key) ?? { key, title, icon, ...(account && !plain ? { path: account.dir } : {}), sources: [] };
     group.sources.push(source);
     groups.set(key, group);
   }
@@ -56,7 +57,7 @@ export function projectGroups(sources: Source[], workspaces: Array<{ name: strin
     const unknown = plain
       ? { title: "Projects not found on this computer", caption: "Claude kept notes for these, but their project folders aren't here." }
       : { title: "Other projects (path unknown)", caption: "Claude keeps these by a folder name that cannot be turned back into a path." };
-    const group = groups.get(key) ?? { key, rank, title: path ? (workspace ? workspace.name : folderName(path)) : unknown.title, ...(path ? (plain ? {} : { path }) : { caption: unknown.caption }), sources: [] };
+    const group = groups.get(key) ?? { key, rank, title: path ? (workspace ? workspace.name : folderName(path)) : unknown.title, icon: path ? "FolderCode" : "FolderSearch", ...(path ? (plain ? {} : { path }) : { caption: unknown.caption }), sources: [] };
     group.rank = Math.min(group.rank, rank);
     group.sources.push(source);
     groups.set(key, group);
@@ -132,11 +133,11 @@ export function SourcesTab({
   const plain = usePlain();
   const names = useSourceNames(hostId);
   const total = useMemo(() => groups.reduce((sum, group) => sum + group.sources.length, 0), [groups]);
-  if (total === 0) return <EmptyState title={PLAIN.nothingYet.title} body={empty} />;
+  if (total === 0) return <EmptyState icon="Sparkles" title={PLAIN.nothingYet.title} body={empty} />;
   const list = (
     <View style={{ gap: t.space.lg }}>
       {groups.map((group) => (
-        <Section key={group.key} title={group.title} trailing={<Tag label={String(group.sources.length)} />}>
+        <Section key={group.key} title={group.title} icon={group.icon} trailing={<Tag label={String(group.sources.length)} />}>
           {group.path ? <PathText path={group.path} /> : group.caption ? <Text style={t.text.caption}>{group.caption}</Text> : null}
           <Card padded={false}>
             {group.sources.map((source, index) =>
@@ -153,17 +154,21 @@ export function SourcesTab({
   );
   const detail = selected ? (
     <View style={{ gap: t.space.sm }}>
-      {t.compact ? <Text style={[t.text.caption, { color: t.color.accent }]} onPress={() => onSelect(null)}>{PLAIN.back}</Text> : null}
+      {t.compact ? (
+        <View style={{ flexDirection: "row" }}>
+          <Button label={PLAIN.back} icon="ArrowLeft" variant="ghost" onPress={() => onSelect(null)} />
+        </View>
+      ) : null}
       <SourceDetail key={selected} hostId={hostId} sourceId={selected} entryKey={entryKey} onOpenEntry={onOpenEntry} onCopy={onCopy} />
     </View>
   ) : (
-    <EmptyState title={PLAIN.pickLeft.title} body={plain ? PLAIN.pickLeft.body : "Each row is one file or folder an agent reads. Open one to see what it says, who reads it and what it costs at launch."} />
+    <EmptyState icon="PanelLeft" title={PLAIN.pickLeft.title} body={plain ? PLAIN.pickLeft.body : "Each row is one file or folder an agent reads. Open one to see what it says, who reads it and what it costs at launch."} />
   );
   if (t.compact) return selected ? detail : list;
   // Two columns: a fixed list, the detail gets the rest (the page itself scrolls).
   return (
     <View style={{ flexDirection: "row", gap: t.space.lg, alignItems: "flex-start" }}>
-      <View style={{ width: 360, flexShrink: 0 }}>{list}</View>
+      <View style={{ width: 320, flexShrink: 0 }}>{list}</View>
       <View style={{ flex: 1, minWidth: 0 }}>{detail}</View>
     </View>
   );

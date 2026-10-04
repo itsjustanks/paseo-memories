@@ -25,12 +25,12 @@ Update with `paseo plugin update paseo-memories`. Memories are per daemon: to mo
 
 ## What it does
 
-- **Memories** in the sidebar, with five tabs:
-  - **Overview**: what each agent and account remembers (files, size, ≈tokens loaded at launch), the top things to tidy, exactly one next step, and a search across every memory and instruction file.
+- **Memories** in the sidebar (a native screen and sidebar row on Paseo 0.11+), with five tabs. Each opens with a plain intro and "What you can do here":
+  - **Overview**: a status card with what each agent and account remembers (files, size, ≈tokens loaded at launch) and exactly one next step, then the top things to tidy, a search across every memory and instruction file, and a short guide (what Memories is, how it works, how to use it, the words it uses).
   - **User**: files every agent of yours reads, grouped by agent and account (default folders, AgentLink slots, Paseo providers with their own `CLAUDE_CONFIG_DIR` / `CODEX_HOME`).
   - **Projects**: Paseo's workspaces first, then other known folders, then Claude memory for projects whose path is unknown. Each source opens a viewer or editor; Claude memories can be created, edited, renamed, deleted, copied and moved.
   - **Import & Export**: paste or pick files (a bundle, markdown split at its headings, Claude memory files, claude.ai `[date] - text` lines, Cursor `.mdc` rules), preview the diff and duplicates, then save the items you tick. Export a bundle or markdown, secrets hidden unless you include them.
-  - **Guide**: how each agent loads memory, with the real numbers.
+  - **Guide**: how each agent loads memory, with the real numbers, and links to each agent's own docs on Paseo 0.10+.
 - **Workspace panel**: what an agent started in this workspace loads, per provider, in order, with sizes and ≈tokens. **Agent panel**: the same for one agent's provider and account.
 - **Tidy checks** (plain code, no LLM): exact and near duplicates, possible conflicts (labelled a guess), paths and code names that no longer exist, `MEMORY.md` lines that point nowhere or files missing from it, over-limit files, values that look like secrets, and a pending Codex clean-up. Each comes with one suggested action.
 
@@ -74,7 +74,7 @@ npm run smoke       # read-only inventory, findings and export of your real HOME
 npm run preview:ui  # fixture preview at 127.0.0.1:43299 (PREVIEW_PORT to change)
 ```
 
-Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`.
+Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`, `?nolinks` (an app without `openExternalUrl`).
 
 Client bundle check (Paseo's esbuild; no `node:` import may be reachable from `client/`):
 

@@ -1,37 +1,52 @@
-import * as HostRN from "@getpaseo/plugin/client/react-native";
-import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import React, { useState } from "react";
+import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from "react-native";
 import { PLAIN } from "../shared/plain";
 import { usePlain } from "./mode";
-import { useTokens } from "./ui";
+import { Bullets, Disclosure, HostIcon, IconBadge, TYPE, useTokens } from "./ui";
 
 /**
  * Five sections, one job each, in one row. Icons are Lucide names drawn by the
- * Paseo app; `heading` is the one line under the bar saying what the section
- * is for. Copied from paseo-mcp 0.11.0 `client/navigation.tsx`.
+ * Paseo app. Plain mode takes its labels and intros from `PLAIN`; technical
+ * mode keeps the file-level words (`label`, `title`, `heading`). "What you can
+ * do here" is the same plain list in both, unless a tab has its own `canDo`.
  */
 export const TABS = [
-  { id: "overview", label: "Overview", icon: "LayoutDashboard", heading: "What your agents remember on this host, and the one thing to tidy next." },
-  { id: "user", label: "User", icon: "User", heading: "Files every agent of yours reads, in every project: per agent and per account." },
-  { id: "projects", label: "Projects", icon: "FolderCode", heading: "What each project adds: its instruction files and Claude's auto memory for it." },
-  { id: "transfer", label: "Import & Export", icon: "ArrowLeftRight", heading: "Bring memories in from another agent or a file, or keep a copy out." },
-  { id: "guide", label: "Guide", icon: "BookOpen", heading: "Where each agent keeps what it remembers, what loads when, and what is safe to edit." },
+  { id: "overview", label: "Overview", icon: "LayoutDashboard", title: "Overview", heading: "What your agents remember on this host, and the one thing to tidy next." },
+  { id: "user", label: "User", icon: "User", title: "User files", heading: "Files every agent of yours reads, in every project: per agent and per account." },
+  { id: "projects", label: "Projects", icon: "FolderCode", title: "Project files", heading: "What each project adds: its instruction files and Claude's auto memory for it." },
+  { id: "transfer", label: "Import & Export", icon: "ArrowLeftRight", title: "Import & Export", heading: "Bring memories in from another agent or a file, or keep a copy out." },
+  {
+    id: "guide",
+    label: "Guide",
+    icon: "BookOpen",
+    title: "Guide",
+    heading: "Where each agent keeps what it remembers, what loads when, and what is safe to edit.",
+    // Technical mode shows the reference only, not the how-tos.
+    canDo: ["See what each agent reads, in what order, and how much", "Learn what can't be edited here, and why", "See how a save keeps a backup and checks its work"],
+  },
 ] as const;
 
 export type SectionId = (typeof TABS)[number]["id"];
 
-/** The app's icon component, when the host provides one; looked up at runtime so an app without it still renders the bar. */
-const HostIcon = (HostRN as unknown as { Icon?: React.ComponentType<{ name: string; size?: number; color?: string }> }).Icon;
+/** About what one tab needs with its label (icon, name, padding); five need ~620 px. */
+const LABELLED_TAB_WIDTH = 124;
 
 /**
- * An underline tab bar in one row. Narrow screens show every section's icon
- * and the active one's label beside its icon, so nothing is hidden. Without
- * app icons, the labels scroll sideways instead.
+ * An underline tab bar in one row. When the labels do not fit (a phone, or a
+ * half-width window, measured here), every tab shows its icon and the active
+ * tab its label beside it, so nothing is cut off. Without app icons, the
+ * labels scroll sideways instead.
  */
 export function TabBar({ active, onSelect }: { active: SectionId; onSelect: (id: SectionId) => void }) {
   const t = useTokens();
   const plain = usePlain();
-  const iconsOnly = t.compact && Boolean(HostIcon);
+  const [width, setWidth] = useState<number | null>(null);
+  const tight = t.compact || (width !== null && width < TABS.length * LABELLED_TAB_WIDTH);
+  const iconsOnly = tight && Boolean(HostIcon);
+  const onLayout = (event: LayoutChangeEvent) => {
+    const next = Math.round(event.nativeEvent.layout.width);
+    if (next !== width) setWidth(next);
+  };
   const items = TABS.map((tab) => {
     const selected = tab.id === active;
     const label = plain ? PLAIN.tabLabels[tab.id] : tab.label;
@@ -50,8 +65,8 @@ export function TabBar({ active, onSelect }: { active: SectionId; onSelect: (id:
           alignItems: "center",
           justifyContent: "center",
           gap: 6,
-          minHeight: t.compact ? 44 : 40,
-          paddingHorizontal: t.compact ? 10 : 12,
+          minHeight: 44,
+          paddingHorizontal: t.compact ? 8 : 11,
           marginBottom: -1,
           borderBottomWidth: 2,
           borderBottomColor: selected ? t.color.accent : "transparent",
@@ -61,18 +76,17 @@ export function TabBar({ active, onSelect }: { active: SectionId; onSelect: (id:
       >
         {HostIcon ? <HostIcon name={tab.icon} size={16} color={color} /> : null}
         {!iconsOnly || selected ? (
-          <Text numberOfLines={1} style={{ color: selected ? t.color.accent : t.color.fg, fontSize: 13, fontWeight: selected ? "700" : "500" }}>
+          <Text numberOfLines={1} style={{ ...TYPE.secondary, color: selected ? t.color.accent : t.color.fg, fontWeight: selected ? "700" : "500" }}>
             {label}
           </Text>
         ) : null}
       </Pressable>
     );
   });
-  const bar = { flexDirection: "row" as const, borderBottomWidth: 1, borderBottomColor: t.color.border };
-  if (t.compact && !HostIcon) {
+  if (tight && !HostIcon) {
     // The rule sits on a wrapper: a horizontal ScrollView does not draw its own bottom border on the web.
     return (
-      <View style={{ borderBottomWidth: 1, borderBottomColor: t.color.border }}>
+      <View onLayout={onLayout} style={{ borderBottomWidth: 1, borderBottomColor: t.color.border }}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} accessibilityRole="tablist" accessibilityLabel="Memories sections" style={{ flexGrow: 0 }}>
           {items}
         </ScrollView>
@@ -80,16 +94,47 @@ export function TabBar({ active, onSelect }: { active: SectionId; onSelect: (id:
     );
   }
   return (
-    <View accessibilityRole="tablist" accessibilityLabel="Memories sections" style={bar}>
+    <View accessibilityRole="tablist" accessibilityLabel="Memories sections" onLayout={onLayout} style={{ flexDirection: "row", borderBottomWidth: 1, borderBottomColor: t.color.border }}>
       {items}
     </View>
   );
 }
 
-/** One line under the tabs saying what the section is for. */
-export function SectionHeading({ section }: { section: SectionId }) {
+/**
+ * The top of each tab: its icon, a clear title, one or two plain sentences on
+ * what it is for, and "What you can do here". On a phone that list folds away
+ * behind "Learn more", so the tab's own content stays near the top.
+ */
+export function TabIntro({ section, actions }: { section: SectionId; actions?: React.ReactNode }) {
   const t = useTokens();
   const plain = usePlain();
   const tab = TABS.find((entry) => entry.id === section)!;
-  return <Text style={[t.text.body, { color: t.color.muted, maxWidth: 760 }]}>{plain ? PLAIN.tabs[section] : tab.heading}</Text>;
+  const intro = PLAIN.intros[section];
+  const list = (
+    <View style={{ gap: 10, padding: 14, borderRadius: 14, backgroundColor: t.color.surface1, borderWidth: 1, borderColor: t.color.border }}>
+      {!t.compact ? <Text style={[t.text.caption, { fontWeight: "600" }]}>{PLAIN.whatYouCanDo}</Text> : null}
+      <Bullets items={!plain && "canDo" in tab ? tab.canDo : intro.canDo} columns={!t.compact} />
+    </View>
+  );
+  return (
+    <View style={{ gap: 14 }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 14 }}>
+        <IconBadge name={tab.icon} size={t.compact ? 40 : 46} />
+        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+          <Text accessibilityRole="header" style={t.text.display}>
+            {plain ? intro.title : tab.title}
+          </Text>
+          <Text style={t.text.lead}>{plain ? intro.summary : tab.heading}</Text>
+        </View>
+      </View>
+      {t.compact ? (
+        <Disclosure key={section} title={PLAIN.learnMore} openTitle={PLAIN.hideMore}>
+          {list}
+        </Disclosure>
+      ) : (
+        list
+      )}
+      {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>{actions}</View> : null}
+    </View>
+  );
 }
