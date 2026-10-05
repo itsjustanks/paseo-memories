@@ -1,3 +1,5 @@
+import { Markdown } from "./markdown";
+import { MarkdownEditor } from "./markdown-editor";
 import { useRpc } from "@getpaseo/plugin/client";
 import React, { useEffect, useState } from "react";
 import { Text, View } from "react-native";
@@ -160,7 +162,7 @@ export function AddNote({
               ))}
             </View>
             <View style={{ backgroundColor: t.color.surface2, borderRadius: t.radius.control, padding: t.space.row }}>
-              <Text style={t.text.body}>{text.trim()}</Text>
+              <Markdown text={text.trim()} frontmatter={false} />
             </View>
             {preview.warnings.map((warning) => (
               <Notice key={warning} tone="error">
@@ -175,7 +177,7 @@ export function AddNote({
           </View>
         ) : (
           <View style={{ gap: t.space.row }}>
-            <Field label={A.what} value={text} onChangeText={setText} multiline minHeight={120} placeholder={A.whatPlaceholder} autoFocus />
+            <MarkdownEditor label={A.what} value={text} onChange={setText} minHeight={140} frontmatter={false} placeholder={A.whatPlaceholder} autoFocus />
             <View style={{ gap: t.space.sm }}>
               <Text style={t.text.heading}>{A.who}</Text>
               <Segmented options={[{ value: "all", label: A.whoAll }, { value: "claude", label: A.whoClaude }, { value: "codex", label: A.whoCodex }]} value={who} onChange={setWho} />

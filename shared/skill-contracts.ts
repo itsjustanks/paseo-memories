@@ -62,8 +62,10 @@ export const SkillSchema = z.object({
   reason: z.string().optional(),
   files: z.number(),
   bytes: z.number(),
-  /** Files an agent might run (anything but instructions and text). */
+  /** Files an agent might run (anything but instructions and text), counting a SKILL.md whose header or body runs commands. */
   scripts: z.number().default(0),
+  /** Why its SKILL.md can run commands on this computer, when it can. */
+  runsCommands: z.string().optional(),
   problems: z.array(SkillProblemSchema).default([]),
   /** Characters this skill adds to each agent's skill list, at the start of every chat. */
   listing: z.object({ claude: z.number(), codex: z.number() }),
@@ -121,6 +123,8 @@ export const skillsInventory = defineRpc({
     usage: UsageStateSchema,
     /** The days "used lately" counts over (the skillsWindowDays setting). */
     windowDays: z.number().default(30),
+    /** The host's home folder, so the app can name places plainly ("Claude's settings (default)"). */
+    home: z.string().default(""),
     counts: z.object({ skills: z.number(), places: z.number(), projects: z.number(), accounts: z.number() }),
     checked: z.array(z.string()).default([]),
     notes: z.array(z.string()).default([]),
@@ -267,7 +271,8 @@ export const skillsPreview = defineRpc({
     warnings: z.array(z.string()).default([]),
     clash: z.object({ name: z.string(), skillId: z.string() }).optional(),
     /** For a link with several skills: the folders to pick from (send again with the folder in the link). */
-    choices: z.array(z.object({ path: z.string(), name: z.string() })).default([]),
+    /** `link`: what to preview for that one (the repository at the same commit). */
+    choices: z.array(z.object({ path: z.string(), name: z.string(), link: z.string().optional() })).default([]),
     planHash: z.string().default(""),
   }),
 });

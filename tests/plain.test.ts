@@ -11,6 +11,7 @@ import { PLAIN_GUIDES, PLAIN_GUIDE_TECHNICAL_HINT } from "../shared/guides";
 import { CLAUDE_FILE_TOO_BIG, CLAUDE_LIST_FULL, CLAUDE_LIST_TOO_BIG, CLAUDE_OWN_NOTE, CODEX_PAST_LIMIT, COVERED_BY_PROJECT, HIDDEN_TEXT, noteTargetWarning, planCardAdd, planNote } from "../shared/notes";
 import {
   JARGON,
+  MD_EDITOR,
   PLAIN,
   isCodexInternal,
   PLAIN_AGENT,
@@ -74,6 +75,7 @@ test("the jargon list is the one in the brief", () => {
 
 test("plain string tables and guides have no jargon", () => {
   assertPlain(strings(PLAIN), "PLAIN");
+  assertPlain(strings(MD_EDITOR), "editor");
   assertPlain(strings(PLAIN_GUIDES), "guides");
   assertPlain([PLAIN_GUIDE_TECHNICAL_HINT], "guide hint");
   assertPlain(strings(PLAIN_MEMORY_TYPES), "memory types");

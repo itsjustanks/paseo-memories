@@ -18,6 +18,7 @@ import { useSkillsInventory, useSkillsRefresh } from "./skills-data";
 import { SkillsGuide } from "./skills-guide";
 import { SkillsList } from "./skills-list";
 import { onSkillsPlace, skillsLanding, skillsParams, syncSkillsParams, takeSkillsPlace, type AddMode, type SkillsPlace } from "./skills-nav";
+import { SkillsResult, type SkillsResultValue } from "./skills-report";
 import { SkillsUsage } from "./skills-usage";
 import { Button, Card, Disclosure, Divider, ErrorText, HeroCard, Header, Link, Meta, NumberedStep, Notice, QuietLine, Row, Screen, SectionTitle, StatusLine, TokensProvider, useTokens, useUi, type Status } from "./ui";
 
@@ -94,15 +95,14 @@ export function useFindingAction(hostId: string, onGo: (place: SkillsPlace) => v
   const call = useRpc(skillsFix);
   const refresh = useSkillsRefresh(hostId);
   const [busy, setBusy] = useState<string | null>(null);
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [result, setResult] = useState<SkillsResultValue | null>(null);
   const act = async (finding: Finding) => {
     const action = finding.action;
     if (!action) return;
     if (action.kind === "fix") {
       setBusy(finding.id);
       try {
-        const done = await call({ findingId: finding.id });
-        setResult({ ok: done.ok, message: done.message });
+        setResult(await call({ findingId: finding.id }));
       } catch (error) {
         setResult({ ok: false, message: plainError(error) });
       } finally {
@@ -128,11 +128,7 @@ export function FindingsCard({ findings, hostId, onGo }: { findings: Finding[]; 
   const { act, busy, result, clear } = useFindingAction(hostId, onGo);
   return (
     <>
-      {result ? (
-        <Notice tone={result.ok ? "ok" : "error"} onDismiss={clear}>
-          <Text style={t.text.body}>{plain ? plainSkillMessage(result.message) : result.message}</Text>
-        </Notice>
-      ) : null}
+      {result ? <SkillsResult hostId={hostId} result={result} onDismiss={clear} /> : null}
       <Card padded={false}>
         {findings.map((finding, index) => {
           const words = plain ? plainSkillFinding(finding) : { title: finding.message, detail: finding.detail ?? "" };

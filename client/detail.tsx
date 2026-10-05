@@ -27,6 +27,10 @@ import { PLAIN, PLAIN_MEMORY_TYPES, plainAgents, plainDetailWarning, plainMemory
 import { KEY, QueryState, WriteReportView, useInvalidate, useSourceDetail } from "./data";
 import { edit, isDirty, keepEditing, receive, reload, type Draft } from "./draft";
 import { usePlain, useSourceNames } from "./mode";
+import { removeSection, replaceSection, splitSections } from "../shared/markdown";
+import { MD_EDITOR } from "../shared/plain";
+import { Markdown } from "./markdown";
+import { MarkdownEditor } from "./markdown-editor";
 import { Button, Card, CodeBlock, ConfirmButton, ConfirmLink, Disclosure, Facts, Field, IconBadge, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
 
 /**
@@ -185,6 +189,8 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
   const [fileName, setFileName] = useState(entryKey);
   const [result, setResult] = useState<WriteResult | null>(null);
   const [busy, setBusy] = useState(false);
+  // A memory opens to read; Change opens the editor (a new one starts in it).
+  const [editing, setEditing] = useState(creating);
   useEffect(() => {
     if (!body.data) return;
     const incoming: MemoryForm = { name: body.data.fields?.name ?? "", description: body.data.fields?.description ?? "", type: body.data.fields?.type ?? "project", body: body.data.body };
@@ -200,8 +206,9 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
       const outcome = await action();
       setResult(outcome);
       if (outcome.ok) {
-        // Saved: the next read starts a fresh draft.
+        // Saved: the next read starts a fresh draft, shown as read.
         if (!creating) setDraft(null);
+        setEditing(creating);
         await invalidate();
         after?.(outcome);
       }
@@ -249,10 +256,10 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
         </View>
         {!creating ? <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} /> : null}
         {draft?.newer ? <ChangedOnDisk onReload={() => setDraft(reload(draft))} onKeep={() => setDraft(keepEditing(draft))} /> : null}
-        {locked || !editable ? (
+        {locked || !editable || !editing ? (
           <View style={{ gap: t.space.sm }}>
-            <Facts items={[{ value: form.name }, { value: plain ? plainMemoryType(form.type) : form.type }, { value: form.description }]} />
-            {plain ? <Text style={t.text.body}>{form.body.trim()}</Text> : <CodeBlock copy={false}>{form.body}</CodeBlock>}
+            <Facts items={[{ value: plain ? plainMemoryType(form.type) : form.type }, { value: form.description }]} />
+            {form.body.trim() ? <Markdown text={form.body} frontmatter={false} /> : <Text style={t.text.caption}>{PLAIN.notes.emptyBody}</Text>}
           </View>
         ) : plain ? (
           <View style={{ gap: t.space.sm }}>
@@ -260,7 +267,7 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
             <Field label={M.summary} value={form.description} onChangeText={(description) => setForm({ ...form, description })} hint={M.summaryHint} />
             <Text style={t.text.label}>{M.kind}</Text>
             <Segmented options={MEMORY_TYPES.map((value) => ({ value, label: PLAIN_MEMORY_TYPES[value]! }))} value={(MEMORY_TYPES as readonly string[]).includes(form.type) ? (form.type as (typeof MEMORY_TYPES)[number]) : "project"} onChange={(type) => setForm({ ...form, type })} />
-            <Field label={M.body} value={form.body} onChangeText={(text) => setForm({ ...form, body: text })} multiline minHeight={220} />
+            <MarkdownEditor label={M.body} value={form.body} onChange={(text) => setForm({ ...form, body: text })} minHeight={220} frontmatter={false} />
           </View>
         ) : (
           <View style={{ gap: t.space.sm }}>
@@ -268,18 +275,32 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
             <Field label="One-line description" value={form.description} onChangeText={(description) => setForm({ ...form, description })} hint="Also used as the hook on its MEMORY.md line." />
             <Text style={t.text.label}>Type</Text>
             <Segmented options={MEMORY_TYPES.map((value) => ({ value, label: value }))} value={(MEMORY_TYPES as readonly string[]).includes(form.type) ? (form.type as (typeof MEMORY_TYPES)[number]) : "project"} onChange={(type) => setForm({ ...form, type })} />
-            <Field label="What Claude should remember" value={form.body} onChangeText={(text) => setForm({ ...form, body: text })} multiline mono minHeight={220} />
+            <MarkdownEditor label="What Claude should remember" value={form.body} onChange={(text) => setForm({ ...form, body: text })} minHeight={220} frontmatter={false} />
           </View>
         )}
-        {editable && !locked ? (
+        {editable && !locked && !editing ? (
           <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap", alignItems: "center" }}>
-            <Button label={creating ? (plain ? M.saveNew : "Save memory") : "Save"} variant="primary" onPress={() => void save()} loading={busy} disabled={!form.name.trim()} />
-            {!creating ? <Button label={M.copy} variant="ghost" onPress={() => onCopy([{ sourceId: source.id, key: entryKey }])} /> : null}
-            {!creating && plain ? <ConfirmLink label={M.delete} question={PLAIN.notes.removeQuestion} yes={M.deleteConfirm} no={PLAIN.notes.keep} onConfirm={removeNote} /> : null}
-            {!creating && !plain ? <ConfirmButton label="Delete" confirmLabel="Delete this memory and its MEMORY.md line" onConfirm={removeNote} /> : null}
+            <Button label={plain ? PLAIN.notes.change : "Edit"} icon="Pencil" variant="primary" onPress={() => setEditing(true)} />
+            <Button label={M.copy} variant="ghost" onPress={() => onCopy([{ sourceId: source.id, key: entryKey }])} />
+            {plain ? <ConfirmLink label={M.delete} question={PLAIN.notes.removeQuestion} yes={M.deleteConfirm} no={PLAIN.notes.keep} onConfirm={removeNote} /> : <ConfirmButton label="Delete" confirmLabel="Delete this memory and its MEMORY.md line" onConfirm={removeNote} />}
           </View>
         ) : null}
-        {editable && !locked && !creating ? (plain ? <Disclosure title={PLAIN.technical}>{renameRow}</Disclosure> : renameRow) : null}
+        {editable && !locked && editing ? (
+          <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap", alignItems: "center" }}>
+            <Button label={creating ? (plain ? M.saveNew : "Save memory") : "Save"} variant="primary" onPress={() => void save()} loading={busy} disabled={!form.name.trim()} />
+            {!creating ? (
+              <Button
+                label={PLAIN.notes.cancel}
+                variant="ghost"
+                onPress={() => {
+                  if (draft) setDraft({ ...draft, value: draft.baseline });
+                  setEditing(false);
+                }}
+              />
+            ) : null}
+          </View>
+        ) : null}
+        {editable && !locked && !creating && editing ? (plain ? <Disclosure quiet title={PLAIN.technical}>{renameRow}</Disclosure> : renameRow) : null}
         {result ? <WriteReportView result={result} /> : null}
       </View>
     </Card>
@@ -321,6 +342,27 @@ function MemoryList({ entries, index, onOpen, editable }: { entries: Entry[]; in
 }
 
 // ------------------------------------------------------------------ files
+
+/** A file that can't be changed here: its text, or (one tap) how it reads. */
+function TextOrPreview({ text, frontmatter }: { text: string; frontmatter: boolean }) {
+  const t = useTokens();
+  const [mode, setMode] = useState<"text" | "preview">("text");
+  return (
+    <View style={{ gap: t.space.sm }}>
+      <View style={{ flexDirection: "row" }}>
+        <Segmented<"text" | "preview">
+          options={[
+            { value: "text", label: "Text" },
+            { value: "preview", label: MD_EDITOR.preview },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
+      </View>
+      {mode === "text" ? <CodeBlock copy={false}>{text || "(empty)"}</CodeBlock> : text.trim() ? <Markdown text={text} frontmatter={frontmatter} /> : <Text style={t.text.caption}>{MD_EDITOR.nothingYet}</Text>}
+    </View>
+  );
+}
 
 function FileEditor({ hostId, source, workspaceId, stamp, codexLock }: { hostId: string; source: Source; workspaceId?: string; stamp?: FileStamp; codexLock?: { lock: string; lockReason: string } }) {
   const t = useTokens();
@@ -375,9 +417,9 @@ function FileEditor({ hostId, source, workspaceId, stamp, codexLock }: { hostId:
         <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
         {draft?.newer ? <ChangedOnDisk onReload={() => setDraft(reload(draft))} onKeep={() => setDraft(keepEditing(draft))} /> : null}
         {editable && !locked ? (
-          <Field value={text} onChangeText={setText} multiline mono minHeight={320} placeholder={source.exists ? "" : "This file does not exist yet. Write it here and save to create it."} />
+          <MarkdownEditor raw value={text} onChange={setText} minHeight={320} frontmatter={usesFrontmatter(source)} placeholder={source.exists ? "" : "This file does not exist yet. Write it here and save to create it."} />
         ) : (
-          <CodeBlock copy={false}>{text || "(empty)"}</CodeBlock>
+          <TextOrPreview text={text} frontmatter={usesFrontmatter(source)} />
         )}
         {source.kind === "codex-memory" && source.path.endsWith("memory_summary.md") ? <Text style={t.text.caption}>{plain ? PLAIN.codexKeepFirstLine : 'Keep "v1" as the first line, or Codex rebuilds this file from scratch.'}</Text> : null}
         {editable && !locked ? (
@@ -408,6 +450,7 @@ function PromptEditor({ hostId }: { hostId: string }) {
   const [draft, setDraft] = useState<Draft<string> | null>(null);
   const [result, setResult] = useState<WriteResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     if (query.data) setDraft((current) => receive(current, { value: query.data!.value }));
   }, [query.data]);
@@ -420,8 +463,17 @@ function PromptEditor({ hostId }: { hostId: string }) {
         <Text style={t.text.caption}>{plain ? PLAIN.prompt.note : query.data.note}</Text>
         <RevealBar secrets={query.data.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
         {draft?.newer ? <ChangedOnDisk onReload={() => setDraft(reload(draft))} onKeep={() => setDraft(keepEditing(draft))} /> : null}
-        {query.data.masked ? <CodeBlock copy={false}>{text}</CodeBlock> : <Field value={text} onChangeText={setText} multiline mono={!plain} minHeight={200} placeholder={plain ? PLAIN.prompt.placeholder : "Nothing is appended today."} />}
-        <View style={{ flexDirection: "row" }}>
+        {query.data.masked || (plain && !editing) ? (
+          text.trim() ? <Markdown text={text} frontmatter={false} /> : <Text style={t.text.caption}>{plain ? PLAIN.prompt.placeholder : "Nothing is appended today."}</Text>
+        ) : (
+          <MarkdownEditor value={text} onChange={setText} raw={!plain} minHeight={200} frontmatter={false} placeholder={plain ? PLAIN.prompt.placeholder : "Nothing is appended today."} />
+        )}
+        {plain && !editing && !query.data.masked ? (
+          <View style={{ flexDirection: "row" }}>
+            <Button label={PLAIN.notes.change} icon="Pencil" onPress={() => setEditing(true)} />
+          </View>
+        ) : null}
+        <View style={{ flexDirection: "row", gap: t.space.sm, display: plain && !editing ? "none" : "flex" }}>
           <Button
             label="Save"
             variant="primary"
@@ -435,6 +487,7 @@ function PromptEditor({ hostId }: { hostId: string }) {
                   setResult(outcome);
                   if (outcome.ok) {
                     setDraft(null);
+                    setEditing(false);
                     await Promise.all([invalidate(), query.refetch()]);
                   }
                 })
@@ -442,6 +495,16 @@ function PromptEditor({ hostId }: { hostId: string }) {
                 .finally(() => setBusy(false));
             }}
           />
+          {plain ? (
+            <Button
+              label={PLAIN.notes.cancel}
+              variant="ghost"
+              onPress={() => {
+                if (draft) setDraft({ ...draft, value: draft.baseline });
+                setEditing(false);
+              }}
+            />
+          ) : null}
         </View>
         {result ? <WriteReportView result={result} /> : null}
       </View>
@@ -527,7 +590,7 @@ function NoteCard({
       <Card>
         <View style={{ gap: t.space.sm }}>
           {note.headless ? null : <Field label={N.titleLabel} value={title} onChangeText={setTitle} />}
-          <Field label={N.textLabel} value={body} onChangeText={setBody} multiline minHeight={140} />
+          <MarkdownEditor label={N.textLabel} value={body} onChange={setBody} minHeight={160} frontmatter={false} autoFocus />
           <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
             <Button
               label={N.save}
@@ -554,10 +617,10 @@ function NoteCard({
     <Card>
       <View style={{ gap: t.space.sm }}>
         <Text style={t.text.heading}>{note.headless ? N.topTitle : note.title}</Text>
-        {note.body ? <Text style={t.text.body}>{note.body}</Text> : <Text style={t.text.caption}>{N.emptyBody}</Text>}
+        {note.body.trim() ? <Markdown text={note.body} frontmatter={false} /> : <Text style={t.text.caption}>{N.emptyBody}</Text>}
         {editable ? (
           <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap", alignItems: "center" }}>
-            <Button label={N.change} variant="ghost" onPress={() => setEditing(true)} disabled={hidden} />
+            <Button label={N.change} icon="Pencil" onPress={() => setEditing(true)} disabled={hidden} />
             {onCopy ? <Button label={N.copy} variant="ghost" onPress={onCopy} /> : null}
             {/* Last in the row, so its question opens below the everyday actions. */}
             <ConfirmLink label={N.remove} question={N.removeQuestion} yes={N.removeConfirm} no={N.keep} onConfirm={onRemove} />
@@ -586,7 +649,7 @@ function AddToFile({ busy, onAdd }: { busy: boolean; onAdd: (note: { title: stri
       <View style={{ gap: t.space.sm }}>
         <Text style={t.text.section}>{N.addHere}</Text>
         <Field label={N.titleLabel} value={title} onChangeText={setTitle} placeholder="Invoices" />
-        <Field label={N.textLabel} value={body} onChangeText={setBody} multiline minHeight={120} placeholder="Invoices go out on the 1st of each month." />
+        <MarkdownEditor label={N.textLabel} value={body} onChange={setBody} minHeight={140} frontmatter={false} placeholder="Invoices go out on the 1st of each month." />
         <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
           <Button
             label={N.save}
@@ -632,8 +695,12 @@ function NoteCards({ hostId, source, workspaceId, onCopy }: { hostId: string; so
   });
   const [result, setResult] = useState<WriteResult | null>(null);
   const [busy, setBusy] = useState(false);
-  const editable = source.access === "editable" && NOTE_KINDS.has(source.kind);
+  // Codex's own notes are changed card by card too, through the guarded Codex save (whole file, lock and clean-up checks on the host).
+  const codexNotes = source.kind === "codex-memory";
+  const editable = source.access === "editable" && (NOTE_KINDS.has(source.kind) || codexNotes);
   const where = workspaceId ? { workspaceId } : {};
+  const codexSave = useRpc(codexMemoryWrite);
+  const [pending, setPending] = useState<(() => Promise<WriteResult>) | null>(null);
   const run = async (action: () => Promise<WriteResult>): Promise<boolean> => {
     setBusy(true);
     try {
@@ -665,8 +732,25 @@ function NoteCards({ hostId, source, workspaceId, onCopy }: { hostId: string; so
       const outcome = await apply({ items: [item], target, selected: ["new"], expected: plan.expected });
       return plan.warning ? { ...outcome, warnings: [plan.warning, ...outcome.warnings] } : outcome;
     });
+  /** Codex: the whole file with one section changed (or taken out), saved through the guarded Codex path; a pending clean-up asks first. */
+  const viaCodex = (card: (typeof cards)[number], replacement: string | null) => {
+    const section = splitSections(text).find((entry) => entry.key === card.key);
+    if (!section) return run(async () => refuse("That part of the notes moved. Reload them; nothing was saved."));
+    if (body.data?.masked) return run(async () => refuse(HIDDEN_TEXT));
+    const whole = replacement === null ? removeSection(text, section) : replaceSection(text, section, replacement);
+    const attempt = (confirm: boolean) => codexSave({ sourceId: source.id, text: whole, expected: stamp!, ...(confirm ? { confirmPending: true } : {}) });
+    return run(async () => {
+      const outcome = await attempt(false);
+      setPending(outcome.needsConfirm ? () => () => attempt(true) : null);
+      return outcome;
+    });
+  };
   const change = (card: (typeof cards)[number], next: { title: string; body: string }) =>
-    run(async () => (hasHiddenText(`${next.title}\n${next.body}`) ? refuse(HIDDEN_TEXT) : write({ path: source.path, ...where, text: cardReplacement(card, next), expected: stamp!, sectionKey: card.key })));
+    hasHiddenText(`${next.title}\n${next.body}`)
+      ? run(async () => refuse(HIDDEN_TEXT))
+      : codexNotes
+        ? viaCodex(card, cardReplacement(card, next))
+        : run(async () => write({ path: source.path, ...where, text: cardReplacement(card, next), expected: stamp!, sectionKey: card.key }));
   return (
     <View style={{ gap: t.space.row }}>
       <RevealBar secrets={body.data?.secrets ?? 0} revealed={revealed} onReveal={setRevealed} />
@@ -680,12 +764,26 @@ function NoteCards({ hostId, source, workspaceId, onCopy }: { hostId: string; so
           hidden={hasHiddenText(card.original)}
           busy={busy}
           onSave={(next) => change(card, next)}
-          onRemove={() => void run(() => write({ path: source.path, ...where, expected: stamp!, sectionKey: card.key, ...cardRemoval(card) }))}
+          onRemove={() => void (codexNotes ? viaCodex(card, cardRemoval(card).removeSection ? null : cardRemoval(card).text) : run(() => write({ path: source.path, ...where, expected: stamp!, sectionKey: card.key, ...cardRemoval(card) })))}
           {...(card.headless ? {} : { onCopy: () => onCopy([{ sourceId: source.id, key: card.key }]) })}
         />
       ))}
-      {editable ? <AddToFile busy={busy} onAdd={add} /> : null}
+      {editable && !codexNotes ? <AddToFile busy={busy} onAdd={add} /> : null}
       {result ? <WriteReportView result={result} /> : null}
+      {pending ? (
+        <View style={{ flexDirection: "row" }}>
+          <ConfirmButton
+            label="Save anyway"
+            confirmLabel="I understand: save it"
+            variant="primary"
+            onConfirm={() => {
+              const again = pending;
+              setPending(null);
+              void run(again);
+            }}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }

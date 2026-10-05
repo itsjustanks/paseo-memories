@@ -6,7 +6,10 @@ import { formatBytes } from "../shared/format";
 import { plainAgent } from "../shared/plain";
 import { skillsLink, skillsRemove, skillsToggle, type Skill } from "../shared/skill-contracts";
 import { SKILLS_PLAIN as S, sinceText, plainProvenance, plainReaders, plainSkillMessage, plainState, plainWordsFromChars, technicalProvenance } from "../shared/skills-plain";
+import { MD_EDITOR } from "../shared/plain";
 import { QueryState } from "./data";
+import { SkillsResult, type SkillsResultValue } from "./skills-report";
+import { Markdown } from "./markdown";
 import { usePlain } from "./mode";
 import { useSkillDetail, useSkillsInventory, useSkillsRefresh } from "./skills-data";
 import type { SkillsPlace } from "./skills-nav";
@@ -145,13 +148,13 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
   const link = useRpc(skillsLink);
   const refresh = useSkillsRefresh(hostId);
   const [busy, setBusy] = useState<string | null>(null);
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [result, setResult] = useState<SkillsResultValue | null>(null);
   const D = S.detail;
-  const run = async (key: string, call: () => Promise<{ ok: boolean; message: string }>, leave = false) => {
+  const run = async (key: string, call: () => Promise<SkillsResultValue>, leave = false) => {
     setBusy(key);
     try {
       const done = await call();
-      setResult({ ok: done.ok, message: done.message });
+      setResult(done);
       if (done.ok && leave) onBack();
     } catch (error) {
       setResult({ ok: false, message: plainError(error) });
@@ -169,11 +172,7 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
   return (
     <>
       <Link label={S.list.back} onPress={onBack} />
-      {result ? (
-        <Notice tone={result.ok ? "ok" : "error"} onDismiss={() => setResult(null)}>
-          <Text style={t.text.body}>{say(result.message)}</Text>
-        </Notice>
-      ) : null}
+      {result ? <SkillsResult hostId={hostId} result={result} onDismiss={() => setResult(null)} /> : null}
       <Card title={skill.name} icon="Sparkles" {...(skill.access === "read-only" ? { subtitle: S.list.readOnly } : {})}>
         {skill.description ? <Text style={t.text.body}>{skill.description}</Text> : null}
         <View style={{ gap: t.space.sm }}>
@@ -181,6 +180,7 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
           <Fact label={D.who} value={plainReaders(skill.readBy)} />
           {listCost ? <Fact label={D.listCost} value={words(listCost)} /> : null}
           <Fact label={plain ? "Files" : "Folder"} value={plain ? (skill.scripts ? D.filesWithCode(skill.files, skill.scripts) : D.files(skill.files)) : `${skill.files} files · ${formatBytes(skill.bytes)}${skill.scripts ? ` · ${skill.scripts} non-markdown` : ""}`} />
+          {skill.runsCommands ? <Fact label={D.runs} value={say(skill.runsCommands)} /> : null}
           <Fact label="Use" value={usage ? (usage.total ? `${D.used(usage.total, sinceText(usage.lastUsed))}${usage.estimated ? ` ${D.estimated}` : ""}` : D.neverUsed) : S.rows.countingOff} />
         </View>
         {warn ? <Notice tone={warn.severity === "warn" ? "attention" : "neutral"}><Text style={t.text.body}>{say(warn.message)}</Text></Notice> : null}
@@ -203,7 +203,16 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
       </Card>
       <Disclosure quiet title={D.showInstructions}>
         <QueryState query={detail} what="its instructions" />
-        {detail.data ? <CodeBlock copy>{detail.data.body}</CodeBlock> : null}
+        {detail.data ? (
+          <Card>
+            <Markdown text={detail.data.body} />
+          </Card>
+        ) : null}
+        {detail.data ? (
+          <Disclosure quiet title={MD_EDITOR.readAsText}>
+            <CodeBlock copy>{detail.data.body}</CodeBlock>
+          </Disclosure>
+        ) : null}
         {detail.data && detail.data.body.includes("••••") ? <Link label="Show hidden values" onPress={() => setReveal(true)} /> : null}
       </Disclosure>
       <Disclosure quiet title={`${D.showFiles} (${skill.files})`}>

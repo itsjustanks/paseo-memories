@@ -460,6 +460,7 @@ export const PLAIN = {
     import: "Import",
     export: "Export",
     importIntro: "Paste notes you exported from another computer, or any text with headings. Each heading becomes its own note.",
+    readIt: "Read it",
     pastePlaceholder: "Paste here",
     formatAuto: "Work it out",
     formatHeadings: "Split at headings",
@@ -597,3 +598,23 @@ export function jargonIn(text: string): string[] {
   const lower = text.toLowerCase();
   return JARGON.filter((word) => (WHOLE_WORD[word] ? WHOLE_WORD[word]!.test(text) : lower.includes(word.toLowerCase())));
 }
+
+/** The note editor's buttons and labels (client/markdown-editor.tsx). */
+export const MD_EDITOR = {
+  toolbar: "Formatting",
+  bold: "Bold",
+  italic: "Italic",
+  heading: "Heading",
+  bullets: "Bulleted list",
+  numbers: "Numbered list",
+  link: "Link",
+  code: "Code",
+  undo: "Undo",
+  write: "Write",
+  preview: "Preview",
+  text: "Note text",
+  nothingYet: "Nothing to show yet.",
+  edit: "Change",
+  editTechnical: "Edit",
+  readAsText: "Show as plain text",
+};

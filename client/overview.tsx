@@ -13,6 +13,7 @@ import { KEY, QueryState, useFindings, useInventory } from "./data";
 import { usePlain, useSourceNames } from "./mode";
 import type { SectionId } from "./navigation";
 import { clockTime } from "../shared/schedule";
+import { MarkdownLine } from "./markdown";
 import { canOpenScreen, openScreenById } from "./screens";
 import { Button, Card, Disclosure, ErrorText, Facts, Field, HeroCard, Link, Loading, Meta, PathText, QuietLine, Row, StatusLine, Tag, useTokens, type Status } from "./ui";
 
@@ -139,7 +140,7 @@ function SearchBox({ hostId, onOpen }: { hostId: string; onOpen: (sourceId: stri
                   first={index === 0}
                   title={hit.title}
                   subtitle={plain ? names.byId(hit.sourceId) : `${AGENT_LABELS[hit.agent] ?? hit.agent} · ${scopeLabel(hit.scope)}${hit.projectPath ? ` · ${folderName(hit.projectPath)}` : ""}`}
-                  meta={<Text numberOfLines={2} style={t.text.caption}>{hit.snippet}</Text>}
+                  meta={<MarkdownLine text={hit.snippet} lines={2} />}
                   onPress={() => onOpen(hit.sourceId, hit.key)}
                 />
               ))}

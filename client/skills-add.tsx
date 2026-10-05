@@ -6,10 +6,13 @@ import { plainError } from "../shared/errors";
 import { formatBytes } from "../shared/format";
 import { skillsAdd, skillsLink, skillsPreview, type AddSource } from "../shared/skill-contracts";
 import { RUNS_COMMANDS } from "../shared/skill-md";
+import { MD_EDITOR } from "../shared/plain";
+import { Markdown } from "./markdown";
 import { SKILLS_PLAIN as S, plainSkillMessage } from "../shared/skills-plain";
 import { QueryState } from "./data";
 import { usePlain } from "./mode";
 import { useSkillsCatalog, useSkillsRefresh } from "./skills-data";
+import { SkillsResult, type SkillsResultValue } from "./skills-report";
 import type { AddMode } from "./skills-nav";
 import { Bullets, Button, Card, CodeBlock, Disclosure, Field, Meta, Notice, PathText, Row, Segmented, Tag, Toggle, useTokens } from "./ui";
 
@@ -22,7 +25,7 @@ import { Bullets, Button, Card, CodeBlock, Disclosure, Field, Meta, Notice, Path
  */
 
 type Preview = z.output<(typeof skillsPreview)["output"]>;
-type Result = { ok: boolean; message: string; warnings: string[]; skillId?: string; linkRetry?: boolean };
+type Result = SkillsResultValue & { skillId?: string; linkRetry?: boolean };
 
 export function AddSkill({ hostId, mode, onMode, onOpen, compact }: { hostId: string; mode: AddMode; onMode: (mode: AddMode) => void; onOpen?: (skillId: string) => void; compact?: boolean }) {
   const t = useTokens();
@@ -58,7 +61,7 @@ export function AddSkill({ hostId, mode, onMode, onOpen, compact }: { hostId: st
     setBusy(true);
     try {
       const done = await add({ source, planHash: shown.planHash, ...(shown.scripts ? { confirmScripts: confirmed } : {}) });
-      setResult({ ok: done.ok, message: done.message, warnings: done.warnings, ...(done.skillId ? { skillId: done.skillId } : {}), ...(done.linkRetry ? { linkRetry: true } : {}) });
+      setResult({ ok: done.ok, message: done.message, warnings: done.warnings, reports: done.reports, ...(done.skillId ? { skillId: done.skillId } : {}), ...(done.linkRetry ? { linkRetry: true } : {}) });
       if (done.ok || done.skillId) setShown(null);
       void refresh();
     } catch (failure) {
@@ -76,17 +79,9 @@ export function AddSkill({ hostId, mode, onMode, onOpen, compact }: { hostId: st
   if (result) {
     return (
       <>
-        <Notice tone={result.ok ? "ok" : result.skillId ? "attention" : "error"}>
-          <View style={{ gap: t.space.xs }}>
-            <Text style={t.text.bodyStrong}>{say(result.message)}</Text>
-            {result.warnings.map((warning) => (
-              <Text key={warning} style={t.text.caption}>
-                {say(warning)}
-              </Text>
-            ))}
-            {result.ok ? <Text style={t.text.caption}>{S.add.restartNote}</Text> : null}
-          </View>
-        </Notice>
+        <SkillsResult hostId={hostId} result={result}>
+          {result.ok ? <Text style={t.text.caption}>{S.add.restartNote}</Text> : null}
+        </SkillsResult>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
           {result.linkRetry && result.skillId ? (
             <Button
@@ -97,7 +92,7 @@ export function AddSkill({ hostId, mode, onMode, onOpen, compact }: { hostId: st
               onPress={() => {
                 setBusy(true);
                 void link({ skillId: result.skillId! })
-                  .then((done) => setResult({ ok: done.ok, message: done.message, warnings: done.warnings, skillId: result.skillId!, ...(done.ok ? {} : { linkRetry: true }) }))
+                  .then((done) => setResult({ ok: done.ok, message: done.message, warnings: done.warnings, reports: done.reports, skillId: result.skillId!, ...(done.ok ? {} : { linkRetry: true }) }))
                   .catch((failure) => setError(plainError(failure)))
                   .finally(() => (setBusy(false), void refresh()));
               }}
@@ -109,7 +104,7 @@ export function AddSkill({ hostId, mode, onMode, onOpen, compact }: { hostId: st
       </>
     );
   }
-  if (shown) return <PreviewCard preview={shown} busy={busy} confirmed={confirmed} onConfirmed={setConfirmed} onAdd={() => void confirm()} onBack={back} onPick={(path) => void check({ kind: "github", link: `${shown.source}/${path}@${shown.commit}` })} error={error} />;
+  if (shown) return <PreviewCard preview={shown} busy={busy} confirmed={confirmed} onConfirmed={setConfirmed} onAdd={() => void confirm()} onBack={back} onPick={(link) => void check({ kind: "github", link })} error={error} />;
   return (
     <>
       <Segmented<AddMode> options={(["catalog", "github", "write"] as const).map((value) => ({ value, label: S.add.modes[value]! }))} value={mode} onChange={onMode} />
@@ -194,7 +189,7 @@ function PreviewCard({ preview, busy, confirmed, onConfirmed, onAdd, onBack, onP
       <Card title={A.pick} icon="FolderTree">
         <Card padded={false} level={2}>
           {preview.choices.map((choice, index) => (
-            <Row key={choice.path} first={index === 0} title={choice.name} subtitle={choice.path} onPress={() => onPick(choice.path)} />
+            <Row key={choice.path} first={index === 0} title={choice.name} subtitle={choice.path} {...(choice.link ? { onPress: () => onPick(choice.link!) } : {})} />
           ))}
         </Card>
         <View style={{ flexDirection: "row" }}>
@@ -269,7 +264,14 @@ function PreviewCard({ preview, busy, confirmed, onConfirmed, onAdd, onBack, onP
             </Card>
           </Disclosure>
           <Disclosure quiet title={A.instructions}>
-            <CodeBlock copy={false}>{preview.skillMd}</CodeBlock>
+            <Card>
+              <Markdown text={preview.skillMd} />
+            </Card>
+            {!plain ? (
+              <Disclosure quiet title={MD_EDITOR.readAsText}>
+                <CodeBlock copy={false}>{preview.skillMd}</CodeBlock>
+              </Disclosure>
+            ) : null}
           </Disclosure>
         </>
       ) : null}

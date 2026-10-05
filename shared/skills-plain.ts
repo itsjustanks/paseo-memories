@@ -133,7 +133,7 @@ export function plainSkillMessage(message: string): string {
     .replace(/The skills record kept by npx skills/g, "The skills installer's list")
     .replace(/npx skills/g, "the skills installer")
     .replace(/In a project folder tracked by git: a change here is shared with everyone on the project\./g, "Everyone who works on this project shares it.")
-    .replace(/\(it isn't valid JSON\)/g, "")
+    .replace(/ ?\(it isn't valid JSON\)/g, "")
     .replace(/It contains \S+, which marks it/g, "It contains a file that marks it")
     .replace(/\btokens?\b/g, "words")
     .replace(/\s{2,}/g, " ")
@@ -272,6 +272,7 @@ export const SKILLS_PLAIN = {
     used: (count: number, when: string) => `Used ${count}× · last ${when}`,
     neverUsed: "Not used lately on this computer",
     estimated: "Codex's count is an estimate.",
+    runs: "Can run commands",
     shared: "Everyone who works on this project shares it.",
   },
   usage: {
@@ -342,4 +343,73 @@ export function sinceText(iso: string, now = Date.now()): string {
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
   return `${days} days ago`;
+}
+
+type ReportLike = { target: string; ok: boolean; action: string; error?: string; backupPath?: string };
+
+/** The account a folder belongs to, as the app names it: "default" for the usual folder, else the account's own folder name. */
+function accountName(dir: string, home: string, usual: string): string {
+  if (dir === `${home}/${usual}`) return "default";
+  return dir.split("/").filter(Boolean).pop() ?? dir;
+}
+
+/** A place a change touched, in plain words. */
+export function plainPlace(path: string, home: string): string {
+  const parts = path.split("/");
+  const name = parts[parts.length - 1] ?? path;
+  const parent = parts.slice(0, -1).join("/");
+  if (/\/plugin-data\/paseo-memories\/backups\//.test(path)) return "This plugin's backups";
+  if (name === ".skill-lock.json" || name === "skills-lock.json") return "The skills installer's list";
+  if (name === "settings.json") return `Claude's settings (${accountName(parent, home, ".claude")})`;
+  if (name === "config.toml") return `Codex's settings (${accountName(parent, home, ".codex")})`;
+  if (parent === `${home}/.agents/skills`) return `The shared skills place (${name})`;
+  const at = parts.lastIndexOf("skills");
+  if (at > 0) {
+    const account = parts.slice(0, at).join("/");
+    if (account === `${home}/.claude` || /\/accounts\/claude\/[^/]+$/.test(account) || /\/\.claude-accounts\/[^/]+$/.test(account) || parts.includes(".claude")) return `Claude's skills (${accountName(account, home, ".claude")})`;
+    if (parts.includes(".codex") || /\/accounts\/codex\//.test(account)) return `Codex's skills (${accountName(account, home, ".codex")})`;
+    if (parts.includes(".pi")) return "pi's skills";
+  }
+  return name;
+}
+
+/** What happened at that place, in plain words. */
+function plainOutcome(report: ReportLike): string {
+  if (!report.ok) return report.error ? plainSkillMessage(report.error) : "Not changed.";
+  if (report.backupPath?.endsWith(".link.json")) return "Link taken away (noted in the backups).";
+  switch (report.action) {
+    case "moved":
+    case "copied-and-deleted":
+    case "deleted":
+      return "Moved to the backups.";
+    case "created":
+      return "Added.";
+    case "updated":
+      return "Changed.";
+    case "unchanged":
+      return "Already as asked; nothing to change.";
+    default:
+      return "Done.";
+  }
+}
+
+/**
+ * One line per place an add, remove, turn off/on or fix touched: where, and
+ * whether it was done (or not, and why). Plain: names a person knows;
+ * technical: the path and the host's own words.
+ */
+export function reportLines(reports: readonly ReportLike[], plain: boolean, home: string): Array<{ place: string; state: string; ok: boolean }> {
+  return reports.map((report) =>
+    plain
+      ? { place: plainPlace(report.target, home), state: plainOutcome(report), ok: report.ok }
+      : { place: report.target, state: [report.action, report.error ?? "", report.backupPath ? `backup: ${report.backupPath}` : ""].filter(Boolean).join(" · "), ok: report.ok },
+  );
+}
+
+/** "Changed in 3 places; 1 wasn't." */
+export function reportSummary(lines: ReadonlyArray<{ ok: boolean }>): string {
+  const done = lines.filter((line) => line.ok).length;
+  const not = lines.length - done;
+  const places = (n: number) => `${n} ${n === 1 ? "place" : "places"}`;
+  return not ? `Done in ${places(done)}; ${not === 1 ? "1 wasn't" : `${not} weren't`}.` : `Done in ${places(done)}.`;
 }

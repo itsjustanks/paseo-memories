@@ -92,7 +92,7 @@ export type SkillsDiscovery = {
 
 // ------------------------------------------------------------------ caches (stat-keyed, nothing but headers and counts)
 
-type HeaderEntry = { stamp: string; header: SkillHeader; hash: string; bytes: number };
+type HeaderEntry = { stamp: string; header: SkillHeader; hash: string; bytes: number; runs: string | null };
 type FolderEntry = { stamp: string; files: number; bytes: number; scripts: number };
 const headers = new Map<string, HeaderEntry>();
 const folders = new Map<string, FolderEntry>();
@@ -141,7 +141,8 @@ async function readHeader(path: string, seen: Set<string>): Promise<HeaderEntry 
   } catch {
     return null;
   }
-  const parsed = parseSkillMd(bytes.toString("utf8"));
+  const source = bytes.toString("utf8");
+  const parsed = parseSkillMd(source);
   const header: SkillHeader = {
     hasHeader: parsed.hasHeader,
     headerBroken: parsed.headerBroken,
@@ -152,7 +153,8 @@ async function readHeader(path: string, seen: Set<string>): Promise<HeaderEntry 
     ...(parsed.disableModelInvocation !== undefined ? { disableModelInvocation: parsed.disableModelInvocation } : {}),
     ...(parsed.userInvocable !== undefined ? { userInvocable: parsed.userInvocable } : {}),
   };
-  const entry = { stamp, header, hash: sha256(bytes), bytes: bytes.length };
+  const runs = skillMdRunsCommands(source);
+  const entry = { stamp, header, hash: sha256(bytes), bytes: bytes.length, runs: runs === null ? null : own(runs) };
   headers.set(path, entry);
   return entry;
 }
@@ -474,6 +476,7 @@ export async function discoverSkills(paseo: Paseo | null, { refresh = false } = 
         files: stats.files,
         bytes: stats.bytes,
         scripts: stats.scripts,
+        ...(head.runs ? { runsCommands: head.runs } : {}),
         problems: skillProblems(header, folder),
         listing: { claude: 0, codex: 0 },
         state: {},

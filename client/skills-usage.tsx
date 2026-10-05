@@ -5,6 +5,7 @@ import { plainError } from "../shared/errors";
 import { skillsToggle } from "../shared/skill-contracts";
 import { SKILLS_PLAIN as S, plainSkillMessage, plainWordsFromChars, sinceText } from "../shared/skills-plain";
 import { QueryState } from "./data";
+import { SkillsResult, type SkillsResultValue } from "./skills-report";
 import { usePlain } from "./mode";
 import { useSkillsInventory, useSkillsRefresh, useSkillsUsage } from "./skills-data";
 import { Button, Card, Disclosure, Facts, Meta, Notice, Row, Segmented, useTokens } from "./ui";
@@ -39,7 +40,7 @@ export function SkillsUsage({ hostId, onOpen }: { hostId: string; onOpen: (skill
   const usage = useSkillsUsage(hostId, Number(days));
   const toggle = useRpc(skillsToggle);
   const refresh = useSkillsRefresh(hostId);
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [result, setResult] = useState<SkillsResultValue | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const U = S.usage;
   const data = usage.data;
@@ -49,11 +50,16 @@ export function SkillsUsage({ hostId, onOpen }: { hostId: string; onOpen: (skill
     if (!skill) return;
     setBusy(skillId);
     try {
+      // Every agent's change listed together, place by place.
+      const all: SkillsResultValue = { ok: true, message: "", reports: [], warnings: [] };
       for (const agent of skill.can.turnOff) {
         const done = await toggle({ skillId, agent, on: false });
-        setResult({ ok: done.ok, message: done.message });
+        all.ok = all.ok && done.ok;
+        all.message = all.message ? `${all.message} ${done.message}` : done.message;
+        all.reports!.push(...done.reports);
         if (!done.ok) break;
       }
+      setResult(all);
     } catch (error) {
       setResult({ ok: false, message: plainError(error) });
     } finally {
@@ -65,11 +71,7 @@ export function SkillsUsage({ hostId, onOpen }: { hostId: string; onOpen: (skill
     <>
       <Segmented<Days> options={(["7", "30", "90"] as const).map((value) => ({ value, label: U.days(Number(value)) }))} value={days} onChange={setDays} />
       <QueryState query={usage} what="which skills ran" />
-      {result ? (
-        <Notice tone={result.ok ? "ok" : "error"} onDismiss={() => setResult(null)}>
-          <Text style={t.text.body}>{plain ? plainSkillMessage(result.message) : result.message}</Text>
-        </Notice>
-      ) : null}
+      {result ? <SkillsResult hostId={hostId} result={result} onDismiss={() => setResult(null)} /> : null}
       {data ? (
         <>
           <Meta>{state === "off" ? U.off : state === "waiting" || state === "checking" ? (data.state.asOf ? U.partial : U.waiting) : !data.state.complete ? U.partial : U.total(data.totals.uses, data.rows.length)}</Meta>

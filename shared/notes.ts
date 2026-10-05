@@ -59,7 +59,9 @@ export function sectionReplacement(original: string, note: { title: string; body
     const heading = note.title.trim() === was.title ? lines[0]!.replace(/\r$/, "") : `${"#".repeat(was.level || 2)} ${note.title.replace(/\n/g, " ").trim()}`;
     let gap = 0;
     for (let index = 1; index < lines.length - trailing && lines[index]!.trim() === ""; index += 1) gap += 1;
-    out = [heading, ...(bodyLines.length ? [...blanks(gap || 1), ...bodyLines] : []), ...blanks(trailing)];
+    // The note's own spacing under its heading is kept (none stays none); only a note that had no text gets one blank line.
+    const hadBody = was.body.trim() !== "";
+    out = [heading, ...(bodyLines.length ? [...blanks(hadBody ? gap : gap || 1), ...bodyLines] : []), ...blanks(trailing)];
   }
   // The file's own line endings; the last line keeps whatever it had (a file may end without a break).
   const ended = crlf ? out.map((line, index) => (index === out.length - 1 && !lastHasCr ? line : `${line}\r`)) : out;

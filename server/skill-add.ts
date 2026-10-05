@@ -65,7 +65,7 @@ export type Preview = {
   problems: Array<{ code: string; severity: string; message: string }>;
   warnings: string[];
   clash?: { name: string; skillId: string };
-  choices: Array<{ path: string; name: string }>;
+  choices: Array<{ path: string; name: string; link?: string }>;
   planHash: string;
 };
 
@@ -121,7 +121,8 @@ export function foldedCollision(paths: readonly string[]): string | null {
 class AddProblem extends Error {
   constructor(
     message: string,
-    readonly choices: Array<{ path: string; name: string }> = [],
+    readonly choices: Array<{ path: string; name: string; link?: string }> = [],
+    readonly where: { source: string; commit: string } | null = null,
   ) {
     super(message);
   }
@@ -142,7 +143,11 @@ async function fromGithub(link: GithubLink, expected?: { tree: string }): Promis
   if (folders.includes(base)) folder = base;
   else if (folders.length === 1) folder = folders[0]!;
   else if (folders.length === 0) throw new AddProblem("There's no skill (no SKILL.md) at that address.");
-  else throw new AddProblem(`That link holds ${folders.length} skills. Pick one.`, folders.slice(0, 50).map((path) => ({ path, name: path.split("/").pop() || link.repo })));
+  else {
+    // Each choice is a link to that folder at this same commit, so picking one previews exactly what was listed (review-040 B).
+    const choices = folders.slice(0, 50).map((path) => ({ path, name: path.split("/").pop() || link.repo, link: `${repoId(link)}${path ? `/${path}` : ""}@${commit}` }));
+    throw new AddProblem(`That link holds ${folders.length} skills. Pick one.`, choices, { source: repoId(link), commit });
+  }
   const prefix = folder ? `${folder}/` : "";
   const folderTree = folder ? tree.entries.find((entry) => entry.type === "tree" && entry.path === folder)?.sha : tree.sha;
   if (expected && folderTree !== expected.tree) throw new AddProblem("That skill's files at the pinned version are not what this plugin checked. Nothing was added.");
@@ -320,7 +325,7 @@ export async function previewSkill(paseo: Paseo | null, source: AddSource): Prom
   try {
     return (await plan(paseo, source, false)).preview;
   } catch (error) {
-    if (error instanceof AddProblem) return { ...EMPTY, problem: error.message, choices: error.choices };
+    if (error instanceof AddProblem) return { ...EMPTY, problem: error.message, choices: error.choices, ...(error.where ?? {}) };
     if (error instanceof GithubError) return { ...EMPTY, problem: error.message };
     throw error;
   }

@@ -275,20 +275,49 @@ export function suggestName(text: string): string {
 /** Tools that run commands on the computer when a skill grants them (Claude's `allowed-tools`). */
 const COMMAND_TOOLS = /\b(Bash|Shell|PowerShell|exec|Execute|Terminal)\b/i;
 
-/** Top-level header keys with everything indented under each, as raw text. */
-function headerBlocks(text: string): Map<string, string> | null {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
+const HEADER_KEY = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[A-Za-z0-9_][A-Za-z0-9_.-]*)[ \t]*:(?:[ \t]+(.*)|[ \t]*)$/;
+
+function unquoteKey(raw: string): string {
+  if (raw.startsWith('"')) {
+    try {
+      return JSON.parse(raw) as string;
+    } catch {
+      return raw.slice(1, -1);
+    }
+  }
+  if (raw.startsWith("'")) return raw.slice(1, -1).replace(/''/g, "'");
+  return raw;
+}
+
+/**
+ * Top-level header keys (bare, "double" or 'single' quoted) with everything
+ * indented under each, as raw text; `unreadable` when a top-level line is
+ * not such a key (a `?` key, a `<<` merge, a flow map, a stray list item).
+ * Null when there is no closed header.
+ */
+function headerBlocks(text: string): { blocks: Map<string, string>; unreadable: boolean } | null {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
   if (lines[0]?.trimEnd() !== "---") return null;
-  const out = new Map<string, string>();
+  const blocks = new Map<string, string>();
   let key: string | null = null;
+  let unreadable = false;
   for (let i = 1; i < lines.length; i += 1) {
     const line = lines[i]!;
-    if (line.trimEnd() === "---" || line.trimEnd() === "...") return out;
-    const top = /^([A-Za-z0-9_][A-Za-z0-9_-]*)\s*:(.*)$/.exec(line);
-    if (top) {
-      key = top[1]!;
-      out.set(key, top[2]!.trim());
-    } else if (key && /^\s/.test(line)) out.set(key, `${out.get(key)}\n${line.trim()}`);
+    if (line.trimEnd() === "---" || line.trimEnd() === "...") return { blocks, unreadable };
+    if (line.trim() === "" || /^#/.test(line)) continue;
+    if (/^\s/.test(line)) {
+      if (key) blocks.set(key, `${blocks.get(key)}\n${line.trim()}`);
+      else unreadable = true;
+      continue;
+    }
+    const top = HEADER_KEY.exec(line);
+    if (!top) {
+      unreadable = true;
+      key = null;
+      continue;
+    }
+    key = unquoteKey(top[1]!);
+    blocks.set(key, (top[2] ?? "").trim());
   }
   return null;
 }
@@ -304,10 +333,13 @@ function headerBlocks(text: string): Map<string, string> | null {
  * Treated like a script file: the add needs the code confirm.
  */
 export function skillMdRunsCommands(text: string): string | null {
-  const blocks = headerBlocks(text);
-  const body = blocks ? text.replace(/^﻿?---[\s\S]*?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, "") : text;
+  const header = headerBlocks(text);
+  const body = header ? text.replace(/^﻿?---[\s\S]*?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, "") : text;
   if (/(^|[^\\])!`[^`\n]+`/m.test(body)) return "Its instructions run a command when the skill starts (a !`…` line).";
-  if (!blocks) return null;
+  if (!header) return null;
+  // Fail closed: a header this reader can't fully read may hold any of the below.
+  if (header.unreadable) return "Its header has lines this plugin can't read, so it's treated as able to run commands.";
+  const blocks = header.blocks;
   if (blocks.has("hooks")) return "Its header sets hooks, which run commands when things happen.";
   const tools = blocks.get("allowed-tools");
   const grantsShell = tools !== undefined && (COMMAND_TOOLS.test(tools) || /(^|[\s,[\-])\*(\s|,|]|$)/.test(tools));

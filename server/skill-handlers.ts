@@ -10,7 +10,7 @@ import type { AddSource, ListingCost } from "../shared/skill-contracts";
 import { CATALOG, catalogName } from "../shared/skills-catalog";
 import { accountForProvider } from "./accounts";
 import { startWrite, workspaceDirectory, type Paseo } from "./daemon";
-import { skillLockPath } from "./env";
+import { skillLockPath, userHome } from "./env";
 import { Probe } from "./files";
 import { logWrite } from "./log";
 import { withDeadline } from "./run";
@@ -52,6 +52,7 @@ export async function handleSkillsInventory({ refresh }: { refresh?: boolean }, 
     ...(discovery.nextStep ? { nextStep: discovery.nextStep } : {}),
     usage,
     windowDays: discovery.settings.skillsWindowDays,
+    home: userHome(),
     counts: {
       skills: discovery.skills.length,
       places: discovery.skills.reduce((sum, skill) => sum + skill.locations.length, 0),

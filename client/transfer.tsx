@@ -1,3 +1,4 @@
+import { Markdown } from "./markdown";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useToast } from "@getpaseo/plugin/client/react-native";
 import React, { useEffect, useMemo, useState } from "react";
@@ -291,7 +292,13 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
                     {warning}
                   </Text>
                 ))}
-                {plain ? <Disclosure title={PLAIN.technical}>{<DiffView lines={item.diff} />}</Disclosure> : <DiffView lines={item.diff} />}
+                {/* What the note says, as it will read (the imported text, rendered); the exact change stays under technical details. */}
+                {items.find((entry) => entry.id === item.id)?.body.trim() ? (
+                  <Disclosure quiet title={T.readIt}>
+                    <Markdown text={items.find((entry) => entry.id === item.id)!.body} frontmatter={false} />
+                  </Disclosure>
+                ) : null}
+                {plain ? <Disclosure quiet title={PLAIN.technical}>{<DiffView lines={item.diff} />}</Disclosure> : <DiffView lines={item.diff} />}
               </View>
             </Card>
           ))}
