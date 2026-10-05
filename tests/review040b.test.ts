@@ -41,12 +41,14 @@ test("040b-A quoted keys and headers that can't be fully read count as running c
   // Lines the reader can't classify: fail closed.
   for (const lines of ["? complex key\n: value\n", "<<: *base\n", "- stray item\n", "{hooks: x}\n", "hooks : x\n"]) assert.ok(skillMdRunsCommands(header(lines)), lines);
   // Ordinary headers stay quiet.
-  for (const lines of ['license: "MIT: see file"\n', "metadata:\n  version: 1\n", "description2: >\n  folded\n  text\n", "# a comment\n", '"license": MIT\n']) assert.equal(skillMdRunsCommands(header(lines)), null, lines);
+  for (const lines of ['license: "MIT: see file"\n', "metadata:\n  version: 1\n", "when_to_use: >\n  folded\n  text\n", "# a comment\n"]) assert.equal(skillMdRunsCommands(header(lines)), null, lines);
+  // Since the release pass (040c-D): any quoted key, and any key this plugin doesn't know, counts too.
+  for (const lines of ['"license": MIT\n', "description2: >\n  folded\n"]) assert.ok(skillMdRunsCommands(header(lines)), lines);
   writeSkill(join(sb.shared, "quoted-hooks"), header('"hooks":\n  Stop:\n    - command: x\n'));
   try {
     const skill = (await discoverSkills(ctx.paseo as never, { refresh: true })).skills.find((entry) => entry.folder === "quoted-hooks")!;
     assert.equal(skill.scripts, 1);
-    assert.match(skill.runsCommands ?? "", /hooks/);
+    assert.match(skill.runsCommands ?? "", /hooks|can't read/);
     const detail = await handleSkillDetail({ skillId: skill.id }, ctx);
     assert.equal(detail.fileList.find((file) => file.path === "SKILL.md")!.kind, "script");
     assert.ok(detail.skill.runsCommands, "the detail view says so");

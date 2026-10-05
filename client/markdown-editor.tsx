@@ -1,6 +1,7 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, Text, TextInput, View, type LayoutChangeEvent, type NativeSyntheticEvent, type TextInputKeyPressEventData, type TextInputSelectionChangeEventData } from "react-native";
 import { applyFormat, type Format, type Selection } from "../shared/md-edit";
+import { History } from "../shared/md-history";
 import { MD_EDITOR } from "../shared/plain";
 import { Markdown } from "./markdown";
 import { HostIcon, RADIUS, SPACE, Segmented, TYPE, useTokens, wrapAnywhere } from "./ui";
@@ -18,6 +19,11 @@ import { HostIcon, RADIUS, SPACE, Segmented, TYPE, useTokens, wrapAnywhere } fro
 
 /** Side by side when the editor itself has this much room (about a 900 px window with the list beside it). */
 const SIDE_BY_SIDE = 600;
+/** The live preview waits this long after typing stops, and shows at most this much of the note. */
+const PREVIEW_DELAY_MS = 200;
+const PREVIEW_MAX = 100_000;
+/** From this length the text box stops guessing the text direction on every key (web only). */
+const LONG_TEXT = 20_000;
 
 const BUTTONS: ReadonlyArray<{ format: Format; icon: string; label: string; short: string }> = [
   { format: "bold", icon: "Bold", label: MD_EDITOR.bold, short: "B" },
@@ -69,24 +75,43 @@ export function MarkdownEditor({
   autoFocus?: boolean;
 }) {
   const t = useTokens();
-  const [selection, setSelection] = useState<Selection>({ start: value.length, end: value.length });
+  // Where the cursor is, kept without re-drawing on every move; handed to the text box only after a button or Undo places it.
+  const selectionRef = useRef<Selection>({ start: value.length, end: value.length });
+  const [placed, setPlaced] = useState<Selection | undefined>(undefined);
+  const selection = selectionRef.current;
+  const setSelection = (next: Selection) => {
+    selectionRef.current = next;
+    setPlaced(next);
+  };
   const [width, setWidth] = useState<number | null>(null);
   const [mode, setMode] = useState<"write" | "preview">("write");
-  const history = useRef<Array<{ text: string; selection: Selection }>>([]);
+  // One Undo step per change: button presses and typing (grouped by pauses and words).
+  const history = useRef(new History());
   const [canUndo, setCanUndo] = useState(false);
   const wide = !raw && width !== null && width >= SIDE_BY_SIDE;
+  // The preview follows the text a moment after typing stops, so a long note never slows typing down.
+  const [shown, setShown] = useState(value);
+  useEffect(() => {
+    if (value === shown) return;
+    const timer = setTimeout(() => setShown(value), PREVIEW_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [value]);
+  const type = (next: string) => {
+    history.current.typing(value, selectionRef.current, next, Date.now());
+    setCanUndo(history.current.canUndo);
+    onChange(next);
+  };
   const format = (kind: Format) => {
-    const edit = applyFormat(value, selection, kind);
-    history.current.push({ text: value, selection });
-    if (history.current.length > 50) history.current.shift();
+    const edit = applyFormat(value, selectionRef.current, kind);
+    history.current.button(value, selectionRef.current);
     setCanUndo(true);
     onChange(edit.text);
     setSelection(edit.selection);
   };
   const undo = () => {
-    const last = history.current.pop();
+    const last = history.current.undo(value);
+    setCanUndo(history.current.canUndo);
     if (!last) return;
-    setCanUndo(history.current.length > 0);
     onChange(last.text);
     setSelection(last.selection);
   };
@@ -106,12 +131,18 @@ export function MarkdownEditor({
   const input = (
     <TextInput
       value={value}
-      onChangeText={onChange}
-      selection={selection}
-      onSelectionChange={(event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => setSelection(event.nativeEvent.selection)}
+      onChangeText={type}
+      {...(placed ? { selection: placed } : {})}
+      onSelectionChange={(event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
+        selectionRef.current = event.nativeEvent.selection;
+        // Placed once; from here the text box keeps its own cursor again.
+        if (placed) setPlaced(undefined);
+      }}
       onKeyPress={onKeyPress}
       placeholder={placeholder}
       placeholderTextColor={t.color.placeholder}
+      // The web's automatic text direction re-reads the whole text on every key (about 270 ms at 150 KB); long notes get a fixed one.
+      {...(Platform.OS === "web" && value.length > LONG_TEXT ? ({ dir: "ltr" } as object) : {})}
       accessibilityLabel={label ?? placeholder ?? MD_EDITOR.text}
       multiline
       autoFocus={autoFocus}
@@ -138,7 +169,14 @@ export function MarkdownEditor({
   );
   const preview = (
     <View style={{ flex: 1, minWidth: 0, minHeight, borderWidth: 1, borderColor: t.color.borderSubtle, borderRadius: RADIUS.control, padding: SPACE.row, backgroundColor: t.color.surface1 }}>
-      {value.trim() ? <Markdown text={value} frontmatter={frontmatter} /> : <Text style={t.text.caption}>{MD_EDITOR.nothingYet}</Text>}
+      {shown.trim() ? (
+        <View style={{ gap: SPACE.sm }}>
+          <Markdown text={shown.length > PREVIEW_MAX ? shown.slice(0, PREVIEW_MAX) : shown} frontmatter={frontmatter} limit={PREVIEW_MAX} />
+          {shown.length > PREVIEW_MAX ? <Text style={t.text.caption}>{MD_EDITOR.previewStart}</Text> : null}
+        </View>
+      ) : (
+        <Text style={t.text.caption}>{MD_EDITOR.nothingYet}</Text>
+      )}
     </View>
   );
   return (

@@ -275,48 +275,86 @@ export function suggestName(text: string): string {
 /** Tools that run commands on the computer when a skill grants them (Claude's `allowed-tools`). */
 const COMMAND_TOOLS = /\b(Bash|Shell|PowerShell|exec|Execute|Terminal)\b/i;
 
-const HEADER_KEY = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[A-Za-z0-9_][A-Za-z0-9_.-]*)[ \t]*:(?:[ \t]+(.*)|[ \t]*)$/;
+/**
+ * Header keys that can't make an agent run anything: their value is only
+ * read (a name, a description, a hint, a model, a switch). `metadata` holds
+ * plain scalars underneath. Everything else in a header (hooks, shell, a
+ * forked agent, keys this plugin doesn't know) is checked, or treated as
+ * able to run commands.
+ */
+const HARMLESS_KEYS = new Set([
+  "name", "description", "when_to_use", "argument-hint", "arguments", "license", "compatibility", "metadata",
+  "model", "effort", "user-invocable", "disable-model-invocation", "paths", "version", "author", "tags", "category",
+  "disallowed-tools",
+]);
+/** Keys this check reads for itself. */
+const CHECKED_KEYS = new Set(["allowed-tools", "context", "agent", "hooks", "shell"]);
 
-function unquoteKey(raw: string): string {
-  if (raw.startsWith('"')) {
-    try {
-      return JSON.parse(raw) as string;
-    } catch {
-      return raw.slice(1, -1);
-    }
-  }
-  if (raw.startsWith("'")) return raw.slice(1, -1).replace(/''/g, "'");
-  return raw;
+const PLAIN_KEY = /^([a-z][a-z0-9_-]*):(?: (.*))?$/;
+const NESTED_KEY = /^[a-z][a-z0-9_-]*:(?: (.*))?$/;
+
+/** A plain value: no anchor, alias, tag, flow map, or `?`/`<<` forms. Quoted strings and `[a, b]` lists of plain words are fine. */
+function plainValue(value: string): boolean {
+  const v = value.trim();
+  if (v === "" || /^[>|][+-]?$/.test(v)) return true;
+  if (/^[&*!{?%@`]|^<</.test(v)) return false;
+  // A one-line list: quoted items may hold anything (globs); outside them, no flow maps, anchors, aliases or tags.
+  if (v.startsWith("[")) return v.endsWith("]") && !/[{}&*!]/.test(v.replace(/"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'/g, '""'));
+  if (v.startsWith('"')) return /^"(?:[^"\\]|\\.)*"(?:\s+#.*)?$/.test(v);
+  if (v.startsWith("'")) return /^'(?:[^']|'')*'(?:\s+#.*)?$/.test(v);
+  return true;
+}
+
+/** May this indented line sit under `key`? */
+function plainIndented(key: string, inner: string): boolean {
+  if (key === "hooks") return true; // flagged on its own anyway
+  if (inner.startsWith("- ")) return plainValue(inner.slice(2));
+  if (inner === "-") return true;
+  const nested = NESTED_KEY.exec(inner);
+  if (nested) return key === "metadata" && plainValue(nested[1] ?? "");
+  // A line carrying on the value above (folded text).
+  return !/^[&*!{?<[]/.test(inner);
 }
 
 /**
- * Top-level header keys (bare, "double" or 'single' quoted) with everything
- * indented under each, as raw text; `unreadable` when a top-level line is
- * not such a key (a `?` key, a `<<` merge, a flow map, a stray list item).
- * Null when there is no closed header.
+ * The header read strictly, failing closed: `unreadable` unless every line
+ * is a comment, a bare lower-case `key: plain value`, or a plain line
+ * indented under one. Quoted keys (and the escapes they may hide), anchors,
+ * merges, flow maps, `?` keys, tabs and a `...` before the closing `---` all
+ * count as unreadable. Keys that are neither known-harmless nor checked are
+ * listed. Null when there is no closed header.
  */
-function headerBlocks(text: string): { blocks: Map<string, string>; unreadable: boolean } | null {
+function readHeader(text: string): { blocks: Map<string, string>; unreadable: boolean; unknown: string[] } | null {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
   if (lines[0]?.trimEnd() !== "---") return null;
   const blocks = new Map<string, string>();
-  let key: string | null = null;
+  const unknown: string[] = [];
   let unreadable = false;
+  let key: string | null = null;
   for (let i = 1; i < lines.length; i += 1) {
     const line = lines[i]!;
-    if (line.trimEnd() === "---" || line.trimEnd() === "...") return { blocks, unreadable };
-    if (line.trim() === "" || /^#/.test(line)) continue;
-    if (/^\s/.test(line)) {
-      if (key) blocks.set(key, `${blocks.get(key)}\n${line.trim()}`);
-      else unreadable = true;
+    if (line.trimEnd() === "---") return { blocks, unreadable, unknown };
+    // A YAML document end: Claude's reader may not stop here, so whatever follows could still be header.
+    if (line.trimEnd() === "...") {
+      unreadable = true;
       continue;
     }
-    const top = HEADER_KEY.exec(line);
-    if (!top) {
+    if (line.includes("\t")) unreadable = true;
+    if (line.trim() === "" || /^#/.test(line)) continue;
+    if (/^ /.test(line)) {
+      const inner = line.trim();
+      if (!key || !plainIndented(key, inner)) unreadable = true;
+      if (key) blocks.set(key, `${blocks.get(key)}\n${inner}`);
+      continue;
+    }
+    const top = PLAIN_KEY.exec(line);
+    if (!top || !plainValue(top[2] ?? "")) {
       unreadable = true;
       key = null;
       continue;
     }
-    key = unquoteKey(top[1]!);
+    key = top[1]!;
+    if (!HARMLESS_KEYS.has(key) && !CHECKED_KEYS.has(key)) unknown.push(key);
     blocks.set(key, (top[2] ?? "").trim());
   }
   return null;
@@ -329,24 +367,24 @@ function headerBlocks(text: string): { blocks: Map<string, string>; unreadable: 
  * granting a shell lets the skill run commands without a prompt; `shell`
  * picks the shell for `` !`cmd` `` lines, which run before the model reads
  * the skill; `context: fork` and `agent` start a helper with every tool
- * unless `allowed-tools` restricts it to ones that can't run commands.
+ * unless `allowed-tools` restricts it. And it fails closed: a header this
+ * plugin can't read for sure, or with keys it doesn't know, counts too.
  * Treated like a script file: the add needs the code confirm.
  */
 export function skillMdRunsCommands(text: string): string | null {
-  const header = headerBlocks(text);
-  const body = header ? text.replace(/^﻿?---[\s\S]*?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, "") : text;
+  const header = readHeader(text);
+  const body = header ? text.replace(/^\uFEFF?---[\s\S]*?\n---[ \t]*(?:\r?\n|$)/, "") : text;
   if (/(^|[^\\])!`[^`\n]+`/m.test(body)) return "Its instructions run a command when the skill starts (a !`…` line).";
   if (!header) return null;
-  // Fail closed: a header this reader can't fully read may hold any of the below.
-  if (header.unreadable) return "Its header has lines this plugin can't read, so it's treated as able to run commands.";
   const blocks = header.blocks;
   if (blocks.has("hooks")) return "Its header sets hooks, which run commands when things happen.";
   const tools = blocks.get("allowed-tools");
-  const grantsShell = tools !== undefined && (COMMAND_TOOLS.test(tools) || /(^|[\s,[\-])\*(\s|,|]|$)/.test(tools));
-  if (grantsShell) return "Its header lets it run commands without asking.";
+  if (tools !== undefined && (COMMAND_TOOLS.test(tools) || /(^|[\s,[\-])\*(\s|,|]|$)/.test(tools))) return "Its header lets it run commands without asking.";
   if (blocks.has("shell")) return "Its header picks a shell to run commands with.";
   const forks = blocks.get("context")?.replace(/["']/g, "").trim() === "fork" || blocks.has("agent");
   if (forks && tools === undefined) return "It starts a helper agent that can run commands.";
+  if (header.unreadable) return "Its header has lines this plugin can't read for sure, so it's treated as able to run commands.";
+  if (header.unknown.length) return `Its header has settings this plugin doesn't know (${header.unknown.slice(0, 3).join(", ")}), so it's treated as able to run commands.`;
   return null;
 }
 

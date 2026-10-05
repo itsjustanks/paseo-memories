@@ -271,7 +271,7 @@ export function parseMarkdown(text: string, { frontmatter = true }: { frontmatte
 const PUNCT = /[!-/:-@[-`{-~]/;
 const WORD = /[\p{L}\p{N}]/u;
 
-type Ctx = { depth: number; noClose: Map<string, number> };
+type Ctx = { depth: number; noClose: Map<string, number>; /** Code-mark run length → the first place no closer was found from. */ noTicks: Map<number, number> };
 
 /** Where `marker` closes, from `from`: not escaped, not inside a code span, not after a space; -1 when it doesn't. */
 function findClose(text: string, from: number, marker: string, ctx: Ctx, word: boolean): number {
@@ -357,51 +357,69 @@ export function safeHref(href: string): string | null {
 
 function inline(text: string, ctx: Ctx): Inline[] {
   const out: Inline[] = [];
-  let buffer = "";
-  const flush = () => {
-    if (buffer) out.push({ t: "text", v: buffer });
-    buffer = "";
+  // Plain text is collected as pieces (slices of `text`) and joined once per run: linear in the text's length.
+  let pieces: string[] = [];
+  let run = 0; // where the current slice of plain text starts
+  const take = (until: number) => {
+    if (until > run) pieces.push(text.slice(run, until));
   };
-  const deeper = (inner: string): Inline[] => (ctx.depth >= MD_LIMITS.inlineDepth ? [{ t: "text", v: inner }] : inline(inner, { depth: ctx.depth + 1, noClose: new Map() }));
+  const flush = () => {
+    if (pieces.length) {
+      const value = pieces.join("");
+      if (value) out.push({ t: "text", v: value });
+    }
+    pieces = [];
+  };
+  const deeper = (inner: string): Inline[] => (ctx.depth >= MD_LIMITS.inlineDepth ? [{ t: "text", v: inner }] : inline(inner, { depth: ctx.depth + 1, noClose: new Map(), noTicks: new Map() }));
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i]!;
     const prev = i > 0 ? text[i - 1]! : " ";
     if (ch === "\\" && i + 1 < text.length) {
       const nextCh = text[i + 1]!;
       if (nextCh === "\n") {
+        take(i);
         flush();
         out.push({ t: "br" });
         i += 1;
+        run = i + 1;
         continue;
       }
       if (PUNCT.test(nextCh)) {
-        buffer += nextCh;
+        take(i);
+        pieces.push(nextCh);
         i += 1;
+        run = i + 1;
         continue;
       }
     }
     if (ch === "\n") {
-      // Two spaces before a line end is a hard break; any other line end is a space.
-      if (buffer.endsWith("  ")) {
-        buffer = buffer.replace(/ +$/, "");
+      // Two spaces before a line end is a hard break; any other line end is a space. Only the spaces just before it are looked at.
+      let spaces = 0;
+      while (i - spaces - 1 >= run && text[i - spaces - 1] === " ") spaces += 1;
+      take(i - spaces);
+      if (spaces >= 2) {
         flush();
         out.push({ t: "br" });
-      } else buffer = `${buffer.replace(/ +$/, "")} `;
+      } else pieces.push(" ");
+      run = i + 1;
       continue;
     }
     if (ch === "`") {
       let n = 0;
       while (text[i + n] === "`") n += 1;
-      const end = text.indexOf("`".repeat(n), i + n);
+      const none = ctx.noTicks.get(n);
+      const end = none !== undefined && i >= none ? -1 : text.indexOf("`".repeat(n), i + n);
+      if (end < 0 && none === undefined) ctx.noTicks.set(n, i);
       if (end >= 0 && text[end + n] !== "`") {
         let code = text.slice(i + n, end).replace(/\n/g, " ");
         if (code.length > 2 && code.startsWith(" ") && code.endsWith(" ")) code = code.slice(1, -1);
+        take(i);
         flush();
         out.push({ t: "code", v: code });
         i = end + n - 1;
+        run = i + 1;
         continue;
       }
-      buffer += "`".repeat(n);
       i += n - 1;
       continue;
     }
@@ -412,19 +430,23 @@ function inline(text: string, ctx: Ctx): Inline[] {
       if (target) {
         const label = text.slice(open + 1, close);
         const href = safeHref(target.href);
+        take(i);
         flush();
         const children = deeper(label.length ? label : target.href);
         out.push(href ? { t: "link", href, c: children } : { t: "em", c: children });
         i = target.end - 1;
+        run = i + 1;
         continue;
       }
     }
     if (ch === "<") {
       const auto = /^<((?:https?:\/\/|mailto:)[^>\s]+)>/i.exec(text.slice(i, i + 2100));
       if (auto) {
+        take(i);
         flush();
         out.push({ t: "link", href: auto[1]!, c: [{ t: "text", v: auto[1]! }] });
         i += auto[0].length - 1;
+        run = i + 1;
         continue;
       }
     }
@@ -432,9 +454,11 @@ function inline(text: string, ctx: Ctx): Inline[] {
       const bare = /^https?:\/\/[^\s<>"'`]+/i.exec(text.slice(i, i + 2100));
       if (bare) {
         const url = bare[0].replace(/[.,;:!?)\]]+$/, "");
+        take(i);
         flush();
         out.push({ t: "link", href: url, c: [{ t: "text", v: url }] });
         i += url.length - 1;
+        run = i + 1;
         continue;
       }
     }
@@ -444,9 +468,11 @@ function inline(text: string, ctx: Ctx): Inline[] {
       if (!word || !WORD.test(prev)) {
         const end = findClose(text, i + 2, two, ctx, word);
         if (end > i + 2) {
+          take(i);
           flush();
           out.push({ t: two === "~~" ? "del" : "strong", c: deeper(text.slice(i + 2, end)) });
           i = end + 1;
+          run = i + 1;
           continue;
         }
       }
@@ -456,21 +482,23 @@ function inline(text: string, ctx: Ctx): Inline[] {
       if (!word || !WORD.test(prev)) {
         const end = findClose(text, i + 1, ch, ctx, word);
         if (end > i + 1) {
+          take(i);
           flush();
           out.push({ t: "em", c: deeper(text.slice(i + 1, end)) });
           i = end;
+          run = i + 1;
           continue;
         }
       }
     }
-    buffer += ch;
   }
+  take(text.length);
   flush();
   return out;
 }
 
 export function parseInline(text: string): Inline[] {
-  return inline(text, { depth: 0, noClose: new Map() });
+  return inline(text, { depth: 0, noClose: new Map(), noTicks: new Map() });
 }
 
 /** The words of a run, without any formatting: for search snippets and accessibility labels. */

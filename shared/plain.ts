@@ -617,4 +617,6 @@ export const MD_EDITOR = {
   edit: "Change",
   editTechnical: "Edit",
   readAsText: "Show as plain text",
+  previewStart: "The preview shows the start of this note; everything you write is still saved.",
+  displayStart: "This note is long, so only its start is shown here. Change it, or open the whole file, to see the rest.",
 };

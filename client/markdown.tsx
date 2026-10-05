@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Text, View, type TextStyle } from "react-native";
 import { parseInline, parseMarkdown, type Block, type Inline } from "../shared/md-parse";
+import { MD_EDITOR } from "../shared/plain";
 import { openLink } from "./links";
 import { HostIcon, TYPE, useTokens, wrapAnywhere } from "./ui";
 
@@ -160,12 +161,24 @@ function Blocks({ blocks, depth, done }: { blocks: readonly Block[]; depth: numb
   );
 }
 
+/** How much of a note a view draws; a longer note shows its start and says so (the editor and the whole file have all of it). */
+export const DISPLAY_MAX = 200_000;
+
 /** A note's text, rendered. `frontmatter: false` shows a leading `---` block as text (for files that don't use one). */
-export function Markdown({ text, frontmatter = true }: { text: string; frontmatter?: boolean }) {
+function MarkdownView({ text, frontmatter = true, limit = DISPLAY_MAX }: { text: string; frontmatter?: boolean; limit?: number }) {
   const t = useTokens();
-  const blocks = useMemo(() => parseMarkdown(text, { frontmatter }), [text, frontmatter]);
-  return <View style={{ gap: t.space.sm, minWidth: 0 }}>{blocks.length ? <Blocks blocks={blocks} depth={0} /> : null}</View>;
+  const cut = text.length > limit;
+  const blocks = useMemo(() => parseMarkdown(cut ? text.slice(0, limit) : text, { frontmatter }), [text, frontmatter, limit]);
+  return (
+    <View style={{ gap: t.space.sm, minWidth: 0 }}>
+      {blocks.length ? <Blocks blocks={blocks} depth={0} /> : null}
+      {cut ? <Text style={t.text.caption}>{MD_EDITOR.displayStart}</Text> : null}
+    </View>
+  );
 }
+
+/** Drawn again only when its text changes: typing in the editor beside it never re-draws a long preview. */
+export const Markdown = React.memo(MarkdownView);
 
 /** One line of text with its inline formatting (bold, code, links), for snippets and titles. */
 export function MarkdownLine({ text, style, lines }: { text: string; style?: Style; lines?: number }) {

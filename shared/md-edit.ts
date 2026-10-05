@@ -20,12 +20,13 @@ const clamp = (sel: Selection, length: number): Selection => {
 function wrap(text: string, raw: Selection, mark: string, placeholder: string): Edit {
   const sel = clamp(raw, text.length);
   const inner = text.slice(sel.start, sel.end);
-  // Already wrapped around the selection: unwrap.
-  if (text.slice(sel.start - mark.length, sel.start) === mark && text.slice(sel.end, sel.end + mark.length) === mark && sel.start >= mark.length) {
+  // Already wrapped around the selection: unwrap. A one-character mark must stand alone (the `*` of `**bold**` is not italic).
+  const alone = mark.length > 1 || (text[sel.start - mark.length - 1] !== mark && text[sel.end + mark.length] !== mark);
+  if (alone && text.slice(sel.start - mark.length, sel.start) === mark && text.slice(sel.end, sel.end + mark.length) === mark && sel.start >= mark.length) {
     return { text: text.slice(0, sel.start - mark.length) + inner + text.slice(sel.end + mark.length), selection: { start: sel.start - mark.length, end: sel.end - mark.length } };
   }
   // The selection includes the marks: unwrap.
-  if (inner.length >= mark.length * 2 && inner.startsWith(mark) && inner.endsWith(mark)) {
+  if (inner.length >= mark.length * 2 && inner.startsWith(mark) && inner.endsWith(mark) && (mark.length > 1 || (inner[1] !== mark && inner[inner.length - 2] !== mark))) {
     const bare = inner.slice(mark.length, inner.length - mark.length);
     return { text: text.slice(0, sel.start) + bare + text.slice(sel.end), selection: { start: sel.start, end: sel.start + bare.length } };
   }
@@ -82,8 +83,18 @@ export function applyFormat(text: string, selection: Selection, format: Format):
   switch (format) {
     case "bold":
       return wrap(text, selection, "**", "bold text");
-    case "italic":
-      return wrap(text, selection, "*", "italic text");
+    case "italic": {
+      // Pressing Italic on italic text (either form) takes it off.
+      const sel = clamp(selection, text.length);
+      for (const mark of ["_", "*"]) {
+        const edit = wrap(text, sel, mark, "italic text");
+        if (edit.text.length < text.length) return edit;
+      }
+      // Next to `*` marks (inside **bold**), `*` would merge with them: use `_` there.
+      const inner = text.slice(sel.start, sel.end);
+      const nearStar = text[sel.start - 1] === "*" || text[sel.end] === "*" || inner.startsWith("*") || inner.endsWith("*");
+      return wrap(text, sel, nearStar ? "_" : "*", "italic text");
+    }
     case "code": {
       const sel = clamp(selection, text.length);
       const inner = text.slice(sel.start, sel.end);
