@@ -2,6 +2,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { discoverAccounts } from "./accounts";
 import { lastKnownLaunch } from "./daemon";
 import { sharedSkillsDir, skillLockPath } from "./env";
+import fs from "node:fs/promises";
 import { listDir, statSafe } from "./files";
 
 /**
@@ -65,15 +66,19 @@ export async function skillFolderReason(folder: string): Promise<string | null> 
  * managed one.
  */
 export async function skillParentReason(parent: string, purpose: "install" | "link" | "remove"): Promise<string | null> {
-  const full = resolve(parent);
-  const shared = resolve(sharedSkillsDir());
+  // Both sides as written and with links followed: a skills folder is often a link into a dotfiles repository (review-040 #4).
+  const real = async (path: string) => fs.realpath(path).catch(() => resolve(path));
+  const forms = async (paths: string[]) => new Set((await Promise.all(paths.map(async (path) => [resolve(path), await real(path)]))).flat());
+  const full = await forms([parent]);
   const dirs = await agentDirs();
-  const claude = dirs.claude.map((dir) => join(dir, "skills"));
-  const codex = dirs.codex.map((dir) => join(dir, "skills"));
-  const pi = dirs.pi.map((dir) => join(dir, "skills"));
-  if (purpose === "install") return full === shared ? null : "Skills are only added to the shared skills folder.";
-  if (purpose === "link") return claude.includes(full) ? null : "Links are only made in Claude's own skills folders.";
-  return full === shared || claude.includes(full) || codex.includes(full) || pi.includes(full) ? null : "That isn't in a skills folder of yours, so this plugin won't remove it.";
+  const hit = (set: Set<string>) => [...full].some((path) => set.has(path));
+  const shared = await forms([sharedSkillsDir()]);
+  const claude = await forms(dirs.claude.map((dir) => join(dir, "skills")));
+  const codex = await forms(dirs.codex.map((dir) => join(dir, "skills")));
+  const pi = await forms(dirs.pi.map((dir) => join(dir, "skills")));
+  if (purpose === "install") return hit(shared) ? null : "Skills are only added to the shared skills folder.";
+  if (purpose === "link") return hit(claude) ? null : "Links are only made in Claude's own skills folders.";
+  return hit(shared) || hit(claude) || hit(codex) || hit(pi) ? null : "That isn't in a skills folder of yours, so this plugin won't remove it.";
 }
 
 /** Null when the file may be written; otherwise why not, in a sentence. */

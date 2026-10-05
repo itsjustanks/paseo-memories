@@ -4,7 +4,8 @@ import type { z } from "zod";
 import { Pressable, Text, View } from "react-native";
 import { plainError } from "../shared/errors";
 import { formatBytes } from "../shared/format";
-import { skillsAdd, skillsPreview, type AddSource } from "../shared/skill-contracts";
+import { skillsAdd, skillsLink, skillsPreview, type AddSource } from "../shared/skill-contracts";
+import { RUNS_COMMANDS } from "../shared/skill-md";
 import { SKILLS_PLAIN as S, plainSkillMessage } from "../shared/skills-plain";
 import { QueryState } from "./data";
 import { usePlain } from "./mode";
@@ -21,13 +22,14 @@ import { Bullets, Button, Card, CodeBlock, Disclosure, Field, Meta, Notice, Path
  */
 
 type Preview = z.output<(typeof skillsPreview)["output"]>;
-type Result = { ok: boolean; message: string; warnings: string[]; skillId?: string };
+type Result = { ok: boolean; message: string; warnings: string[]; skillId?: string; linkRetry?: boolean };
 
 export function AddSkill({ hostId, mode, onMode, onOpen, compact }: { hostId: string; mode: AddMode; onMode: (mode: AddMode) => void; onOpen?: (skillId: string) => void; compact?: boolean }) {
   const t = useTokens();
   const plain = usePlain();
   const preview = useRpc(skillsPreview);
   const add = useRpc(skillsAdd);
+  const link = useRpc(skillsLink);
   const refresh = useSkillsRefresh(hostId);
   const [source, setSource] = useState<AddSource | null>(null);
   const [shown, setShown] = useState<Preview | null>(null);
@@ -56,7 +58,7 @@ export function AddSkill({ hostId, mode, onMode, onOpen, compact }: { hostId: st
     setBusy(true);
     try {
       const done = await add({ source, planHash: shown.planHash, ...(shown.scripts ? { confirmScripts: confirmed } : {}) });
-      setResult({ ok: done.ok, message: done.message, warnings: done.warnings, ...(done.skillId ? { skillId: done.skillId } : {}) });
+      setResult({ ok: done.ok, message: done.message, warnings: done.warnings, ...(done.skillId ? { skillId: done.skillId } : {}), ...(done.linkRetry ? { linkRetry: true } : {}) });
       if (done.ok || done.skillId) setShown(null);
       void refresh();
     } catch (failure) {
@@ -86,7 +88,22 @@ export function AddSkill({ hostId, mode, onMode, onOpen, compact }: { hostId: st
           </View>
         </Notice>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
-          {result.skillId && onOpen ? <Button label="Open it" variant="primary" onPress={() => onOpen(result.skillId!)} /> : null}
+          {result.linkRetry && result.skillId ? (
+            <Button
+              label={S.add.linkForClaude}
+              icon="Link"
+              variant="primary"
+              loading={busy}
+              onPress={() => {
+                setBusy(true);
+                void link({ skillId: result.skillId! })
+                  .then((done) => setResult({ ok: done.ok, message: done.message, warnings: done.warnings, skillId: result.skillId!, ...(done.ok ? {} : { linkRetry: true }) }))
+                  .catch((failure) => setError(plainError(failure)))
+                  .finally(() => (setBusy(false), void refresh()));
+              }}
+            />
+          ) : null}
+          {result.skillId && onOpen ? <Button label="Open it" variant={result.linkRetry ? "secondary" : "primary"} onPress={() => onOpen(result.skillId!)} /> : null}
           <Button label="Add another" onPress={() => (setResult(null), back())} />
         </View>
       </>
@@ -190,7 +207,10 @@ function PreviewCard({ preview, busy, confirmed, onConfirmed, onAdd, onBack, onP
   const where = plain
     ? [preview.targets.some((target) => target.kind === "canonical") ? A.whereShared : "", links ? A.whereClaude(links) : "", preview.targets.some((target) => target.kind === "lock") ? A.whereList : ""].filter(Boolean)
     : preview.targets.map((target) => `${target.kind}: ${target.path}`);
-  const warnings = preview.warnings.filter((warning) => !/includes code your agents may run/i.test(warning));
+  // The reasons it can run commands go in the code confirm; a version off the main line is a decision too; the rest are quiet facts.
+  const commandReasons = preview.warnings.filter((warning) => warning.startsWith(RUNS_COMMANDS));
+  const decisions = preview.warnings.filter((warning) => /main line/.test(warning));
+  const warnings = preview.warnings.filter((warning) => !/includes code your agents may run/i.test(warning) && !commandReasons.includes(warning) && !decisions.includes(warning));
   const scripts = preview.files.filter((file) => file.kind === "script");
   return (
     <>
@@ -208,6 +228,11 @@ function PreviewCard({ preview, busy, confirmed, onConfirmed, onAdd, onBack, onP
               <Notice tone="attention">
                 <View style={{ gap: t.space.sm }}>
                   <Text style={t.text.bodyStrong}>{A.codeWarning}</Text>
+                  {commandReasons.map((reason) => (
+                    <Text key={reason} style={t.text.body}>
+                      {reason}
+                    </Text>
+                  ))}
                   {scripts.map((file) => (
                     <PathText key={file.path} path={`${file.path}${file.executable ? " (can be run)" : ""}`} style={t.text.mono} />
                   ))}
@@ -220,6 +245,11 @@ function PreviewCard({ preview, busy, confirmed, onConfirmed, onAdd, onBack, onP
                 </View>
               </Notice>
             ) : null}
+            {decisions.map((warning) => (
+              <Notice key={warning} tone="attention">
+                <Text style={t.text.body}>{say(warning)}</Text>
+              </Notice>
+            ))}
             {warnings.length ? <Meta>{warnings.map(say).join(" ")}</Meta> : null}
             {preview.problems.length ? <Meta>{preview.problems.map((problem) => say(problem.message)).join(" ")}</Meta> : null}
           </>

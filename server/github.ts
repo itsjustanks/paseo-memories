@@ -120,3 +120,20 @@ export function skillFolders(tree: Tree): string[] {
     .filter((entry) => entry.type === "blob" && (entry.path === "SKILL.md" || entry.path.endsWith("/SKILL.md")))
     .map((entry) => (entry.path === "SKILL.md" ? "" : entry.path.slice(0, -"/SKILL.md".length)));
 }
+
+/**
+ * Whether a commit is on the repository's default branch (it, or an older
+ * commit of it). GitHub serves commits from forks under the original's
+ * address, so an id alone doesn't prove whose it is. False when it isn't
+ * there, or when GitHub can't say: the caller warns, it doesn't refuse.
+ */
+export async function onMainLine(link: Pick<GithubLink, "owner" | "repo">, commit: string): Promise<boolean> {
+  try {
+    const repo = JSON.parse((await get(`${API}/repos/${link.owner}/${link.repo}`, "application/vnd.github+json", 256 * 1024)).toString("utf8")) as { default_branch?: unknown };
+    if (typeof repo.default_branch !== "string" || !repo.default_branch) return false;
+    const compare = JSON.parse((await get(`${API}/repos/${link.owner}/${link.repo}/compare/${encodeURIComponent(repo.default_branch)}...${commit}`, "application/vnd.github+json", 4 * 1024 * 1024)).toString("utf8")) as { status?: unknown };
+    return compare.status === "behind" || compare.status === "identical";
+  } catch {
+    return false;
+  }
+}

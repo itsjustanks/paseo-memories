@@ -18,6 +18,7 @@ import {
   handleSkillsCatalog,
   handleSkillsFix,
   handleSkillsInventory,
+  handleSkillsLink,
   handleSkillsPreview,
   handleSkillsRemove,
   handleSkillsToggle,
@@ -49,7 +50,7 @@ import {
   workspacePlan,
 } from "./shared/contracts";
 import { maskTextFields } from "./shared/secrets";
-import { skillDetail, skillsAdd, skillsAgent, skillsCatalog, skillsFix, skillsInventory, skillsPreview, skillsRemove, skillsToggle, skillsUsage, skillsWorkspace } from "./shared/skill-contracts";
+import { skillDetail, skillsAdd, skillsAgent, skillsCatalog, skillsFix, skillsInventory, skillsLink, skillsPreview, skillsRemove, skillsToggle, skillsUsage, skillsWorkspace } from "./shared/skill-contracts";
 import { memoriesSettings } from "./shared/settings";
 import { readMemoriesSettings, adoptSettingsHandle } from "./server/settings";
 
@@ -123,6 +124,7 @@ export default function contribute(server: PluginServerContext) {
   handle(skillsToggle, handleSkillsToggle);
   handle(skillsRemove, handleSkillsRemove);
   handle(skillsFix, handleSkillsFix);
+  handle(skillsLink, handleSkillsLink);
 
   runStart();
   return () => {

@@ -465,7 +465,8 @@ function PlainHeader({ source, name }: { source: Source; name: string }) {
       </View>
       <Facts
         items={[
-          source.exists && !source.isDirectory ? { value: plainWords(Math.ceil(source.bytes / 4)) } : null,
+          // Said once: the size only when it differs from what is read at the start.
+          source.exists && !source.isDirectory && plainWords(Math.ceil(source.bytes / 4)) !== plainWords(source.loaded.tokens) ? { value: plainWords(Math.ceil(source.bytes / 4)) } : null,
           source.loaded.tokens ? { value: PLAIN.overview.readAtStart(plainWords(source.loaded.tokens)) } : { value: "Not read at the start" },
           source.readBy.length ? { value: `Followed by ${plainAgents(source.readBy)}` } : null,
         ]}
@@ -484,8 +485,9 @@ function PlainNotices({ source, warnings, codex }: { source: Source; warnings: s
   const plainWarnings = [...new Set(warnings.map(plainDetailWarning).filter((line): line is string => Boolean(line)))];
   return (
     <View style={{ gap: t.space.sm }}>
-      {source.access !== "editable" ? <Notice tone="neutral">{plainReadOnly(source)}</Notice> : null}
-      {source.kind === "codex-memory" ? <Notice tone="attention">{PLAIN.codexRewrites}</Notice> : null}
+      {/* Steady facts are quiet; notices are kept for what needs a decision (the pending clean-up, sharing, limits). */}
+      {source.access !== "editable" ? <Text style={t.text.caption}>{plainReadOnly(source)}</Text> : null}
+      {source.kind === "codex-memory" ? <Text style={t.text.caption}>{PLAIN.codexRewrites}</Text> : null}
       {codex?.pending ? <Notice tone="attention">{PLAIN.codexPending}</Notice> : null}
       {codex && codex.lock !== "free" ? <Text style={t.text.caption}>{codex.lock === "locked" ? PLAIN.codexBusy : PLAIN.codexUnsure}</Text> : null}
       {source.versionControlled ? <Notice tone="attention">{PLAIN.shared}</Notice> : null}
@@ -575,14 +577,14 @@ function AddToFile({ busy, onAdd }: { busy: boolean; onAdd: (note: { title: stri
   if (!open) {
     return (
       <View style={{ flexDirection: "row" }}>
-        <Button label={N.add} icon="Plus" onPress={() => setOpen(true)} />
+        <Button label={N.addHere} icon="Plus" onPress={() => setOpen(true)} />
       </View>
     );
   }
   return (
     <Card>
       <View style={{ gap: t.space.sm }}>
-        <Text style={t.text.section}>{N.add}</Text>
+        <Text style={t.text.section}>{N.addHere}</Text>
         <Field label={N.titleLabel} value={title} onChangeText={setTitle} placeholder="Invoices" />
         <Field label={N.textLabel} value={body} onChangeText={setBody} multiline minHeight={120} placeholder="Invoices go out on the 1st of each month." />
         <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>

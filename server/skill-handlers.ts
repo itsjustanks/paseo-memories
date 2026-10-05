@@ -20,9 +20,9 @@ import { forgetAdded } from "./skill-records";
 import { projectRoots } from "./skill-roots";
 import { chatUsage, folderUsage, requestUsagePass, usageState, usageSummary } from "./skill-usage";
 import { agentWindow, claudeWindows, type AccountWindow } from "./skill-models";
-import { cost, discoverSkills, findSkill, forgetSkills, publicSkill, walkSkill, type InternalSkill, type SkillsDiscovery } from "./skills";
+import { cost, discoverSkills, findSkill, forgetSkills, publicSkill, skillMdPaths, walkSkill, type InternalSkill, type SkillsDiscovery } from "./skills";
 import { skillParentReason } from "./writable";
-import { moveToBackup, newSession, readCurrent, safeWrite, type Session } from "./write";
+import { createSkillLink, moveRefusal, moveToBackup, newSession, readCurrent, safeWrite, type Session } from "./write";
 
 /**
  * The Skills RPC handlers. Reads answer from discovery and the usage scan's
@@ -295,6 +295,12 @@ export async function handleSkillsAdd(input: { source: AddSource; planHash: stri
 
 // ------------------------------------------------------------------ turn off / on
 
+/**
+ * Claude Code honours `skillOverrides` in user, project, local and managed
+ * settings, matched by skill name; plugin skills are not affected
+ * (https://code.claude.com/docs/en/skills, "Override skill visibility from
+ * settings"). This writes the account's user `settings.json`.
+ */
 const OVERRIDE_KEY = "skillOverrides";
 
 /** Claude's user settings with one skill's override set (off) or taken out (on). */
@@ -365,12 +371,13 @@ export async function handleSkillsToggle({ skillId, agent, on, accountId }: { sk
       const path = join(account.dir, "config.toml");
       const current = await readCurrent(path);
       const name = codexName(skill);
-      const next = setSkillEnabled(current.exists ? current.text : "", name, on);
+      const paths = skillMdPaths(skill);
+      const next = setSkillEnabled(current.exists ? current.text : "", name, on, paths);
       if ("error" in next) {
         reports.push({ target: path, ok: false, action: "refused", readBack: "skipped", error: next.error });
         continue;
       }
-      const report = await safeWrite(session, path, next.text, { newMode: 0o600, current, check: (text) => codexSkillEnabled(text, name) === on });
+      const report = await safeWrite(session, path, next.text, { newMode: 0o600, current, check: (text) => codexSkillEnabled(text, name, paths) === on });
       reports.push(report);
       logWrite("skills-toggle", path, report.ok ? report.action : "failed");
     }
@@ -404,14 +411,19 @@ export async function handleSkillsRemove({ skillId }: { skillId: string; confirm
     const refused = await skillParentReason(dirname(location.path), "remove");
     if (refused) return result(false, `Something outside your own skills folders links to ${skill.name} (${location.root.startsWith("project") ? "a project" : "a folder this plugin doesn't change"}), so it was left as it is. Remove that link first.`, []);
   }
+  const home = skill.homeRoot!;
+  const homeReal = await fs.realpath(home.path).catch(() => home.path);
+  const ownsFolder = resolve(join(skill.path, "..")) === resolve(homeReal) && home.userFolder;
+  // And the folder itself must be one the backups can take, before any link goes (review-040 #4).
+  if (ownsFolder) {
+    const refused = await moveRefusal(skill.path);
+    if (refused) return result(false, refused, []);
+  }
   startWrite();
   forgetSkills();
   const settings = await readMemoriesSettings();
   const session = newSession(settings.backupsToKeep);
   const reports: WriteReport[] = [];
-  const home = skill.homeRoot!;
-  const homeReal = await fs.realpath(home.path).catch(() => home.path);
-  const ownsFolder = resolve(join(skill.path, "..")) === resolve(homeReal) && home.userFolder;
   // Links first (each in a folder of the user's own), then the folder itself.
   for (const location of skill.locations) {
     if (!location.link) continue;
@@ -466,4 +478,25 @@ export async function handleSkillsFix({ findingId }: { findingId: string }, { pa
   forgetSkills();
   const ok = reports.length > 0 && reports.every((report) => report.ok);
   return result(ok, ok ? "Done. Anything taken out is in this plugin's backups." : reports.find((report) => !report.ok)?.error ?? "Nothing was changed.", reports);
+}
+
+// ------------------------------------------------------------------ link it for Claude
+
+export async function handleSkillsLink({ skillId }: { skillId: string }, { paseo }: Ctx) {
+  const found = await findSkill(paseo, skillId);
+  if (!found) return result(false, "That skill is no longer there. Refresh the list.", []);
+  const { skill, discovery } = found;
+  if (!skill.can.link) return result(false, "Every Claude account already sees this skill.", []);
+  startWrite();
+  forgetSkills();
+  const reports: WriteReport[] = [];
+  for (const account of discovery.accounts.accounts) {
+    if (account.agent !== "claude" || !account.exists || skill.claudeAccounts.includes(account.id)) continue;
+    const report = await createSkillLink(join(account.dir, "skills"), skill.folder, skill.path);
+    reports.push(report);
+    logWrite("skills-link", report.target, report.ok ? "linked" : report.action);
+  }
+  forgetSkills();
+  const ok = reports.length > 0 && reports.every((report) => report.ok);
+  return result(ok, ok ? `Claude can use ${skill.name} now. New chats see it; open ones may need a restart.` : reports.find((report) => !report.ok)?.error ?? "No link was made.", reports);
 }

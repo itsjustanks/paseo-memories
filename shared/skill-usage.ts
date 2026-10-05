@@ -13,8 +13,8 @@
  *
  * Codex (codex-cli 0.156): no event records a skill use. Estimated from a
  * `<skill><name>…</name>` block in a user message (an explicit use, as Paseo
- * sends it), and from a tool call whose arguments read
- * `…/skills/<name>/SKILL.md`. At most one use per skill per turn. The thread
+ * sends it), and from a tool call that reads `…/skills/<name>/SKILL.md`
+ * (`skillReads`: reads only, never lists, edits or writes). At most one use per skill per turn. The thread
  * id and folder come from `session_meta`.
  */
 
@@ -134,17 +134,77 @@ export function codexLine(line: string): CodexLine | null {
       }
     }
   } else if (payload.type === "function_call" || payload.type === "custom_tool_call" || payload.type === "local_shell_call") {
-    const action = payload.action as { command?: unknown } | undefined;
-    const raw = [payload.arguments, payload.input, action?.command]
-      .map((value) => (typeof value === "string" ? value : Array.isArray(value) ? value.filter((part) => typeof part === "string").join(" ") : ""))
-      .join(" ");
-    for (const match of raw.matchAll(SKILL_FILE)) {
+    for (const skill of skillReads(payload)) found.add(skill);
+  }
+  if (found.size === 0) return null;
+  return { kind: "uses", at, skills: [...found], typed };
+}
+
+/** Tools that only read a file, and tools that change one (Codex and common MCP names). */
+const READ_TOOLS = new Set(["read_file", "view", "view_file", "open_file", "read"]);
+const WRITE_TOOLS = new Set(["apply_patch", "write_file", "edit_file", "create_file", "str_replace", "write", "edit"]);
+/** Commands that read a file without changing it. */
+const READERS = new Set(["cat", "sed", "head", "tail", "less", "more", "bat", "nl", "awk", "grep", "rg", "view", "wc", "type", "Get-Content"]);
+/** What may come before the command itself: shells, their flags, env and sudo. */
+const WRAPPERS = new Set(["bash", "sh", "zsh", "-lc", "-c", "-l", "sudo", "env", "command", "exec"]);
+
+/** The command text of a tool call: `cmd`/`command` from JSON arguments (string or argv), else the raw text. */
+function commandText(payload: Record<string, unknown>): string {
+  const pieces: string[] = [];
+  const add = (value: unknown) => {
+    if (typeof value === "string") pieces.push(value);
+    else if (Array.isArray(value)) pieces.push(value.filter((part) => typeof part === "string").join(" "));
+  };
+  for (const raw of [payload.arguments, payload.input]) {
+    if (typeof raw !== "string") continue;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object") {
+        for (const key of ["cmd", "command", "path", "file_path", "filePath"]) add(parsed[key]);
+        continue;
+      }
+    } catch {
+      // not JSON: the text is the command
+    }
+    pieces.push(raw);
+  }
+  add((payload.action as { command?: unknown } | undefined)?.command);
+  return pieces.join("\n");
+}
+
+/** Does this one command (no `;`, `&&`, pipes) read the file it names, rather than list, write or change it? */
+function readsInSegment(segment: string): boolean {
+  if (/>{1,2}\s*\S*SKILL\.md/.test(segment)) return false;
+  const words = segment.trim().split(/\s+/).map((word) => word.replace(/^['"(]+|['")]+$/g, ""));
+  let i = 0;
+  while (i < words.length && (WRAPPERS.has(words[i]!) || /^[A-Z_][A-Z0-9_]*=/.test(words[i]!))) i += 1;
+  const verb = words[i] ?? "";
+  if (!READERS.has(verb)) return false;
+  if (verb === "sed" && words.slice(i + 1).some((word) => /^-[a-zA-Z]*i/.test(word) || word.startsWith("--in-place"))) return false;
+  return true;
+}
+
+/**
+ * Skills whose SKILL.md this tool call read (Codex's sign that it used one).
+ * Only reads count: `read_file`-style tools, and shell commands such as
+ * `cat`, `sed -n`, `head` or `less` on a `…/skills/<name>/SKILL.md`. Listing
+ * (`ls`), editing (`apply_patch`, `sed -i`), creating and writing don't.
+ */
+export function skillReads(payload: Record<string, unknown>): string[] {
+  const tool = typeof payload.name === "string" ? payload.name : "";
+  if (WRITE_TOOLS.has(tool)) return [];
+  const text = commandText(payload);
+  const found = new Set<string>();
+  const segments = READ_TOOLS.has(tool) ? [text] : text.split(/&&|\|\||;|\||\n/);
+  for (const segment of segments) {
+    if (!segment.includes("SKILL.md")) continue;
+    if (!READ_TOOLS.has(tool) && !readsInSegment(segment)) continue;
+    for (const match of segment.matchAll(SKILL_FILE)) {
       const skill = cleanSkillName(match[1]);
       if (skill) found.add(skill);
     }
   }
-  if (found.size === 0) return null;
-  return { kind: "uses", at, skills: [...found], typed };
+  return [...found];
 }
 
 // ------------------------------------------------------------------ tallies

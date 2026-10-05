@@ -149,7 +149,7 @@ export function codexSkillBlockLine(name: string, at: string): string {
 }
 
 export function codexReadLine(name: string, at: string, kind: "function_call" | "custom_tool_call" = "function_call"): string {
-  const payload = kind === "function_call" ? { type: "function_call", name: "shell", arguments: JSON.stringify({ command: ["bash", "-lc", `cat ~/.agents/skills/${name}/SKILL.md`] }) } : { type: "custom_tool_call", name: "apply_patch", input: `sed -n 1,80p /h/.codex/skills/${name}/SKILL.md` };
+  const payload = kind === "function_call" ? { type: "function_call", name: "shell", arguments: JSON.stringify({ command: ["bash", "-lc", `cat ~/.agents/skills/${name}/SKILL.md`] }) } : { type: "custom_tool_call", name: "exec", input: `sed -n 1,80p /h/.codex/skills/${name}/SKILL.md` };
   return JSON.stringify({ timestamp: at, type: "response_item", payload });
 }
 
@@ -175,7 +175,7 @@ export function isoDaysAgo(days: number, hour = 12): string {
 
 // ------------------------------------------------------------------ a fake GitHub
 
-export type FakeRepo = { owner: string; repo: string; commit: string; files: Record<string, { text: string; mode?: string }>; folderTrees?: Record<string, string> };
+export type FakeRepo = { owner: string; repo: string; commit: string; files: Record<string, { text: string; mode?: string }>; folderTrees?: Record<string, string>; /** The commit is on the default branch (compare API "behind"); false: "diverged". */ onMainLine?: boolean };
 
 /** Answers the GitHub API and raw downloads for the repositories given; counts every call. */
 export function fakeGithub(repos: FakeRepo[]) {
@@ -184,6 +184,8 @@ export function fakeGithub(repos: FakeRepo[]) {
     calls.push(url);
     for (const repo of repos) {
       const api = `https://api.github.com/repos/${repo.owner}/${repo.repo}`;
+      if (url === api) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+      if (url.startsWith(`${api}/compare/`)) return new Response(JSON.stringify({ status: repo.onMainLine === false ? "diverged" : "behind" }), { status: 200 });
       if (url.startsWith(`${api}/commits/`)) return new Response(repo.commit, { status: 200 });
       if (url.startsWith(`${api}/git/trees/`)) {
         const folders = new Set<string>();

@@ -75,6 +75,8 @@ export const SkillSchema = z.object({
     turnOffReason: z.string().optional(),
     remove: z.boolean().default(false),
     removeReason: z.string().optional(),
+    /** Added here but missing from a Claude account's skills: "Link it for Claude" makes the missing links. */
+    link: z.boolean().default(false),
   }),
   usage: z.object({ total: z.number(), lastUsed: z.string(), estimated: z.boolean() }).optional(),
 });
@@ -278,7 +280,7 @@ export const skillsAdd = defineRpc({
     /** The person read the file list and agreed: "This skill includes code your agents may run." */
     confirmScripts: z.boolean().optional(),
   }),
-  output: WriteResultSchema.extend({ skillId: z.string().optional(), needsScriptsConfirm: z.boolean().optional() }),
+  output: WriteResultSchema.extend({ skillId: z.string().optional(), needsScriptsConfirm: z.boolean().optional(), /** Added, but a link for Claude couldn't be made: offer "Link it for Claude". */ linkRetry: z.boolean().optional() }),
 });
 
 // ------------------------------------------------------------------ manage
@@ -299,6 +301,13 @@ export const skillsToggle = defineRpc({
 export const skillsRemove = defineRpc({
   name: "paseo-memories.skills-remove",
   input: z.object({ skillId: z.string(), confirm: z.boolean().optional() }),
+  output: WriteResultSchema,
+});
+
+/** Make the links a skill added here is missing in Claude's accounts (the retry after a link failed). */
+export const skillsLink = defineRpc({
+  name: "paseo-memories.skills-link",
+  input: z.object({ skillId: z.string() }),
   output: WriteResultSchema,
 });
 

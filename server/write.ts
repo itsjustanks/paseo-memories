@@ -346,6 +346,8 @@ export function fsError(error: unknown, path: string): string {
   if (code === "EEXIST") return `${name} already exists.`;
   if (code === "ENOSPC") return "The disk is full.";
   if (code === "EROFS") return `${name} is on a read-only disk.`;
+  if (code === "EBUSY") return `${name} changed while it was being moved, so it was left where it is.`;
+  if (code === "EIO") return `The copy of ${name} in the backups didn't match it, so it was left where it is.`;
   return `Could not write ${name}${code ? ` (${code})` : ""}.`;
 }
 
@@ -450,7 +452,11 @@ export async function installSkillFolder(parent: string, name: string, files: Sk
     // Read back: every file there, byte for byte.
     for (const file of files) {
       const back = await fs.readFile(join(target, file.path));
-      if (!back.equals(file.bytes)) return { ...report, ok: false, readBack: "mismatch", error: "A file read back differently from what was written." };
+      if (!back.equals(file.bytes)) {
+        // Never leave a skill whose files aren't what was previewed (review-040 #3): take back what this call made.
+        await fs.rm(target, { recursive: true, force: true }).catch(() => undefined);
+        return { ...report, ok: false, readBack: "mismatch", error: "A file read back differently from what was written, so nothing was added." };
+      }
     }
     return { ...report, ok: true, readBack: "ok" };
   } catch (error) {
@@ -488,7 +494,7 @@ async function treeDigest(path: string, prefix = ""): Promise<Map<string, string
   if (stat.isSymbolicLink()) out.set(prefix || ".", `link:${await fs.readlink(path)}`);
   else if (stat.isDirectory()) {
     for (const entry of (await fs.readdir(path)).sort()) for (const [key, value] of await treeDigest(join(path, entry), prefix ? `${prefix}/${entry}` : entry)) out.set(key, value);
-  } else out.set(prefix || ".", `file:${sha256(await fs.readFile(path))}`);
+  } else out.set(prefix || ".", `file:${stat.size}:${sha256(await fs.readFile(path))}`);
   return out;
 }
 
@@ -515,6 +521,12 @@ async function copyThenDelete(path: string, backupPath: string): Promise<void> {
   }
   const aside = join(dirname(path), `${TEMP_PREFIX}${randomBytes(6).toString("hex")}`);
   await fs.rename(path, aside);
+  // Checked again once it is out of the agents' sight: an edit that landed between the copy and the set-aside (review-040 #10) puts it all back.
+  if (!sameTree(await treeDigest(aside), copy)) {
+    await fs.rename(aside, path).catch(() => undefined);
+    await fs.rm(backupPath, { recursive: true, force: true }).catch(() => undefined);
+    throw Object.assign(new Error("changed meanwhile"), { code: "EBUSY" });
+  }
   await fs.rm(join(aside, "SKILL.md"), { force: true }).catch(() => undefined);
   await fs.rm(aside, { recursive: true });
 }
@@ -528,10 +540,15 @@ async function copyThenDelete(path: string, backupPath: string): Promise<void> {
  * own skills folders; never Paseo's, claude.ai's or Codex's own (unless
  * `paseoOrphan`: Paseo no longer ships it). Never throws.
  */
+/** Why `moveToBackup` would refuse `path`, without touching anything; null when it would go ahead. */
+export async function moveRefusal(path: string, { paseoOrphan = false } = {}): Promise<string | null> {
+  return (await skillParentReason(dirname(path), "remove")) ?? (paseoOrphan ? null : await skillFolderReason(path));
+}
+
 export async function moveToBackup(session: Session, path: string, { paseoOrphan = false } = {}): Promise<WriteReport> {
   const report: WriteReport = { target: path, ok: false, action: "deleted", readBack: "skipped" };
   try {
-    const refused = (await skillParentReason(dirname(path), "remove")) ?? (paseoOrphan ? null : await skillFolderReason(path));
+    const refused = await moveRefusal(path, { paseoOrphan });
     if (refused) return { ...report, action: "refused", error: refused };
     const stat = await fs.lstat(path);
     const backupPath = join(backupsRoot(), session.stamp, mirrored(path));

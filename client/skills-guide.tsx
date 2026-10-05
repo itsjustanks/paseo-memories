@@ -33,14 +33,16 @@ export function SkillsGuide() {
   const plain = usePlain();
   return (
     <>
-      {HOW_TOS.map((howTo) => (
-        <Card key={howTo.title} title={howTo.title} icon="ListOrdered">
-          {howTo.steps.map((step, index) => (
-            <NumberedStep key={step} n={index + 1}>
-              {step}
-            </NumberedStep>
-          ))}
-        </Card>
+      {HOW_TOS.map((howTo, index) => (
+        <Disclosure key={howTo.title} title={howTo.title} open={index === 0}>
+          <Card>
+            {howTo.steps.map((step, n) => (
+              <NumberedStep key={step} n={n + 1}>
+                {step}
+              </NumberedStep>
+            ))}
+          </Card>
+        </Disclosure>
       ))}
       <Disclosure quiet title={plain ? "Technical details" : "Reference"} open={!plain}>
         <Card>

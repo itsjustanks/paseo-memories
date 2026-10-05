@@ -4,7 +4,7 @@ import { repoId, parseGithubLink, type GithubLink } from "../shared/github-link"
 import { maskSecrets } from "../shared/secrets";
 import { ADD_LIMITS, cleanText, cutText, fileKind, planHash, safeRelativePath, type PlannedFile } from "../shared/skill-files";
 import { readLock, serializeLock, withEntry, lockLooksValid, type LockEntry } from "../shared/skill-lock";
-import { buildSkillMd, nameKey, parseSkillMd, RESERVED_NAMES, skillNameOk, skillProblems, SKILL_SPEC } from "../shared/skill-md";
+import { buildSkillMd, nameKey, parseSkillMd, RESERVED_NAMES, RUNS_COMMANDS, skillMdRunsCommands, skillNameOk, skillProblems, SKILL_SPEC } from "../shared/skill-md";
 import { catalogEntry, catalogName } from "../shared/skills-catalog";
 import type { AddSource } from "../shared/skill-contracts";
 import type { WriteReport } from "../shared/contracts";
@@ -13,7 +13,7 @@ import type { Paseo } from "./daemon";
 import { sha256 } from "./files";
 import { startWrite } from "./daemon";
 import { sharedSkillsDir, skillLockPath } from "./env";
-import { fetchFile, fetchTree, GithubError, resolveCommit, skillFolders, type Tree } from "./github";
+import { fetchFile, fetchTree, GithubError, onMainLine, resolveCommit, skillFolders, type Tree } from "./github";
 import { logWrite } from "./log";
 import { recordAdded } from "./skill-records";
 import { discoverSkills, forgetSkills, type SkillsDiscovery } from "./skills";
@@ -33,6 +33,7 @@ import { createSkillLink, installSkillFolder, newSession, readCurrent, safeWrite
  */
 
 export const PLAN_CHANGED = "What would be added changed since the preview (the source, the files, or where they would go). Preview it again; nothing was added.";
+export const OFF_MAIN_LINE = "This version isn't on the project's main line, so it may come from someone else's copy of the project. Check it before adding.";
 export const SCRIPTS_CONFIRM = "This skill includes code your agents may run. Read the file list, then confirm to add it.";
 
 type Prepared = {
@@ -90,6 +91,33 @@ export function forgetPrepared(): void {
   prepared.clear();
 }
 
+/** Files that say which program looks after a skill; never accepted from outside. */
+const PROVENANCE_MARKERS = new Set([".paseo-managed-files.json", ".skill-lock.json", "skills-lock.json"]);
+
+/** Two relative paths equal per segment after case folding and Unicode NFC (or a file equal to a folder): the first such pair, else null. */
+export function foldedCollision(paths: readonly string[]): string | null {
+  const fold = (path: string) => path.split("/").map((part) => part.normalize("NFC").toLowerCase()).join("/");
+  const files = new Map<string, string>();
+  const folders = new Map<string, string>();
+  for (const path of paths) {
+    const key = fold(path);
+    const seen = files.get(key) ?? folders.get(key);
+    if (seen !== undefined && seen !== path) return `${seen} and ${path}`;
+    files.set(key, path);
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i += 1) {
+      const dir = parts.slice(0, i).join("/");
+      const dirKey = fold(dir);
+      const file = files.get(dirKey);
+      if (file !== undefined) return `${file} and ${dir}/`;
+      const other = folders.get(dirKey);
+      if (other !== undefined && other !== dir) return `${other}/ and ${dir}/`;
+      folders.set(dirKey, dir);
+    }
+  }
+  return null;
+}
+
 class AddProblem extends Error {
   constructor(
     message: string,
@@ -103,6 +131,9 @@ class AddProblem extends Error {
 
 async function fromGithub(link: GithubLink, expected?: { tree: string }): Promise<Omit<Prepared, "source" | "sourceLabel">> {
   const commit = await resolveCommit(link);
+  const warnings: string[] = [];
+  // A commit named by its id may come from someone's copy of the project, which GitHub serves under the original's address (review-040 #9). The curated list is checked by hand.
+  if (!expected && link.ref && /^[0-9a-f]{40}$/.test(link.ref) && !(await onMainLine(link, commit))) warnings.push(OFF_MAIN_LINE);
   const tree: Tree = await fetchTree(link, commit);
   if (tree.truncated) throw new AddProblem("That repository is too big for GitHub to list in one go. Link to the skill's own folder.");
   const base = link.path ?? "";
@@ -116,11 +147,16 @@ async function fromGithub(link: GithubLink, expected?: { tree: string }): Promis
   const folderTree = folder ? tree.entries.find((entry) => entry.type === "tree" && entry.path === folder)?.sha : tree.sha;
   if (expected && folderTree !== expected.tree) throw new AddProblem("That skill's files at the pinned version are not what this plugin checked. Nothing was added.");
   const inside = tree.entries.filter((entry) => entry.path.startsWith(prefix) && entry.type !== "tree");
-  const warnings: string[] = [];
   if (inside.some((entry) => entry.mode === "120000")) throw new AddProblem("That skill contains links to other files, which this plugin doesn't add.");
   const submodules = inside.filter((entry) => entry.type === "commit");
   if (submodules.length) warnings.push(`${submodules.length} linked repositor${submodules.length === 1 ? "y is" : "ies are"} inside it and won't be added.`);
   const blobs = inside.filter((entry) => entry.type === "blob");
+  // Files that would make the plugin (or npx skills) take it for something it isn't (review-040 #11).
+  const marker = blobs.find((entry) => PROVENANCE_MARKERS.has(entry.path.split("/").pop() ?? ""));
+  if (marker) throw new AddProblem(`It contains ${marker.path.split("/").pop()}, which marks it as looked after by another program, so it isn't added.`);
+  // Two paths one disk may treat as the same file (case, accents): one would overwrite the other (review-040 #3).
+  const collision = foldedCollision(blobs.map((entry) => entry.path.slice(prefix.length)));
+  if (collision) throw new AddProblem(`Two of its files differ only in capitals or accents (${collision}), so one would overwrite the other on many disks. It isn't added.`);
   if (blobs.length > ADD_LIMITS.files) throw new AddProblem(`That skill has ${blobs.length} files; this plugin adds at most ${ADD_LIMITS.files}.`);
   const declared = blobs.reduce((sum, entry) => sum + (entry.size ?? 0), 0);
   if (declared > ADD_LIMITS.totalBytes) throw new AddProblem(`That skill is ${Math.round(declared / 1024)} KB; this plugin adds at most ${Math.round(ADD_LIMITS.totalBytes / 1024)} KB.`);
@@ -146,8 +182,15 @@ async function fromGithub(link: GithubLink, expected?: { tree: string }): Promis
   }
   const header = parseSkillMd(skillMdText);
   const folderName = folder ? folder.split("/").pop()! : link.repo;
-  const name = skillNameOk(folderName.toLowerCase()) && folderName === folderName.toLowerCase() ? folderName : header.name && skillNameOk(header.name) ? header.name : "";
+  const name = skillNameOk(folderName) ? folderName : "";
   if (!name) throw new AddProblem(`That skill's folder (${cutText(cleanText(folderName), 80)}) isn't a valid skill name (lower-case letters, digits and single hyphens).`);
+  // The spec: the header's name must be the folder's. A skill that calls itself something else could pass for another one (review-040 #2).
+  if (header.name && header.name !== name) throw new AddProblem(`This skill calls itself ${cutText(cleanText(header.name), 64)} but its folder is ${name}; agents could mistake it for another skill, so it isn't added.`);
+  const runs = skillMdRunsCommands(skillMdText);
+  if (runs) {
+    skillMd.kind = "script";
+    warnings.push(`${RUNS_COMMANDS} ${runs}`);
+  }
   return {
     commit,
     name,
@@ -170,14 +213,15 @@ function fromWritten(source: AddSource): Omit<Prepared, "source" | "sourceLabel"
   if (!body) throw new AddProblem("Write the instructions agents should follow.");
   const text = buildSkillMd(name, when, body);
   const data = Buffer.from(text, "utf8");
+  const runs = skillMdRunsCommands(text);
   return {
     commit: "",
     name,
     description: when,
-    files: [{ path: "SKILL.md", bytes: data.length, executable: false, kind: "instructions", sha256: sha256Hex(text), data }],
+    files: [{ path: "SKILL.md", bytes: data.length, executable: false, kind: runs ? "script" : "instructions", sha256: sha256Hex(text), data }],
     skillMdText: text,
     lockEntry: null,
-    warnings: [],
+    warnings: runs ? [`${RUNS_COMMANDS} ${runs}`] : [],
   };
 }
 
@@ -284,7 +328,7 @@ export async function previewSkill(paseo: Paseo | null, source: AddSource): Prom
 
 // ------------------------------------------------------------------ adding
 
-export type AddResult = { ok: boolean; message: string; reports: WriteReport[]; warnings: string[]; skillId?: string; needsScriptsConfirm?: boolean };
+export type AddResult = { ok: boolean; message: string; reports: WriteReport[]; warnings: string[]; skillId?: string; needsScriptsConfirm?: boolean; linkRetry?: boolean };
 
 export async function addSkill(paseo: Paseo | null, input: { source: AddSource; planHash: string; confirmScripts?: boolean }, backupsToKeep: number): Promise<AddResult> {
   let planned;
@@ -313,13 +357,36 @@ export async function addSkill(paseo: Paseo | null, input: { source: AddSource; 
     return { ok: false, message: installed.error ?? "The skill could not be added.", reports, warnings };
   }
   const real = await fs.realpath(canonical.path).catch(() => canonical.path);
+  const made: string[] = [];
+  let linkRetry = false;
+  /** Everything this add wrote, taken back: links, the copy, the lock as it was (review-040 #3). */
+  const rollBack = async (lockBefore: string | null, why: string): Promise<AddResult> => {
+    for (const link of made) await fs.unlink(link).catch(() => undefined);
+    await fs.rm(canonical.path, { recursive: true, force: true }).catch(() => undefined);
+    if (lockBefore !== null && lockTarget) {
+      const now = await readCurrent(lockTarget.path);
+      await safeWrite(session, lockTarget.path, lockBefore, { newMode: 0o644, current: now, check: lockLooksValid });
+    }
+    logWrite("skills-add", canonical.path, "rolled back");
+    forgetSkills();
+    return { ok: false, message: `${why} Nothing was added.`, reports, warnings: [] };
+  };
+  const lockTarget = preview.targets.find((target) => target.kind === "lock");
   for (const target of preview.targets.filter((entry) => entry.kind === "link")) {
     const report = await createSkillLink(dirname(target.path), value.name, canonical.path);
     reports.push(report);
     logWrite("skills-add", target.path, report.ok ? "linked" : report.action);
-    if (!report.ok) warnings.push(`Added, but not linked for Claude (${report.error ?? "unknown reason"}).`);
+    if (report.ok) made.push(target.path);
+    else if (report.readBack === "mismatch") {
+      // A link that leads somewhere else: something is wrong with that folder; take the whole add back.
+      made.push(target.path);
+      return rollBack(null, "A link for Claude led somewhere else after it was made.");
+    } else {
+      // Couldn't make it (permissions, a full disk): the shared copy stays for the other agents; say so, and offer to try again.
+      linkRetry = true;
+      warnings.push(`Added, but Claude couldn't see it in one account (${target.label.replace(/^A link for Claude \((.*)\)$/, "$1")}): ${report.error ?? "the link couldn't be made"} Use "Link it for Claude" to try again.`);
+    }
   }
-  const lockTarget = preview.targets.find((target) => target.kind === "lock");
   if (lockTarget) {
     const current = await readCurrent(lockTarget.path);
     const read = readLock(current.exists ? current.text : null);
@@ -333,6 +400,7 @@ export async function addSkill(paseo: Paseo | null, input: { source: AddSource; 
       const report = await safeWrite(session, lockTarget.path, serializeLock(withEntry(read.lock, value.name, entry)), { newMode: 0o644, current, check: lockLooksValid });
       reports.push(report);
       logWrite("skills-add", lockTarget.path, report.ok ? "ok" : report.action);
+      if (report.readBack === "mismatch") return rollBack(current.exists ? current.text : null, "npx skills' list read back differently from what was written.");
       if (!report.ok) warnings.push(`Added, but npx skills' list could not be updated (${report.error ?? "unknown reason"}).`);
     }
   }
@@ -346,6 +414,7 @@ export async function addSkill(paseo: Paseo | null, input: { source: AddSource; 
     reports,
     warnings,
     ...(skill ? { skillId: skill.id } : {}),
+    ...(linkRetry ? { linkRetry } : {}),
   };
 }
 

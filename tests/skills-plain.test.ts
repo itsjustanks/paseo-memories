@@ -40,7 +40,8 @@ test("every finding and host message the sandbox produces reads plainly", async 
   const sb = addSkills(await makeSandbox());
   try {
     const { discoverSkills, forgetSkillCaches } = await import("../server/skills");
-    const { PLAN_CHANGED, SCRIPTS_CONFIRM } = await import("../server/skill-add");
+    const { PLAN_CHANGED, SCRIPTS_CONFIRM, OFF_MAIN_LINE } = await import("../server/skill-add");
+    const { RUNS_COMMANDS, skillMdRunsCommands } = await import("../shared/skill-md");
     forgetSkillCaches();
     const d = await discoverSkills(fakePaseo(sb).api, { refresh: true });
     const kinds = new Set(d.findings.map((finding) => finding.kind));
@@ -61,9 +62,20 @@ test("every finding and host message the sandbox produces reads plainly", async 
       "Added, but npx skills' list could not be updated (No permission to write .skill-lock.json.).",
       "There's no skill (no SKILL.md) at that address.",
       "Claude's settings file can't be read (it isn't valid JSON), so it was left as it is.",
+      OFF_MAIN_LINE,
+      RUNS_COMMANDS,
+      ...["---\nname: a\ndescription: d\nhooks:\n  x: y\n---\n", "---\nname: a\ndescription: d\nallowed-tools: Bash\n---\n", "---\nname: a\ndescription: d\nshell: bash\n---\n", "---\nname: a\ndescription: d\nagent: x\n---\n", "---\nname: a\ndescription: d\n---\n!`date`\n"].map((text) => skillMdRunsCommands(text) ?? ""),
+      "It contains .paseo-managed-files.json, which marks it as looked after by another program, so it isn't added.",
+      "Two of its files differ only in capitals or accents (notes.md and NOTES.md), so one would overwrite the other on many disks. It isn't added.",
+      "This skill calls itself alpha but its folder is nice-helper; agents could mistake it for another skill, so it isn't added.",
+      'Added, but Claude couldn\'t see it in one account (work): No permission to write alpha. Use "Link it for Claude" to try again.',
+      "A link for Claude led somewhere else after it was made. Nothing was added.",
+      "npx skills' list read back differently from what was written. Nothing was added.",
     ].filter(Boolean);
     // A message may name the skill's own file; plain mode shows no file names, so drop names with dots first.
-    assertPlain(messages.map(plainSkillMessage).map((text) => text.replace(/\S+\.(json|toml|md)\b/g, "a file")), "host messages");
+    const plainMessages = messages.map(plainSkillMessage);
+    assert.equal(plainMessages.some((text) => text.includes(".paseo-managed-files.json")), false, "no marker file name in plain mode");
+    assertPlain(plainMessages.map((text) => text.replace(/\S+\.(json|toml|md)\b/g, "a file")), "host messages");
   } finally {
     sb.cleanup();
   }

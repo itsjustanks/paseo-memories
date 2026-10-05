@@ -378,6 +378,7 @@ export const PLAIN = {
     heading: "Notes",
     none: "There are no notes here yet.",
     add: "Add a note",
+    addHere: "Add to these instructions",
     change: "Change",
     remove: "Remove",
     removeQuestion: "Remove this note? A copy of the old version is kept, so it can be put back.",

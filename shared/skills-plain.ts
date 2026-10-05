@@ -134,6 +134,7 @@ export function plainSkillMessage(message: string): string {
     .replace(/npx skills/g, "the skills installer")
     .replace(/In a project folder tracked by git: a change here is shared with everyone on the project\./g, "Everyone who works on this project shares it.")
     .replace(/\(it isn't valid JSON\)/g, "")
+    .replace(/It contains \S+, which marks it/g, "It contains a file that marks it")
     .replace(/\btokens?\b/g, "words")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -316,6 +317,8 @@ export const SKILLS_PLAIN = {
     whereClaude: (count: number) => (count === 1 ? "A link so Claude sees it too" : `A link so Claude sees it too (${count} accounts)`),
     whereList: "The skills installer's list, so it can update it later",
     restartNote: "New chats see it straight away; chats already open may need a restart.",
+    linkForClaude: "Link it for Claude",
+    linkForClaudeHint: "Claude doesn't see this skill in every account yet.",
   },
   panel: {
     title: "Skills",

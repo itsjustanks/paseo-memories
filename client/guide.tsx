@@ -124,16 +124,19 @@ export function Guide() {
   if (!plain) return <Reference />;
   return (
     <View style={{ gap: t.space.md }}>
-      {PLAIN_GUIDES.map((guide) => (
-        <Card key={guide.title} title={guide.title} icon={guide.icon}>
-          {guide.steps.map((step, index) => (
-            <NumberedStep key={step} n={index + 1}>
-              {step}
-            </NumberedStep>
-          ))}
-        </Card>
+      {/* One how-to open at a time; the others are one tap away. */}
+      {PLAIN_GUIDES.map((guide, index) => (
+        <Disclosure key={guide.title} title={guide.title} open={index === 0}>
+          <Card>
+            {guide.steps.map((step, n) => (
+              <NumberedStep key={step} n={n + 1}>
+                {step}
+              </NumberedStep>
+            ))}
+          </Card>
+        </Disclosure>
       ))}
-      <Disclosure title={PLAIN.technical}>
+      <Disclosure quiet title={PLAIN.technical}>
         <Text style={t.text.body}>{PLAIN_GUIDE_TECHNICAL_HINT}</Text>
         <Reference />
       </Disclosure>

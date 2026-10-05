@@ -36,21 +36,37 @@ function lines(text: string): string[] {
   return text.split("\n");
 }
 
+/**
+ * For each line: is it inside a multi-line string (triple double or single quotes)?
+ * The line that opens one is a key line and is false; the lines after it,
+ * up to and including the closing one, are true. Nothing in a string is a
+ * header, a key or a switch (review-040 #8).
+ */
+export function inMultilineString(all: readonly string[]): boolean[] {
+  const out: boolean[] = [];
+  let open: string | null = null;
+  for (const raw of all) {
+    const line = raw.replace(/\r$/, "");
+    if (open) {
+      out.push(true);
+      if (line.includes(open)) open = null;
+      continue;
+    }
+    out.push(false);
+    const opens = /=\s*("""|\'\'\')/.exec(line);
+    if (opens && line.split(opens[1]!).length === 2) open = opens[1]!;
+  }
+  return out;
+}
+
 /** Why this file can't take a switch safely; null when it can. */
 export function unsafeReason(text: string): string | null {
   let table = "";
-  let multiline: string | null = null;
-  for (const raw of lines(text)) {
-    const line = raw.replace(/\r$/, "");
-    if (multiline) {
-      if (line.includes(multiline)) multiline = null;
-      continue;
-    }
-    const opens = /=\s*("""|''')/.exec(line);
-    if (opens && line.split(opens[1]!).length === 2) {
-      multiline = opens[1]!;
-      continue;
-    }
+  const all = lines(text);
+  const quoted = inMultilineString(all);
+  for (let i = 0; i < all.length; i += 1) {
+    if (quoted[i]) continue;
+    const line = all[i]!.replace(/\r$/, "");
     if (PLAIN_CONFIG_TABLE.test(line)) return "Codex's settings file sets skill switches as one table, a shape this plugin doesn't change. Turn it off in Codex instead.";
     if (ANY_HEADER.test(line)) {
       table = SKILLS_TABLE.test(line) ? "skills" : ARRAY_HEADER.test(line) ? "skills.config[]" : line.trim();
@@ -62,16 +78,17 @@ export function unsafeReason(text: string): string | null {
   return null;
 }
 
-/** Every `[[skills.config]]` block, in file order. */
+/** Every `[[skills.config]]` block, in file order, outside multi-line strings. */
 export function readSkillSwitches(text: string): SkillSwitch[] {
   const all = lines(text);
+  const quoted = inMultilineString(all);
   const out: SkillSwitch[] = [];
   let current: SkillSwitch | null = null;
   let others = 0;
   const close = (end: number) => {
     if (current) {
       current.end = end;
-      current.onlyNameAndEnabled = others === 0 && current.path === undefined;
+      current.onlyNameAndEnabled = others === 0 && (current.name === undefined) !== (current.path === undefined);
       out.push(current);
     }
     current = null;
@@ -79,6 +96,10 @@ export function readSkillSwitches(text: string): SkillSwitch[] {
   };
   for (let i = 0; i < all.length; i += 1) {
     const line = all[i]!.replace(/\r$/, "");
+    if (quoted[i]) {
+      if (current) others += 1;
+      continue;
+    }
     if (ANY_HEADER.test(line)) {
       close(i);
       if (ARRAY_HEADER.test(line)) current = { start: i, end: i + 1, onlyNameAndEnabled: true };
@@ -99,36 +120,47 @@ export function readSkillSwitches(text: string): SkillSwitch[] {
     else others += 1;
   }
   close(all.length);
-  // A block's trailing blank lines belong to the gap, not to it.
+  // Trailing blank and comment lines belong to what comes next (a comment heading the next section), not to the block (review-040 #7).
   for (const block of out) {
-    while (block.end > block.start + 1 && all[block.end - 1]!.trim() === "") block.end -= 1;
+    while (block.end > block.start + 1 && (all[block.end - 1]!.trim() === "" || all[block.end - 1]!.trim().startsWith("#"))) block.end -= 1;
   }
   return out;
 }
 
-/** Whether Codex has this skill turned off by name or by its SKILL.md path (the last matching block wins). */
-export function codexSkillEnabled(text: string, name: string, skillMdPath?: string): boolean {
+/** A block names this skill: by its name, or by the path of one of its SKILL.md files (Codex's own writer keys by path). */
+function matches(block: SkillSwitch, name: string, paths: readonly string[]): boolean {
+  return block.name === name || (block.path !== undefined && paths.includes(block.path));
+}
+
+function asList(paths: string | readonly string[] | undefined): readonly string[] {
+  return paths === undefined ? [] : typeof paths === "string" ? [paths] : paths;
+}
+
+/** Whether Codex has this skill turned off by name or by one of its SKILL.md paths (the last matching block wins). */
+export function codexSkillEnabled(text: string, name: string, paths?: string | readonly string[]): boolean {
+  const list = asList(paths);
   let enabled = true;
   for (const block of readSkillSwitches(text)) {
     if (block.enabled === undefined) continue;
-    if (block.name === name || (skillMdPath && block.path === skillMdPath)) enabled = block.enabled;
+    if (matches(block, name, list)) enabled = block.enabled;
   }
   return enabled;
 }
 
 /**
- * The file with `name` turned on or off. Off: the last block naming it is
- * set to `enabled = false` (or a new block is added at the end). On: blocks
- * that hold only this name and a switch are taken out; any other block naming
- * it is set to `enabled = true`. Returns the text unchanged when nothing
- * needs doing, or a reason when the file's shape isn't safe to change.
+ * The file with this skill turned on or off. Off: the last block naming it
+ * (by name or path) is set to `enabled = false`, or a new block keyed by
+ * name is added at the end. On: blocks that hold only the key and a switch
+ * are taken out; any other block naming it is set to `enabled = true`.
+ * Returns the text unchanged when nothing needs doing, or a reason when the
+ * file's shape isn't safe to change.
  */
-export function setSkillEnabled(text: string, name: string, enabled: boolean): { text: string } | { error: string } {
+export function setSkillEnabled(text: string, name: string, enabled: boolean, paths: readonly string[] = []): { text: string } | { error: string } {
   const unsafe = unsafeReason(text);
   if (unsafe) return { error: unsafe };
   const crlf = /\r\n/.test(text);
   const all = lines(text.replace(/\r\n/g, "\n"));
-  const blocks = readSkillSwitches(all.join("\n")).filter((block) => block.name === name);
+  const blocks = readSkillSwitches(all.join("\n")).filter((block) => matches(block, name, paths));
   const value = `enabled = ${enabled}`;
   const setIn = (block: SkillSwitch) => {
     for (let i = block.start + 1; i < block.end; i += 1) {
@@ -137,11 +169,11 @@ export function setSkillEnabled(text: string, name: string, enabled: boolean): {
         return;
       }
     }
-    const nameLine = all.findIndex((line, i) => i > block.start && i < block.end && /^\s*name\s*=/.test(line));
-    all.splice(nameLine + 1, 0, value);
+    const keyLine = all.findIndex((line, i) => i > block.start && i < block.end && /^\s*(name|path)\s*=/.test(line));
+    all.splice(keyLine + 1, 0, value);
   };
   if (!enabled) {
-    if (codexSkillEnabled(all.join("\n"), name) === false) return { text };
+    if (codexSkillEnabled(all.join("\n"), name, paths) === false) return { text };
     const last = blocks[blocks.length - 1];
     if (last) setIn(last);
     else {
@@ -149,7 +181,7 @@ export function setSkillEnabled(text: string, name: string, enabled: boolean): {
       all.push(...(all.length ? [""] : []), "[[skills.config]]", `name = ${JSON.stringify(name)}`, value, "");
     }
   } else {
-    if (codexSkillEnabled(all.join("\n"), name)) return { text };
+    if (codexSkillEnabled(all.join("\n"), name, paths)) return { text };
     // Bottom up, so earlier line numbers stay right.
     for (const block of [...blocks].reverse()) {
       if (block.onlyNameAndEnabled) {
@@ -161,5 +193,7 @@ export function setSkillEnabled(text: string, name: string, enabled: boolean): {
   }
   let out = all.join("\n");
   if (out !== "" && !out.endsWith("\n")) out += "\n";
+  // Leading blank lines left by removing the first block go too.
+  if (enabled && !/^\s*$/.test(out)) out = text.startsWith("\n") ? out : out.replace(/^\n+/, "");
   return { text: crlf ? out.replace(/\n/g, "\r\n") : out };
 }

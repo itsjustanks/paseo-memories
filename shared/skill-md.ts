@@ -271,3 +271,52 @@ export function suggestName(text: string): string {
     .slice(0, SKILL_SPEC.nameMax)
     .replace(/-+$/g, "");
 }
+
+/** Tools that run commands on the computer when a skill grants them (Claude's `allowed-tools`). */
+const COMMAND_TOOLS = /\b(Bash|Shell|PowerShell|exec|Execute|Terminal)\b/i;
+
+/** Top-level header keys with everything indented under each, as raw text. */
+function headerBlocks(text: string): Map<string, string> | null {
+  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
+  if (lines[0]?.trimEnd() !== "---") return null;
+  const out = new Map<string, string>();
+  let key: string | null = null;
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (line.trimEnd() === "---" || line.trimEnd() === "...") return out;
+    const top = /^([A-Za-z0-9_][A-Za-z0-9_-]*)\s*:(.*)$/.exec(line);
+    if (top) {
+      key = top[1]!;
+      out.set(key, top[2]!.trim());
+    } else if (key && /^\s/.test(line)) out.set(key, `${out.get(key)}\n${line.trim()}`);
+  }
+  return null;
+}
+
+/**
+ * Why a SKILL.md can make an agent run commands on this computer, or null.
+ * Claude Code acts on these without asking (code.claude.com/docs/en/skills,
+ * frontmatter reference): `hooks` run commands on events; `allowed-tools`
+ * granting a shell lets the skill run commands without a prompt; `shell`
+ * picks the shell for `` !`cmd` `` lines, which run before the model reads
+ * the skill; `context: fork` and `agent` start a helper with every tool
+ * unless `allowed-tools` restricts it to ones that can't run commands.
+ * Treated like a script file: the add needs the code confirm.
+ */
+export function skillMdRunsCommands(text: string): string | null {
+  const blocks = headerBlocks(text);
+  const body = blocks ? text.replace(/^﻿?---[\s\S]*?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, "") : text;
+  if (/(^|[^\\])!`[^`\n]+`/m.test(body)) return "Its instructions run a command when the skill starts (a !`…` line).";
+  if (!blocks) return null;
+  if (blocks.has("hooks")) return "Its header sets hooks, which run commands when things happen.";
+  const tools = blocks.get("allowed-tools");
+  const grantsShell = tools !== undefined && (COMMAND_TOOLS.test(tools) || /(^|[\s,[\-])\*(\s|,|]|$)/.test(tools));
+  if (grantsShell) return "Its header lets it run commands without asking.";
+  if (blocks.has("shell")) return "Its header picks a shell to run commands with.";
+  const forks = blocks.get("context")?.replace(/["']/g, "").trim() === "fork" || blocks.has("agent");
+  if (forks && tools === undefined) return "It starts a helper agent that can run commands.";
+  return null;
+}
+
+/** The plain reason shown at the code confirm for any of the above. */
+export const RUNS_COMMANDS = "This skill can run commands on this computer.";

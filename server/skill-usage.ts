@@ -60,6 +60,8 @@ type Entry = {
   tally: LogTally;
   /** Codex: the turn being read and the skills already counted in it (one use per skill per turn). */
   turnSkills: Set<string>;
+  /** Inside a line longer than MAX_LINE: everything up to its end is thrown away (and the cursor moves past it). */
+  skipping: boolean;
 };
 
 const cache = new Map<string, Entry>();
@@ -187,6 +189,7 @@ function handleLine(entry: Entry, line: string, firstDay: number): void {
 
 /** Read from `entry.offset`, at most `budget` bytes, line by line; `entry.offset` ends just past the last whole line. */
 async function readFrom(path: string, entry: Entry, budget: number, firstDay: number): Promise<{ read: number; atEnd: boolean }> {
+  if (entry.offset === 0) entry.skipping = false;
   const handle = await fs.open(path, "r");
   const markers = entry.kind === "codex" ? CODEX_BYTES : CLAUDE_BYTES;
   let read = 0;
@@ -195,10 +198,9 @@ async function readFrom(path: string, entry: Entry, budget: number, firstDay: nu
     const buffer = Buffer.alloc(CHUNK);
     let pending: Buffer[] = [];
     let pendingBytes = 0;
-    let skipping = false;
     let position = entry.offset;
-    // The budget is soft by at most one line: a line already begun is read to its end (or skipped past MAX_LINE), so every pass moves on.
-    while (read < budget || pendingBytes > 0 || skipping) {
+    // Within the budget; past it only to finish a line already begun (at most MAX_LINE). Bytes thrown away count too (review-040 #6).
+    while (read < budget || (pendingBytes > 0 && !entry.skipping)) {
       const { bytesRead } = await handle.read(buffer, 0, read < budget ? Math.min(CHUNK, budget - read) : CHUNK, position);
       if (bytesRead === 0) {
         atEnd = true;
@@ -211,24 +213,29 @@ async function readFrom(path: string, entry: Entry, budget: number, firstDay: nu
       for (;;) {
         const end = buffer.indexOf(NEWLINE, start);
         if (end === -1 || end >= bytesRead) break;
-        if (!skipping) {
+        if (!entry.skipping) {
           const piece = buffer.subarray(start, end);
           const line = pendingBytes ? Buffer.concat([...pending, piece]) : piece;
           if (markers.some((marker) => line.includes(marker))) handleLine(entry, line.toString("utf8"), firstDay);
         }
         pending = [];
         pendingBytes = 0;
-        skipping = false;
+        entry.skipping = false;
         start = end + 1;
         entry.offset = chunkStart + start;
       }
-      if (start < bytesRead && !skipping) {
-        pendingBytes += bytesRead - start;
-        if (pendingBytes > MAX_LINE) {
-          pending = [];
-          pendingBytes = 0;
-          skipping = true;
-        } else pending.push(Buffer.from(buffer.subarray(start, bytesRead)));
+      if (start < bytesRead) {
+        if (entry.skipping) entry.offset = position;
+        else {
+          pendingBytes += bytesRead - start;
+          if (pendingBytes > MAX_LINE) {
+            // Too long to be a log line: drop it, and move the cursor past what was read so it is never read again.
+            pending = [];
+            pendingBytes = 0;
+            entry.skipping = true;
+            entry.offset = position;
+          } else pending.push(Buffer.from(buffer.subarray(start, bytesRead)));
+        }
       }
       await new Promise((resolve) => setImmediate(resolve));
     }
@@ -265,10 +272,12 @@ async function runPass(now = Date.now()): Promise<void> {
     if (entry && (entry.ino !== log.ino || log.size < entry.offset)) entry = undefined;
     if (!entry) {
       const agent: UseAgent = log.kind === "codex" ? "codex" : "claude";
-      entry = { kind: log.kind, ino: log.ino, size: 0, mtimeMs: 0, offset: 0, tally: { agent, cwd: "", session: own(log.session), skills: new Map<string, SkillTally>() }, turnSkills: new Set() };
+      entry = { kind: log.kind, ino: log.ino, size: 0, mtimeMs: 0, offset: 0, tally: { agent, cwd: "", session: own(log.session), skills: new Map<string, SkillTally>() }, turnSkills: new Set(), skipping: false };
       cache.set(log.path, entry);
     }
-    if (log.size > entry.offset && (log.size !== entry.size || log.mtimeMs !== entry.mtimeMs || entry.offset < log.size)) {
+    // Read only what is new: a tail with no line end is read once and then left until the file changes.
+    const unchanged = log.size === entry.size && log.mtimeMs === entry.mtimeMs;
+    if (log.size > entry.offset && !unchanged) {
       if (budget <= 0) {
         if (cut < 0) cut = index;
         continue;
@@ -276,7 +285,11 @@ async function runPass(now = Date.now()): Promise<void> {
       try {
         const { read, atEnd } = await readFrom(log.path, entry, budget, firstDay);
         budget -= read;
-        if (!atEnd && cut < 0) cut = index;
+        if (!atEnd) {
+          if (cut < 0) cut = index;
+          // Not at the end yet: the next pass carries on from the cursor.
+          continue;
+        }
       } catch {
         cache.delete(log.path);
         continue;

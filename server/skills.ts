@@ -10,6 +10,7 @@ import {
   codexListingChars,
   nameKey,
   parseSkillMd,
+  skillMdRunsCommands,
   skillProblems,
   tokensForChars,
   type ClaudeListing,
@@ -199,7 +200,12 @@ export async function walkSkill(folder: string, list?: Array<{ path: string; byt
         }
       }
       const rel = relative(folder, path).split("\\").join("/");
-      const kind = fileKind(rel, executable, head);
+      let kind = fileKind(rel, executable, head);
+      // A SKILL.md whose header or body runs commands counts as code too (review-040 #1).
+      if (rel === "SKILL.md" && stat.size <= 1024 * 1024) {
+        const text = await fs.readFile(path, "utf8").catch(() => "");
+        if (skillMdRunsCommands(text)) kind = "script";
+      }
       out.files += 1;
       out.bytes += stat.size;
       if (kind === "script") out.scripts += 1;
@@ -471,7 +477,7 @@ export async function discoverSkills(paseo: Paseo | null, { refresh = false } = 
         problems: skillProblems(header, folder),
         listing: { claude: 0, codex: 0 },
         state: {},
-        can: { turnOff: [], remove: false },
+        can: { turnOff: [], remove: false, link: false },
         skillMd,
         header,
         hash: head.hash,
@@ -553,7 +559,7 @@ export async function discoverSkills(paseo: Paseo | null, { refresh = false } = 
       skill.state.claude = combine(states);
     }
     if (skill.codexAccounts.length) {
-      skill.state.codex = combine(skill.codexAccounts.map((id) => (codexSkillEnabled(codexConfigs.get(id) ?? "", skill.header.name || skill.folder, skill.skillMd) ? "on" : "off")));
+      skill.state.codex = combine(skill.codexAccounts.map((id) => (codexSkillEnabled(codexConfigs.get(id) ?? "", skill.header.name || skill.folder, skillMdPaths(skill)) ? "on" : "off")));
     }
 
     // Listing cost (one account's view; the costs below add them up per account).
@@ -568,6 +574,14 @@ export async function discoverSkills(paseo: Paseo | null, { refresh = false } = 
       if (skill.claudeAccounts.length) skill.can.turnOff.push("claude");
       if (skill.codexAccounts.length) skill.can.turnOff.push("codex");
       if (!skill.can.turnOff.length) skill.can.turnOffReason = "Neither Claude nor Codex reads it, and this plugin can only turn skills off for those two.";
+    }
+
+    // Link it for Claude: one this plugin added to the shared folder that a Claude account doesn't see (a link that failed).
+    if (provenance === "added-here" && home.kind === "shared") {
+      for (const account of claudeAccounts) {
+        if (skill.claudeAccounts.includes(account.id)) continue;
+        if (!(await probe.exists(join(account.dir, "skills", skill.folder)))) skill.can.link = true;
+      }
     }
 
     // Remove.
@@ -603,7 +617,7 @@ export async function discoverSkills(paseo: Paseo | null, { refresh = false } = 
   }
   for (const account of codexAccounts) {
     const config = codexConfigs.get(account.id) ?? "";
-    const mine = skills.filter((skill) => skill.scope !== "project" && skill.codexAccounts.includes(account.id) && codexSkillEnabled(config, skill.header.name || skill.folder, skill.skillMd));
+    const mine = skills.filter((skill) => skill.scope !== "project" && skill.codexAccounts.includes(account.id) && codexSkillEnabled(config, skill.header.name || skill.folder, skillMdPaths(skill)));
     const chars = mine.reduce((sum, skill) => sum + codexListingChars(skill.folder, skill.description, skill.skillMd), 0);
     costs.push(cost("codex", account.id, account.label, mine.length, chars, undefined));
   }
@@ -638,6 +652,11 @@ export async function discoverSkills(paseo: Paseo | null, { refresh = false } = 
     lastGeneration = generation;
   }
   return result;
+}
+
+/** Every path Codex may know this skill's SKILL.md by: the real one and one through each place it is found. */
+export function skillMdPaths(skill: Pick<InternalSkill, "skillMd" | "locations">): string[] {
+  return [...new Set([skill.skillMd, ...skill.locations.map((location) => join(location.path, "SKILL.md"))])];
 }
 
 function claudeListingFor(skill: InternalSkill, overrides: ClaudeOverrides): number {

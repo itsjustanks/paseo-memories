@@ -4,7 +4,7 @@ import { Text, View } from "react-native";
 import { plainError } from "../shared/errors";
 import { formatBytes } from "../shared/format";
 import { plainAgent } from "../shared/plain";
-import { skillsRemove, skillsToggle, type Skill } from "../shared/skill-contracts";
+import { skillsLink, skillsRemove, skillsToggle, type Skill } from "../shared/skill-contracts";
 import { SKILLS_PLAIN as S, sinceText, plainProvenance, plainReaders, plainSkillMessage, plainState, plainWordsFromChars, technicalProvenance } from "../shared/skills-plain";
 import { QueryState } from "./data";
 import { usePlain } from "./mode";
@@ -142,6 +142,7 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
   const detail = useSkillDetail(hostId, skill.id, reveal);
   const toggle = useRpc(skillsToggle);
   const remove = useRpc(skillsRemove);
+  const link = useRpc(skillsLink);
   const refresh = useSkillsRefresh(hostId);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -190,6 +191,7 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
             const name = plainAgent(agent);
             return <Button key={agent} label={off ? D.turnOn(name) : D.turnOff(name)} icon="Power" loading={busy === agent} onPress={() => void run(agent, () => toggle({ skillId: skill.id, agent, on: off }))} />;
           })}
+          {skill.can.link ? <Button label={S.add.linkForClaude} icon="Link" loading={busy === "link"} onPress={() => void run("link", () => link({ skillId: skill.id }))} /> : null}
           {skill.can.remove ? <ConfirmLink label={D.remove} question={D.removeQuestion} yes={D.removeYes} no={D.keep} onConfirm={() => void run("remove", () => remove({ skillId: skill.id, confirm: true }), true)} /> : null}
         </View>
         {!skill.can.turnOff.length || !skill.can.remove ? (
