@@ -12,7 +12,7 @@ import { findSecrets, maskSecrets } from "../shared/secrets";
 import { accountForProvider, providerDir } from "./accounts";
 import { codexState } from "./codex-state";
 import { workspaceDirectory, type Paseo } from "./daemon";
-import { discover, groupSources, memoryFileCount, type Discovery } from "./discover";
+import { discover, discoverNow, groupSources, memoryFileCount, type Discovery } from "./discover";
 import { daemonEnv, userHome } from "./env";
 import { MAX_READ_BYTES, Probe, sha256, statSafe } from "./files";
 import { planFor, toLoadPlan, type PlanCtx, type PlanItem } from "./plans";
@@ -114,11 +114,13 @@ export async function handleInventory({ refresh }: { refresh?: boolean }, { pase
   return inventoryFor(paseo, Boolean(refresh));
 }
 
+/** Straight from the last discovery when there is one (checked for changes in the background; `checking` says so). */
 export async function inventoryFor(paseo: Paseo | null, refresh = false) {
-  const discovery = await discover(paseo, { refresh });
+  const answer = await discoverNow(paseo, { refresh });
+  const discovery = answer.value;
   const folders = discovery.sources.filter((source) => source.kind === "claude-auto-memory");
   return {
-    checkedAt: new Date(discovery.at).toISOString(),
+    checkedAt: new Date(answer.asOf).toISOString(),
     accounts: discovery.accounts.accounts,
     sources: discovery.sources,
     groups: groupSources(discovery.sources),
@@ -133,6 +135,7 @@ export async function inventoryFor(paseo: Paseo | null, refresh = false) {
     findings: [],
     checked: discovery.checked,
     notes: discovery.notes,
+    checking: answer.checking,
   };
 }
 

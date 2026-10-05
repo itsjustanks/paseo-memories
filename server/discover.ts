@@ -25,6 +25,7 @@ import {
   type PlanCtx,
   type PlanItem,
 } from "./plans";
+import { Revalidating } from "./revalidate";
 import { readMemoriesSettings } from "./settings";
 import { applyWritable } from "./writable";
 
@@ -37,6 +38,8 @@ import { applyWritable } from "./writable";
 
 export type Discovery = {
   at: number;
+  /** Changes whenever discovery is worked out again (other caches key on it). */
+  version: number;
   settings: MemoriesSettings;
   accounts: Accounts;
   prompt: string | null;
@@ -48,16 +51,59 @@ export type Discovery = {
 };
 
 const MAX_PROJECTS = 200;
+/** A discovery checked this recently is used as it is. */
 const REUSE_MS = 2_000;
+/** A page left open re-checks in the background at most this often. */
+const CHECK_EVERY_MS = 10_000;
 
-let last: Discovery | null = null;
-let lastGeneration = 0;
 let generation = 0;
+let versions = 0;
 
-/** A write happened: the next read discovers again. */
+/** Bumped by every write this plugin makes: answers from before it are never served again. */
+export function writeGeneration(): number {
+  return generation;
+}
+
+const cache = new Revalidating<Discovery>(writeGeneration, { reuseMs: REUSE_MS, checkEveryMs: CHECK_EVERY_MS });
+
+/** A write happened: the next read discovers again (and waits for it). */
 export function forgetDiscovery(): void {
   generation += 1;
-  last = null;
+  cache.forget();
+}
+
+/** Everything discovery depends on besides the files it looks at. */
+async function readInputs(paseo: Paseo | null) {
+  const settings = await readMemoriesSettings();
+  const daemon = await readDaemonOrNull(paseo);
+  const accounts = await discoverAccounts(daemon?.launch ?? {});
+  const fromPaseo = (await paseoProjects(paseo)).map((entry) => entry.path);
+  const key = JSON.stringify([settings, daemon ? daemon.appendSystemPrompt : null, Boolean(paseo), accounts, fromPaseo, daemonEnv()]);
+  return { settings, daemon, accounts, fromPaseo, key };
+}
+
+function work(paseo: Paseo | null) {
+  return {
+    compute: async () => {
+      const discovery = await computeDiscovery(paseo);
+      return { value: discovery.value, seen: discovery.seen, inputs: discovery.inputs };
+    },
+    inputs: async () => (await readInputs(paseo)).key,
+  };
+}
+
+/**
+ * The discovery, checked: reused while nothing it read has changed (one stat
+ * per path it looked at, at most every 2 s), worked out again otherwise.
+ * `refresh` always works it out again.
+ */
+export async function discover(paseo: Paseo | null, { refresh = false } = {}): Promise<Discovery> {
+  return (await cache.get(work(paseo), refresh ? "fresh" : "verified")).value;
+}
+
+/** The last discovery straight away (checked in the background), with when it was last known right and whether a check is running. */
+export function discoverNow(paseo: Paseo | null, { refresh = false } = {}) {
+  return cache.get(work(paseo), refresh ? "fresh" : "stale-ok");
 }
 
 function iso(ms: number | undefined): string {
@@ -116,8 +162,7 @@ class Registry {
 }
 
 /** Known project folders: Paseo's, else the folders Claude Code has recorded in ~/.claude.json. */
-async function knownProjects(paseo: Paseo | null, probe: Probe, home: string): Promise<string[]> {
-  const fromPaseo = (await paseoProjects(paseo)).map((entry) => entry.path);
+async function knownProjects(fromPaseo: string[], probe: Probe, home: string): Promise<string[]> {
   let paths = fromPaseo;
   if (paths.length === 0) {
     const text = await probe.text(join(home, ".claude.json"));
@@ -175,13 +220,9 @@ function defaultAccount(accounts: Account[], agent: string): Account | undefined
   return accounts.find((account) => account.agent === agent && account.origin === "default");
 }
 
-export async function discover(paseo: Paseo | null, { refresh = false } = {}): Promise<Discovery> {
-  if (!refresh && last && lastGeneration === generation && Date.now() - last.at < REUSE_MS) return last;
-  const startedAt = generation;
+async function computeDiscovery(paseo: Paseo | null): Promise<{ value: Discovery; seen: Map<string, string>; inputs: string }> {
   const home = userHome();
-  const settings = await readMemoriesSettings();
-  const daemon = await readDaemonOrNull(paseo);
-  const accounts = await discoverAccounts(daemon?.launch ?? {});
+  const { settings, daemon, accounts, fromPaseo, key } = await readInputs(paseo);
   const probe = new Probe();
   const ctx: PlanCtx = { probe, home, env: { daemonEnv: daemonEnv() }, prompt: daemon ? daemon.appendSystemPrompt : null, codexEdits: settings.codexEdits, subfolders: false };
   const registry = new Registry();
@@ -207,7 +248,7 @@ export async function discover(paseo: Paseo | null, { refresh = false } = {}): P
   }
 
   // Claude auto memory: every folder under each Claude account's projects/.
-  const projects = await knownProjects(paseo, probe, home);
+  const projects = await knownProjects(fromPaseo, probe, home);
   const slugs = await slugMap(probe, home, projects);
   let claudeDirs = 0;
   for (const account of accounts.accounts.filter((entry) => entry.agent === "claude" && entry.exists)) {
@@ -254,6 +295,7 @@ export async function discover(paseo: Paseo | null, { refresh = false } = {}): P
   if (unknown) notes.push(`${unknown} Claude memory folder${unknown === 1 ? " is" : "s are"} for projects whose path is not known here ("other projects").`);
   const result: Discovery = {
     at: Date.now(),
+    version: (versions += 1),
     settings,
     accounts,
     prompt: daemon ? daemon.appendSystemPrompt : null,
@@ -263,12 +305,7 @@ export async function discover(paseo: Paseo | null, { refresh = false } = {}): P
     checked,
     notes,
   };
-  // Keep it only if no write started meanwhile.
-  if (startedAt === generation) {
-    last = result;
-    lastGeneration = generation;
-  }
-  return result;
+  return { value: result, seen: probe.seen, inputs: key };
 }
 
 export function memoryFileCount(discovery: Discovery): number {

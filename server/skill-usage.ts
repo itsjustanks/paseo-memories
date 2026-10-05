@@ -18,6 +18,7 @@ import {
   type UseAgent,
 } from "../shared/skill-usage";
 import { onShutdown, onStart } from "./lifecycle";
+import { Pacer } from "./pace";
 import { clientSeenWithin } from "./presence";
 
 /**
@@ -38,7 +39,11 @@ import { clientSeenWithin } from "./presence";
  *    with `own()`, never a slice of a line;
  *  - one global read budget per pass, resumed next pass where it stopped;
  *  - logs that disappear or age out are dropped every pass;
- *  - passes run only while an app is connected, backing off after failures.
+ *  - passes run only while an app is connected, backing off after failures;
+ *  - a pass works at most a quarter of the time (server/pace.ts), so a
+ *    backlog of gigabytes is read over many passes (256 MB each, one every
+ *    30 s while it lasts) without slowing the host: about 12 minutes to a
+ *    first full count of 5.8 GB.
  */
 
 export const PASS_LIMITS = { readBytes: 256 * 1024 * 1024, files: 20_000 };
@@ -188,14 +193,13 @@ function handleLine(entry: Entry, line: string, firstDay: number): void {
 }
 
 /** Read from `entry.offset`, at most `budget` bytes, line by line; `entry.offset` ends just past the last whole line. */
-async function readFrom(path: string, entry: Entry, budget: number, firstDay: number): Promise<{ read: number; atEnd: boolean }> {
+async function readFrom(path: string, entry: Entry, budget: number, firstDay: number, pacer: Pacer, buffer: Buffer): Promise<{ read: number; atEnd: boolean }> {
   if (entry.offset === 0) entry.skipping = false;
   const handle = await fs.open(path, "r");
   const markers = entry.kind === "codex" ? CODEX_BYTES : CLAUDE_BYTES;
   let read = 0;
   let atEnd = false;
   try {
-    const buffer = Buffer.alloc(CHUNK);
     let pending: Buffer[] = [];
     let pendingBytes = 0;
     let position = entry.offset;
@@ -237,7 +241,7 @@ async function readFrom(path: string, entry: Entry, budget: number, firstDay: nu
           } else pending.push(Buffer.from(buffer.subarray(start, bytesRead)));
         }
       }
-      await new Promise((resolve) => setImmediate(resolve));
+      await pacer.step();
     }
   } finally {
     await handle.close();
@@ -263,6 +267,9 @@ async function runPass(now = Date.now()): Promise<void> {
   for (const entry of cache.values()) pruneDays(entry.tally.skills, firstDay);
   let budget = PASS_LIMITS.readBytes;
   let cut = -1;
+  const pacer = new Pacer();
+  // One read buffer for the whole pass: thousands of logs, one allocation.
+  const buffer = Buffer.alloc(CHUNK);
   const start = logs.length ? cursor % logs.length : 0;
   for (let i = 0; i < logs.length; i += 1) {
     const index = (start + i) % logs.length;
@@ -283,7 +290,7 @@ async function runPass(now = Date.now()): Promise<void> {
         continue;
       }
       try {
-        const { read, atEnd } = await readFrom(log.path, entry, budget, firstDay);
+        const { read, atEnd } = await readFrom(log.path, entry, budget, firstDay, pacer, buffer);
         budget -= read;
         if (!atEnd) {
           if (cut < 0) cut = index;

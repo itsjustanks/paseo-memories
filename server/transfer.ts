@@ -8,10 +8,10 @@ import { newMemoryFile, parseMemoryFile, readFields } from "../shared/frontmatte
 import { parseIndex } from "../shared/memory-index";
 import { replaceSection, sectionText, splitSections } from "../shared/markdown";
 import { MASK_FILL, findSecrets, maskSecrets } from "../shared/secrets";
-import { jaccard, NEAR_DUPLICATE, normalizeText, shingles, type Unit } from "../shared/tidy";
+import { featureJaccard, NEAR_DUPLICATE, normalizeText, textFeatures, type Unit } from "../shared/tidy";
 import { asSection, buildBundle, moveBlocker, parseImport, renderMarkdown, type BundleItem, type ImportItem } from "../shared/transfer";
 import { claudeCreate, claudeDelete, fileNameFor, usualShape } from "./claude-memory";
-import { buildCorpus, fileUnits, memoryFolderUnits, sectionBody } from "./corpus";
+import { buildCorpus, featuresOf, fileUnits, memoryFolderUnits, sectionBody } from "./corpus";
 import type { Paseo } from "./daemon";
 import { discover } from "./discover";
 import { userHome } from "./env";
@@ -193,10 +193,11 @@ function duplicateOf(item: ImportItem, existing: Unit[], earlier: ImportItem[], 
   const found = (unit: Unit) => !listed || listed.has(unit.key);
   const same = existing.find((unit) => found(unit) && sameText(unit.text, item.body));
   if (same) return { duplicate: "exact", duplicateOf: same.title, identical: true };
-  for (const unit of existing) if (normalizeText(unit.text) === normal) return { duplicate: "exact", duplicateOf: unit.title };
-  const set = shingles(item.body);
+  // The existing notes' features are kept per file version (server/corpus.ts): no note is re-read per item.
+  const features = textFeatures(item.body);
+  for (const unit of existing) if (featuresOf(unit).key === features.key) return { duplicate: "exact", duplicateOf: unit.title };
   for (const unit of existing) {
-    if (jaccard(set, shingles(unit.text)) >= NEAR_DUPLICATE) return { duplicate: "near", duplicateOf: unit.title };
+    if (featureJaccard(features, featuresOf(unit)) >= NEAR_DUPLICATE) return { duplicate: "near", duplicateOf: unit.title };
   }
   for (const other of earlier) if (normalizeText(other.body) === normal) return { duplicate: "batch", duplicateOf: other.title };
   return { duplicate: "none" };

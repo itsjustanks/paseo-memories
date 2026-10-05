@@ -58,53 +58,161 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
   return inter / (a.size + b.size - inter);
 }
 
+/** A 53-bit string hash (cyrb53): two different shingles share one about once in 2^53. */
+export function hash53(text: string, seed = 0): number {
+  let h1 = 0xdeadbeef ^ seed;
+  let h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
+/**
+ * What the duplicate checks need from a text, worked out once per text and
+ * kept by the caller (server/corpus.ts keeps them per file version): a key
+ * for "the same once normalised", the word count, and the word 3-grams as
+ * hashes, sorted (so two texts compare in one merge, with nothing built per
+ * pair). Small: no copy of the text.
+ */
+export type TextFeatures = { key: string; words: number; shingles: Float64Array };
+
+export function textFeatures(text: string): TextFeatures {
+  const normal = normalizeText(text);
+  const list = normal ? normal.split(" ") : [];
+  const seen = new Set<number>();
+  if (list.length < 3) {
+    if (list.length) seen.add(hash53(list.join(" ")));
+  } else for (let i = 0; i + 3 <= list.length; i += 1) seen.add(hash53(`${list[i]} ${list[i + 1]} ${list[i + 2]}`));
+  return { key: `${normal.length}:${hash53(normal)}:${hash53(normal, 1)}`, words: list.length, shingles: Float64Array.from(seen).sort() };
+}
+
+/** Jaccard of two features' 3-grams (as `jaccard` on the strings). */
+export function featureJaccard(a: TextFeatures, b: TextFeatures): number {
+  const x = a.shingles;
+  const y = b.shingles;
+  if (x.length === 0 && y.length === 0) return 1;
+  let i = 0;
+  let j = 0;
+  let inter = 0;
+  while (i < x.length && j < y.length) {
+    if (x[i]! < y[j]!) i += 1;
+    else if (x[i]! > y[j]!) j += 1;
+    else {
+      inter += 1;
+      i += 1;
+      j += 1;
+    }
+  }
+  return inter / (x.length + y.length - inter);
+}
+
 /** Text shorter than this is too generic to call a duplicate. */
 export const MIN_DUPLICATE_WORDS = 6;
 export const NEAR_DUPLICATE = 0.8;
 export const CONFLICT_BELOW = 0.5;
+/** A 3-gram held by more units than this is boilerplate: it suggests no pair. */
+const COMMON_SHINGLE = 40;
+/** Pieces of work between two pauses of a stepped run (`duplicateSteps`): about a millisecond. */
+const STEP_UNITS = 16;
 
 export type DuplicateGroup = { units: Unit[]; score: number; exact: boolean };
+export type FeaturesOf = (unit: Unit) => TextFeatures;
+
+const plainFeatures: FeaturesOf = (unit) => textFeatures(unit.text);
+
+function byId(a: Unit, b: Unit): number {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
 
 /**
  * Exact duplicates (same text once normalised) and near ones (shingled
- * Jaccard ≥ 0.8). Candidate pairs come from an inverted index of shingles,
- * skipping ones shared by too many units, so a host with a thousand
- * sections is not compared all against all.
+ * Jaccard ≥ 0.8). No pair is compared all against all: exact copies share a
+ * bucket and are indexed once, and near candidates come from an inverted
+ * index of 3-grams (a pair must share two that at most 40 units hold,
+ * copies counted); only those pairs are scored, and only when their sizes
+ * allow 0.8. Linear in the text plus the candidate pairs.
+ *
+ * A generator: it pauses (`yield`) every few units, so a caller can
+ * let other work in between (server/pace.ts `runSliced`); `findDuplicates`
+ * runs it straight through.
  */
-export function findDuplicates(units: Unit[]): DuplicateGroup[] {
-  const usable = units.filter((unit) => words(unit.text).length >= MIN_DUPLICATE_WORDS);
-  const exact = new Map<string, Unit[]>();
-  for (const unit of usable) {
-    const key = normalizeText(unit.text);
-    exact.set(key, [...(exact.get(key) ?? []), unit]);
+export function* duplicateSteps(units: Unit[], featuresOf: FeaturesOf = plainFeatures): Generator<void, DuplicateGroup[]> {
+  // Exact copies: one bucket per normalised text, members in the order given.
+  const buckets = new Map<string, { features: TextFeatures; members: Unit[] }>();
+  for (let i = 0; i < units.length; i += 1) {
+    if (i % STEP_UNITS === STEP_UNITS - 1) yield;
+    const features = featuresOf(units[i]!);
+    if (features.words < MIN_DUPLICATE_WORDS) continue;
+    const bucket = buckets.get(features.key);
+    if (bucket) bucket.members.push(units[i]!);
+    else buckets.set(features.key, { features, members: [units[i]!] });
   }
   const groups: DuplicateGroup[] = [];
-  const inExact = new Set<string>();
-  for (const members of exact.values()) {
-    if (members.length < 2) continue;
-    groups.push({ units: members, score: 1, exact: true });
-    for (const member of members) inExact.add(member.id);
-  }
-  const sets = new Map(usable.map((unit) => [unit.id, shingles(unit.text)]));
-  const index = new Map<string, string[]>();
-  for (const unit of usable) for (const shingle of sets.get(unit.id)!) index.set(shingle, [...(index.get(shingle) ?? []), unit.id]);
-  const overlap = new Map<string, number>();
-  for (const ids of index.values()) {
-    if (ids.length < 2 || ids.length > 40) continue;
-    for (let i = 0; i < ids.length; i += 1) for (let j = i + 1; j < ids.length; j += 1) {
-      const pair = ids[i]! < ids[j]! ? `${ids[i]}\u0000${ids[j]}` : `${ids[j]}\u0000${ids[i]}`;
-      overlap.set(pair, (overlap.get(pair) ?? 0) + 1);
+  const reps = [...buckets.values()];
+  for (const bucket of reps) if (bucket.members.length > 1) groups.push({ units: bucket.members, score: 1, exact: true });
+  // One entry per distinct text; a 3-gram's holders count every copy. Most 3-grams have one holder: a plain number for those.
+  const n = reps.length;
+  const single = new Map<number, number>();
+  const holders = new Map<number, { reps: number[]; copies: number }>();
+  for (let r = 0; r < n; r += 1) {
+    yield;
+    const copies = reps[r]!.members.length;
+    for (const shingle of reps[r]!.features.shingles) {
+      const hit = holders.get(shingle);
+      if (hit) {
+        hit.copies += copies;
+        if (hit.copies <= COMMON_SHINGLE) hit.reps.push(r);
+        continue;
+      }
+      const first = single.get(shingle);
+      if (first === undefined) single.set(shingle, r);
+      else {
+        single.delete(shingle);
+        holders.set(shingle, { reps: [first, r], copies: reps[first]!.members.length + copies });
+      }
     }
   }
-  const byId = new Map(usable.map((unit) => [unit.id, unit]));
-  for (const [pair, shared] of overlap) {
-    if (shared < 2) continue;
-    const [a, b] = pair.split("\u0000") as [string, string];
-    if (inExact.has(a) && inExact.has(b) && normalizeText(byId.get(a)!.text) === normalizeText(byId.get(b)!.text)) continue;
-    const score = jaccard(sets.get(a)!, sets.get(b)!);
-    if (score >= NEAR_DUPLICATE) groups.push({ units: [byId.get(a)!, byId.get(b)!], score, exact: false });
+  single.clear();
+  // Per text, the later texts it shares at least two such 3-grams with: one small count at a time, never a table of all pairs.
+  const near: DuplicateGroup[] = [];
+  const counts = new Map<number, number>();
+  for (let r = 0; r < n; r += 1) {
+    yield;
+    const a = reps[r]!;
+    for (const shingle of a.features.shingles) {
+      const hit = holders.get(shingle);
+      if (!hit || hit.copies > COMMON_SHINGLE) continue;
+      for (const other of hit.reps) if (other > r) counts.set(other, (counts.get(other) ?? 0) + 1);
+    }
+    for (const [other, shared] of counts) {
+      if (shared < 2) continue;
+      const b = reps[other]!;
+      const small = Math.min(a.features.shingles.length, b.features.shingles.length);
+      const large = Math.max(a.features.shingles.length, b.features.shingles.length);
+      // Jaccard is at most small / large.
+      if (small < NEAR_DUPLICATE * large) continue;
+      const score = featureJaccard(a.features, b.features);
+      if (score < NEAR_DUPLICATE) continue;
+      // Every copy of one text pairs with every copy of the other, lower id first.
+      for (const x of a.members) for (const y of b.members) near.push({ units: byId(x, y) < 0 ? [x, y] : [y, x], score, exact: false });
+    }
+    counts.clear();
   }
-  return groups;
+  near.sort((p, q) => byId(p.units[0]!, q.units[0]!) || byId(p.units[1]!, q.units[1]!));
+  return [...groups, ...near];
+}
+
+export function findDuplicates(units: Unit[], featuresOf: FeaturesOf = plainFeatures): DuplicateGroup[] {
+  const steps = duplicateSteps(units, featuresOf);
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+  }
 }
 
 /** Headings too common to mean "the same topic". */
@@ -116,20 +224,30 @@ export type ConflictGroup = { title: string; units: Unit[]; score: number };
  * Possible conflicts: the same name or heading in two places with different
  * text. A guess (the UI says so): same title is only a hint of same topic.
  */
-export function findConflicts(units: Unit[]): ConflictGroup[] {
+export function findConflicts(units: Unit[], featuresOf: FeaturesOf = plainFeatures): ConflictGroup[] {
   const byTitle = new Map<string, Unit[]>();
   for (const unit of units) {
     const title = normalizeText(unit.title);
     if (!title || GENERIC_TITLES.has(title) || title.split(" ").length < 2) continue;
-    byTitle.set(title, [...(byTitle.get(title) ?? []), unit]);
+    const members = byTitle.get(title);
+    if (members) members.push(unit);
+    else byTitle.set(title, [unit]);
   }
   const out: ConflictGroup[] = [];
   for (const [title, members] of byTitle) {
-    const distinct = members.filter((unit, index) => members.findIndex((other) => other.sourceId === unit.sourceId && other.key === unit.key) === index);
+    const keys = new Set<string>();
+    const distinct = members.filter((unit) => {
+      const key = `${unit.sourceId}\u0000${unit.key}`;
+      if (keys.has(key)) return false;
+      keys.add(key);
+      return true;
+    });
     if (distinct.length < 2 || new Set(distinct.map((unit) => unit.sourceId)).size < 2) continue;
     const [first, second] = distinct as [Unit, Unit];
-    const score = jaccard(shingles(first.text), shingles(second.text));
-    if (normalizeText(first.text) === normalizeText(second.text) || score >= CONFLICT_BELOW) continue;
+    const a = featuresOf(first);
+    const b = featuresOf(second);
+    const score = featureJaccard(a, b);
+    if (a.key === b.key || score >= CONFLICT_BELOW) continue;
     out.push({ title: first.title, units: distinct.slice(0, 5), score });
   }
   return out;

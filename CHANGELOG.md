@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1 (2026-10-05)
+
+Memories is now light on big hosts. On the busiest one we run (899 memory files, 109 projects, 253 instruction files and 5.8 GB of chat logs), 0.4.0 worked out the whole tidy check again on every read: 12 s each time (41 s at worst, past the 30 s limit for a plugin call), every ~20 s while a page was open, with the plugin at ~950 MB and slowing the daemon's other plugin calls. Thanks to the agent that measured all this on that host (sandbox-97), and started the fix.
+
+- **Answers from a cache, checked in the background.** A page that is open gets the last answer straight away and never waits for a full check. A quick look for changes (one stat per file the answer was built from, at most every 10 s) runs behind it, and only a real change, such as a new or edited note or a mentioned path that appeared or went away, works anything out again. The answer says when it's checking (`checking`), and the page then looks again 3 s later. Refresh, and any change made here, still work everything out at once.
+- **Only what changed is read again.** Each note and section is read, split and analysed once per version of its file. A change to one file costs that file, not all of them.
+- **No more comparing everything with everything** to find near-duplicates. Exact copies are bucketed first, near ones come from an index of shared word runs, and only pairs whose sizes allow a match are compared. The results are the same as before.
+- **Never stalls the other plugin calls.** Long work runs in slices of a few milliseconds and lets everything else in between. The longest stall in our big-host test fell from 2.2 s to about 10–40 ms.
+- **A folder that merely exists isn't watched.** A path a note mentions, `/tmp`, your home folder or a project only counts as changed when it appears or disappears, not each time something inside it changes. Listed folders and read files are still watched closely.
+- **Memory stays put.** The caches have caps (files kept and megabytes of text) and drop the least recently used past them. The usage count reads chat logs in 256 KB pieces with one buffer per pass, never a whole log, and its buffers peak at about 2 MB (0.4.0: about 12 MB). Over 200 polls the heap stays flat.
+- **Fewer calls to the daemon.** The list of Paseo projects is asked for at most every 5 s.
+- **Code-name checks are lighter.** A finished background scan shows on the next read without working anything else out again. While nothing changes, scans space out from every 10 minutes up to hourly, and Refresh still starts one at once. A scan works at most a quarter of the time, so a large backlog is read over several passes.
+
+Measured on a MacBook with a generated home of the busy host's size, before (0.4.0) → after: a first findings read 2.6 s → 0.9 s; every later read 2.5 s → under 30 ms; 30 polls of an open page 80 s → 0.14 s of CPU; longest stall 2.2 s → 11 ms; memory ~890 MB → ~285 MB. That host's CPU is about five times slower than the Mac's.
+
+- For developers: `server/revalidate.ts` (cached answers with a background check), `server/pace.ts` (`Pacer` for background work, `Slicer` and `runSliced` for work someone waits for), `duplicateSteps` in `shared/tidy.ts` (a generator that pauses between pieces), and `kindOf` in `server/files.ts` (what an "is it there?" answer depends on). The `inventory` and `findings` replies gain `checking` (additive, defaults to false). `npm test` now also runs `tests/perf/scale.test.ts` on its own after the rest: it builds a home of the busy host's size and checks the speed, memory and stall numbers above. No new dependencies, settings or SDK import paths; `requirements.paseo` stays `>=0.8.0`.
+
 ## 0.4.0 (2026-10-04)
 
 The plugin is now **Memories & Skills**: a second page, **Skills**, sits under Memories in the sidebar. And both pages are much calmer.

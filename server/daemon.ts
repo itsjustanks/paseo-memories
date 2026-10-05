@@ -80,6 +80,7 @@ export function resetDaemonCache(): void {
   generation += 1;
   cached = null;
   inFlight = null;
+  projectsCache = null;
 }
 
 type WorkspaceEntry = { id: string; name: string; workspaceDirectory?: string; projectRootPath: string };
@@ -98,13 +99,23 @@ export async function workspaceEntry(paseo: Paseo, workspaceId: string): Promise
   return { name: workspace.name || basename(directory), directory };
 }
 
+let projectsCache: { at: number; paseo: Paseo; value: Promise<Array<{ name: string; path: string }>> } | null = null;
+
 /**
  * Every project Paseo knows (projects, then workspace folders). Empty when
  * there is no daemon or it does not answer; callers fall back to Claude's own
- * list of folders.
+ * list of folders. Asked of the daemon at most every 5 s: every check for
+ * changes needs it, and a page left open checks often.
  */
-export async function paseoProjects(paseo: Paseo | null): Promise<Array<{ name: string; path: string }>> {
-  if (!paseo) return [];
+export function paseoProjects(paseo: Paseo | null): Promise<Array<{ name: string; path: string }>> {
+  if (!paseo) return Promise.resolve([]);
+  if (projectsCache && projectsCache.paseo === paseo && Date.now() - projectsCache.at < CACHE_MS) return projectsCache.value;
+  const value = listProjects(paseo);
+  projectsCache = { at: Date.now(), paseo, value };
+  return value;
+}
+
+async function listProjects(paseo: Paseo): Promise<Array<{ name: string; path: string }>> {
   const out: Array<{ name: string; path: string }> = [];
   const projectApi = (paseo as unknown as { projects?: { list(): Promise<unknown> } }).projects;
   if (projectApi) {

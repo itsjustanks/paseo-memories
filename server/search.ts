@@ -4,6 +4,7 @@ import { maskSecrets } from "../shared/secrets";
 import { buildCorpus } from "./corpus";
 import type { Paseo } from "./daemon";
 import { discover } from "./discover";
+import { Slicer } from "./pace";
 
 /**
  * Search titles and bodies of every memory and section. Results carry a
@@ -22,12 +23,15 @@ export async function searchFor(paseo: Paseo | null, query: string, limit = 50) 
   const units = await buildCorpus(discovery);
   const needle = query.trim().toLowerCase();
   const hits: SearchResult[] = [];
+  const slicer = new Slicer();
   for (const unit of units) {
+    await slicer.step();
     const inTitle = unit.title.toLowerCase().includes(needle);
-    const masked = maskSecrets(unit.text).text;
-    const at = masked.toLowerCase().indexOf(needle);
     const inBody = unit.text.toLowerCase().includes(needle);
     if (!inTitle && !inBody) continue;
+    // Only matches are masked (the costly part), and only for their snippet.
+    const masked = maskSecrets(unit.text).text;
+    const at = masked.toLowerCase().indexOf(needle);
     let snippet: string;
     if (at >= 0) {
       const start = Math.max(0, at - SNIPPET);

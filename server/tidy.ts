@@ -9,14 +9,16 @@ import { CLAUDE_MD_ADVISORY_LINES, CODEX_MEMORY_SUMMARY_TOKENS, CODEX_PROJECT_DO
 import { parseIndex } from "../shared/memory-index";
 import { scanProgressNote } from "../shared/plain";
 import { findSecrets } from "../shared/secrets";
-import { findConflicts, findDuplicates, nextStep, pathRefs, rankFindings, symbolRefs, type Unit } from "../shared/tidy";
+import { duplicateSteps, findConflicts, nextStep, pathRefs, rankFindings, symbolRefs, type Unit } from "../shared/tidy";
 import { pendingDiff } from "./codex-pending";
-import { buildCorpus } from "./corpus";
+import { buildCorpus, featuresOf } from "./corpus";
 import type { Paseo } from "./daemon";
-import { discover, type Discovery } from "./discover";
+import { discover, writeGeneration, type Discovery } from "./discover";
 import { userHome } from "./env";
-import { Probe, sha256 } from "./files";
-import { requestScan, scanProgress, scanState, symbolIndex } from "./symbols";
+import { eachLimited, Probe, sha256 } from "./files";
+import { runSliced, Slicer } from "./pace";
+import { Revalidating } from "./revalidate";
+import { requestScan, scanProgress, scanState, symbolIndex, symbolsVersion } from "./symbols";
 
 /**
  * The tidy checks (SPEC "Tidy checks"), pure code, no LLM. Each finding
@@ -26,6 +28,18 @@ import { requestScan, scanProgress, scanState, symbolIndex } from "./symbols";
  */
 
 const MAX_PATH_CHECKS = 3000;
+/** Paths looked up at once. */
+const STAT_CONCURRENCY = 32;
+
+/** What the checks read from a unit's text, worked out once per unit (units are cached per file version). */
+type UnitRefs = { paths: string[]; symbols: string[]; secrets: ReturnType<typeof findSecrets> };
+const refs = new WeakMap<Unit, UnitRefs>();
+
+function refsOf(unit: Unit): UnitRefs {
+  let hit = refs.get(unit);
+  if (!hit) refs.set(unit, (hit = { paths: pathRefs(unit.text), symbols: symbolRefs(unit.text), secrets: findSecrets(unit.text) }));
+  return hit;
+}
 
 function id(kind: string, ...parts: string[]): string {
   return `${kind}:${sha256(parts.join("\u0000")).slice(0, 12)}`;
@@ -46,8 +60,8 @@ function loadContext(unit: Unit): string {
   return unit.projectPath ?? `folder:${unit.sourceId}`;
 }
 
-function duplicateFindings(units: Unit[]): Finding[] {
-  return findDuplicates(units).map((group) => {
+async function duplicateFindings(units: Unit[], slicer: Slicer): Promise<Finding[]> {
+  return (await runSliced(duplicateSteps(units, featuresOf), slicer)).map((group) => {
     // A Claude memory copy is the easiest to delete safely (its index line follows), so suggest that one.
     const copy = group.units.find((unit) => unit.kind === "claude-auto-memory") ?? group.units[group.units.length - 1]!;
     const keep = group.units.find((unit) => unit !== copy)!;
@@ -77,7 +91,7 @@ function duplicateFindings(units: Unit[]): Finding[] {
 }
 
 function conflictFindings(units: Unit[]): Finding[] {
-  return findConflicts(units).map((group) => ({
+  return findConflicts(units, featuresOf).map((group) => ({
     id: id("conflict", ...group.units.map((unit) => unit.id)),
     kind: "conflict",
     severity: "info",
@@ -123,11 +137,27 @@ async function missingTop(probe: Probe, target: string): Promise<string> {
  * Stale paths, grouped by the missing folder they share: fourteen memories
  * pointing into one deleted worktree are one finding, not fourteen.
  */
-async function stalePathFindings(units: Unit[], probe: Probe): Promise<{ findings: Finding[]; checked: number }> {
+async function stalePathFindings(units: Unit[], probe: Probe, slicer: Slicer): Promise<{ findings: Finding[]; checked: number }> {
+  // Look up every path the pass below may ask about, a few at a time, each once; the pass then reads the answers in order.
+  const ahead = new Set<string>();
+  prefetch: for (const unit of units) {
+    await slicer.step();
+    for (const ref of refsOf(unit).paths) {
+      if (ahead.size >= MAX_PATH_CHECKS * 3) break prefetch;
+      const target = resolveRef(ref, unit);
+      if (!target) continue;
+      ahead.add(target);
+      if (isAbsolute(ref)) ahead.add(`/${target.split("/").filter(Boolean)[0] ?? ""}`);
+      else if (unit.projectPath) ahead.add(unit.projectPath);
+    }
+  }
+  await eachLimited([...ahead], STAT_CONCURRENCY, (path) => probe.exists(path));
   const groups = new Map<string, Array<{ unit: Unit; ref: string; target: string }>>();
   let checked = 0;
   outer: for (const unit of units) {
-    for (const ref of pathRefs(unit.text)) {
+    // The answers are in the probe already, so these awaits never reach the event loop: step.
+    await slicer.step();
+    for (const ref of refsOf(unit).paths) {
       if (checked >= MAX_PATH_CHECKS) break outer;
       const target = resolveRef(ref, unit);
       if (!target) continue;
@@ -137,7 +167,9 @@ async function stalePathFindings(units: Unit[], probe: Probe): Promise<{ finding
       if (!isAbsolute(ref) && !ref.startsWith("~/") && unit.projectPath && !(await probe.isDir(unit.projectPath))) continue;
       if (await probe.exists(target)) continue;
       const top = await missingTop(probe, target);
-      groups.set(top, [...(groups.get(top) ?? []), { unit, ref, target }]);
+      const hits = groups.get(top);
+      if (hits) hits.push({ unit, ref, target });
+      else groups.set(top, [{ unit, ref, target }]);
     }
   }
   const home = userHome();
@@ -162,17 +194,31 @@ async function stalePathFindings(units: Unit[], probe: Probe): Promise<{ finding
   return { findings: out, checked };
 }
 
-function staleSymbolFindings(units: Unit[]): { findings: Finding[]; queries: Map<string, Set<string>> } {
-  const out: Finding[] = [];
+/** The units that name code, with the names, per project root: what the background scan is asked about. */
+type SymbolMentions = { queries: Map<string, Set<string>>; mentions: Array<{ unit: Unit; names: string[] }> };
+
+function symbolMentions(units: Unit[]): SymbolMentions {
   const queries = new Map<string, Set<string>>();
+  const mentions: SymbolMentions["mentions"] = [];
   for (const unit of units) {
     if (!unit.projectPath) continue;
-    const names = symbolRefs(unit.text);
+    const names = refsOf(unit).symbols;
     if (!names.length) continue;
     const query = queries.get(unit.projectPath) ?? new Set<string>();
     queries.set(unit.projectPath, query);
     for (const name of names) query.add(name);
-    const index = symbolIndex(unit.projectPath);
+    mentions.push({ unit, names });
+  }
+  return { queries, mentions };
+}
+
+/** Stale code names from the scan's answers as they are now (read time: a scan that finishes shows on the next read). */
+async function staleSymbolFindings(mentions: SymbolMentions["mentions"]): Promise<Finding[]> {
+  const out: Finding[] = [];
+  const slicer = new Slicer();
+  for (const { unit, names } of mentions) {
+    await slicer.step();
+    const index = symbolIndex(unit.projectPath!);
     if (!index || index.capped) continue;
     for (const name of names) {
       // A name the last scan was not asked about is unknown until the next one.
@@ -189,7 +235,7 @@ function staleSymbolFindings(units: Unit[]): { findings: Finding[]; queries: Map
       });
     }
   }
-  return { findings: out, queries };
+  return out;
 }
 
 async function folderFindings(discovery: Discovery, probe: Probe): Promise<Finding[]> {
@@ -241,7 +287,7 @@ async function folderFindings(discovery: Discovery, probe: Probe): Promise<Findi
 function secretFindings(units: Unit[]): Finding[] {
   const out: Finding[] = [];
   for (const unit of units) {
-    const found = findSecrets(unit.text);
+    const found = refsOf(unit).secrets;
     if (!found.length) continue;
     const kinds = [...new Set(found.map((match) => match.kind))];
     const holds = found.length === 1 ? "holds a value that looks like a secret" : `holds ${found.length} values that look like secrets`;
@@ -256,47 +302,126 @@ function secretFindings(units: Unit[]): Finding[] {
   return out;
 }
 
-export async function findingsFor(paseo: Paseo | null, refresh = false) {
+type Core = {
+  /** Every finding but the stale code names, ranked. */
+  findings: Finding[];
+  checked: string[];
+  notes: string[];
+  stale: boolean;
+  sources: number;
+  /** Project roots asked about in the code-name scan. */
+  roots: string[];
+  /** The code names each unit mentions; their findings come from the scan's answers at read time. */
+  mentions: SymbolMentions["mentions"];
+};
+
+/** Everything the findings depend on besides the files they read: the discovery and Codex's pending work. */
+async function findingsInputs(discovery: Discovery): Promise<string> {
+  const pending = [];
+  for (const account of discovery.accounts.accounts) if (account.agent === "codex" && account.exists) pending.push(await pendingDiff(join(account.dir, "memories")));
+  return JSON.stringify([discovery.version, pending]);
+}
+
+async function computeFindings(paseo: Paseo | null, refresh: boolean): Promise<{ value: Core; seen: Map<string, string>; inputs: string }> {
   const discovery = await discover(paseo, { refresh });
   const probe = new Probe();
+  const slicer = new Slicer();
   const units = await buildCorpus(discovery, probe);
+  // What each check reads from a text, worked out a slice at a time (kept per file version, so only new text costs anything).
+  for (const unit of units) {
+    featuresOf(unit);
+    refsOf(unit);
+    await slicer.step();
+  }
   const stale = discovery.settings.staleChecks;
-  const paths = stale ? await stalePathFindings(units, probe) : { findings: [], checked: 0 };
-  const symbols = stale ? staleSymbolFindings(units) : { findings: [], queries: new Map<string, Set<string>>() };
-  const unknownFolders = new Set(units.filter((unit) => unit.kind === "claude-auto-memory" && !unit.projectPath && pathRefs(unit.text).some((ref) => !ref.startsWith("~/") && !isAbsolute(ref))).map((unit) => unit.sourceId));
+  const paths = stale ? await stalePathFindings(units, probe, slicer) : { findings: [], checked: 0 };
+  const symbols = stale ? symbolMentions(units) : { queries: new Map<string, Set<string>>(), mentions: [] };
+  const unknownFolders = new Set(units.filter((unit) => unit.kind === "claude-auto-memory" && !unit.projectPath && refsOf(unit).paths.some((ref) => !ref.startsWith("~/") && !isAbsolute(ref))).map((unit) => unit.sourceId));
   if (stale) requestScan(symbols.queries, refresh);
-  const all = rankFindings([
-    ...secretFindings(units),
-    ...(await folderFindings(discovery, probe)),
-    ...duplicateFindings(units),
-    ...paths.findings,
-    ...symbols.findings,
-    ...conflictFindings(units),
-  ]);
-  const scan: { state: string; asOf?: string; checked?: number; total?: number } = stale ? { ...scanState(), ...scanProgress(symbols.queries.keys()) } : { state: "off" };
-  const partial = scanProgressNote(scan);
-  const counts = { sources: discovery.sources.filter((source) => source.exists).length };
-  return {
-    checkedAt: new Date().toISOString(),
-    findings: all,
-    nextStep: nextStep(all, counts),
+  const found = [...secretFindings(units), ...(await folderFindings(discovery, probe)), ...(await duplicateFindings(units, slicer))];
+  await slicer.step();
+  const conflicts = conflictFindings(units);
+  await slicer.step();
+  const findings = rankFindings([...found, ...paths.findings, ...conflicts]);
+  const sources = discovery.sources.filter((source) => source.exists).length;
+  await slicer.step();
+  const value: Core = {
+    findings,
     checked: [
-      `Checked ${units.length.toLocaleString("en-US")} memories and sections in ${counts.sources} sources${stale ? `, and ${paths.checked} path mentions` : ""}.`,
+      `Checked ${units.length.toLocaleString("en-US")} memories and sections in ${sources} sources${stale ? `, and ${paths.checked} path mentions` : ""}.`,
       ...discovery.checked,
     ],
     notes: stale && unknownFolders.size
       ? [`Relative paths in ${unknownFolders.size} Claude memory folder${unknownFolders.size === 1 ? "" : "s"} whose project path is unknown were not checked; only absolute paths were.`]
       : [],
+    stale,
+    sources,
+    roots: [...symbols.queries.keys()],
+    mentions: symbols.mentions,
+  };
+  return { value, seen: probe.seen, inputs: await findingsInputs(discovery) };
+}
+
+/** Re-checked at most every 10 s while a page asks; worked out again only when something it read changed. Tests may change these. */
+export const FINDINGS_TIMING = { reuseMs: 2_000, checkEveryMs: 10_000 };
+const cache = new Revalidating<Core>(writeGeneration, FINDINGS_TIMING);
+
+/** For tests: how many times the findings were worked out. */
+export function findingsComputations(): number {
+  return cache.computations;
+}
+
+/** For tests: resolves once no check of the findings is running. */
+export function findingsSettled(): Promise<void> {
+  return cache.settled();
+}
+
+/** The last answer's findings with the scan's stale code names, kept until either changes. */
+let merged: { core: Core; scan: number; findings: Finding[]; nextStep: ReturnType<typeof nextStep> } | null = null;
+
+async function withSymbols(core: Core): Promise<{ findings: Finding[]; nextStep: ReturnType<typeof nextStep> }> {
+  const scan = symbolsVersion();
+  if (merged?.core === core && merged.scan === scan) return merged;
+  const findings = core.stale ? rankFindings([...core.findings, ...(await staleSymbolFindings(core.mentions))]) : core.findings;
+  const next = { core, scan, findings, nextStep: nextStep(findings, { sources: core.sources }) };
+  // A read that started later may have stored a newer one meanwhile; it is no worse to keep this one.
+  merged = next;
+  return next;
+}
+
+/**
+ * The findings. Straight from the last answer when there is one (checked
+ * for changes in the background; `checking` says so); worked out now on
+ * the first read, after a write, or on Refresh. Concurrent reads share one
+ * computation. Stale code names come from the background scan's answers as
+ * they are at the read.
+ */
+export async function findingsFor(paseo: Paseo | null, refresh = false) {
+  const answer = await cache.get(
+    { compute: () => computeFindings(paseo, refresh), inputs: async () => findingsInputs(await discover(paseo)) },
+    refresh ? "fresh" : "stale-ok",
+  );
+  const core = answer.value;
+  const { findings, nextStep } = await withSymbols(core);
+  const scan: { state: string; asOf?: string; checked?: number; total?: number } = core.stale ? { ...scanState(), ...scanProgress(core.roots) } : { state: "off" };
+  const partial = scanProgressNote(scan);
+  return {
+    checkedAt: new Date(answer.asOf).toISOString(),
+    findings,
+    nextStep,
+    checked: core.checked,
+    notes: core.notes,
     symbolScan: {
       ...scan,
-      note: !stale
+      note: !core.stale
         ? "Stale-mention checks are off in settings."
         : partial
           ? partial
           : scan.state === "done"
-            ? `Code names checked against ${symbols.queries.size} project${symbols.queries.size === 1 ? "" : "s"}.`
+            ? `Code names checked against ${core.roots.length} project${core.roots.length === 1 ? "" : "s"}.`
             : "Checking code names in the background; they show on the next refresh.",
     },
+    checking: answer.checking,
   };
 }
 

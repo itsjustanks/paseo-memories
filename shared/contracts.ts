@@ -271,6 +271,8 @@ export const inventory = defineRpc({
     /** What was checked, in words ("Checked 36 Claude projects and 1 Codex store"). */
     checked: z.array(z.string()).default([]),
     notes: z.array(z.string()).default([]),
+    /** This is the last answer (right as of `checkedAt`); a check for changes is running in the background. */
+    checking: z.boolean().default(false),
   }),
 });
 
@@ -435,6 +437,8 @@ export const findings = defineRpc({
     notes: z.array(z.string()).default([]),
     /** The background scan for stale code names: off | waiting | running | done, with the time of its answer and how many projects have one. */
     symbolScan: z.object({ state: z.string(), asOf: z.string().optional(), checked: z.number().optional(), total: z.number().optional(), note: z.string().default("") }),
+    /** This is the last answer (right as of `checkedAt`); a check for changes is running in the background. Ask again shortly. */
+    checking: z.boolean().default(false),
   }),
 });
 

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { extname, join } from "node:path";
 import { backoffMs } from "../shared/schedule";
 import { onShutdown, onStart } from "./lifecycle";
+import { Pacer } from "./pace";
 import { clientSeenWithin } from "./presence";
 import { readMemoriesSettings } from "./settings";
 import { statSafe } from "./files";
@@ -17,6 +18,12 @@ import { statSafe } from "./files";
  * Per file it keeps which of those names appear (never the file's text or
  * its identifiers), forgets files and projects it no longer sees, and reads
  * at most PASS_LIMITS.readBytes per pass across all projects.
+ *
+ * CPU stays small too: a read of the findings starts a pass only when the
+ * names asked about changed (otherwise the timer runs one every 10 minutes,
+ * backing off to an hour while nothing changes), and a pass works at most a
+ * quarter of the time (server/pace.ts). `symbolsVersion()` changes only when
+ * an answer changes, so the cached findings are worked out again only then.
  */
 
 const SKIP = new Set(["node_modules", ".git", "dist", "build", ".next", "vendor", "target", ".venv", "venv", "__pycache__", ".turbo", "coverage", ".cache", "out", ".output", "Pods"]);
@@ -26,6 +33,8 @@ export const SCAN_LIMITS = { files: 4000, fileBytes: 512 * 1024, totalBytes: 64 
 /** Across every project in one pass: bytes read from disk (cache misses), and files remembered. */
 export const PASS_LIMITS = { readBytes: 128 * 1024 * 1024, cachedFiles: 60_000 };
 const INTERVAL_MS = 10 * 60_000;
+/** While passes find nothing new, the next one waits longer, up to this. */
+const IDLE_MAX_MS = 60 * 60_000;
 /** A pass cut short by the read budget carries on this soon, not in ten minutes. */
 const CARRY_ON_MS = 60_000;
 const IDENT = /[A-Za-z_$][\w$]{3,}/g;
@@ -42,7 +51,13 @@ const projects = new Map<string, ProjectIndex>();
 const missing = new Set<string>();
 /** Project root → the names its memories mention (sorted, own strings). Replaced by every request. */
 let wanted = new Map<string, string[]>();
+let wantedKey = "";
 let running: Promise<void> | null = null;
+let again = false;
+let version = 0;
+let quietPasses = 0;
+let lastPassAt = 0;
+let lastFinished: string | null = null;
 let failures = 0;
 let unfinished = false;
 let cursor = 0;
@@ -83,6 +98,7 @@ async function scanProject(root: string, list: string[], budget: Budget): Promis
   let bytes = 0;
   let capped = false;
   let cut = false;
+  const pacer = new Pacer();
   const walk = async (folder: string, depth: number): Promise<void> => {
     if (depth > SCAN_LIMITS.depth || capped) return;
     let entries;
@@ -107,8 +123,8 @@ async function scanProject(root: string, list: string[], budget: Budget): Promis
       if (!stat || stat.size > SCAN_LIMITS.fileBytes) continue;
       count += 1;
       bytes += stat.size;
-      // Yield now and then so a big repo never holds the event loop.
-      if (count % 200 === 0) await new Promise((resolve) => setImmediate(resolve));
+      // Rest now and then so a big repo never holds the event loop or a core.
+      if (count % 50 === 0) await pacer.step();
       const stamp = `${stat.size}:${stat.mtimeMs}:${stat.ino}`;
       let hit = previous?.get(path);
       if (hit?.stamp !== stamp) {
@@ -136,9 +152,17 @@ async function scanProject(root: string, list: string[], budget: Budget): Promis
   return { names: new Set(list), found, asOf: new Date().toISOString(), files: count, capped };
 }
 
+function sameAnswer(a: ProjectIndex | undefined, b: ProjectIndex): boolean {
+  if (!a || a.capped !== b.capped || a.names.size !== b.names.size || a.found.size !== b.found.size) return false;
+  for (const name of b.names) if (!a.names.has(name)) return false;
+  for (const name of b.found) if (!a.found.has(name)) return false;
+  return true;
+}
+
 async function runPass(): Promise<void> {
   const settings = await readMemoriesSettings();
   if (!settings.staleChecks) {
+    if (projects.size) version += 1;
     caches.clear();
     projects.clear();
     missing.clear();
@@ -146,8 +170,9 @@ async function runPass(): Promise<void> {
     return;
   }
   const request = wanted;
+  const before = version;
   for (const root of [...caches.keys()]) if (!request.has(root)) caches.delete(root);
-  for (const root of [...projects.keys()]) if (!request.has(root)) projects.delete(root);
+  for (const root of [...projects.keys()]) if (!request.has(root) && projects.delete(root)) version += 1;
   for (const root of [...missing]) if (!request.has(root)) missing.delete(root);
   // Start where the last cut-short pass stopped, so no project waits forever behind the others.
   const roots = [...request.keys()];
@@ -158,17 +183,29 @@ async function runPass(): Promise<void> {
   for (const [i, root] of order.entries()) {
     if (!(await statSafe(root))?.isDirectory) {
       caches.delete(root);
-      projects.delete(root);
+      if (projects.delete(root)) version += 1;
+      if (!missing.has(root)) version += 1;
       missing.add(root);
       continue;
     }
-    missing.delete(root);
+    if (missing.delete(root)) version += 1;
     const index = await scanProject(root, request.get(root)!, budget);
-    if (index) projects.set(root, index);
-    else if (firstCut < 0) firstCut = i;
+    // An unchanged answer keeps its first time: nothing that reads it has to be worked out again.
+    if (index && !sameAnswer(projects.get(root), index)) {
+      projects.set(root, index);
+      version += 1;
+    } else if (!index && firstCut < 0) firstCut = i;
   }
   unfinished = firstCut >= 0;
   cursor = unfinished ? start + firstCut : 0;
+  quietPasses = version === before && !unfinished ? quietPasses + 1 : 0;
+  lastPassAt = Date.now();
+  lastFinished = new Date().toISOString();
+}
+
+/** Changes whenever an answer changes (the findings cache keys on it). */
+export function symbolsVersion(): number {
+  return version;
 }
 
 /**
@@ -177,15 +214,33 @@ async function runPass(): Promise<void> {
  * the last request; without it the last request runs again.
  */
 export function requestScan(queries?: Map<string, Iterable<string>>, force = false): void {
-  if (queries) wanted = new Map([...queries].map(([root, names]) => [own(root), [...new Set([...names].map(own))].sort()]));
-  if (running) return;
+  let changed = false;
+  if (queries) {
+    const next = new Map([...queries].map(([root, names]) => [own(root), [...new Set([...names].map(own))].sort()]));
+    const key = JSON.stringify([...next].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    changed = key !== wantedKey;
+    if (changed) {
+      wanted = next;
+      wantedKey = key;
+      quietPasses = 0;
+    }
+  }
+  if (running) {
+    // Asked about other names mid-pass: one more pass right after.
+    if (changed || force) again = true;
+    return;
+  }
   if (!wanted.size) {
+    if (projects.size || missing.size) version += 1;
     caches.clear();
     projects.clear();
     missing.clear();
     return;
   }
   if (!force && !clientSeenWithin()) return;
+  // The same names as last time: the timer's next pass is soon enough.
+  if (!force && !changed && lastPassAt > 0) return;
+  again = false;
   running = runPass()
     .then(() => {
       failures = 0;
@@ -195,6 +250,10 @@ export function requestScan(queries?: Map<string, Iterable<string>>, force = fal
     })
     .finally(() => {
       running = null;
+      if (again) {
+        again = false;
+        requestScan(undefined, true);
+      }
     });
 }
 
@@ -204,8 +263,7 @@ export function symbolIndex(root: string): ProjectIndex | null {
 
 export function scanState(): { state: string; asOf?: string } {
   if (running) return { state: "running" };
-  const times = [...projects.values()].map((entry) => entry.asOf).sort();
-  return times.length ? { state: "done", asOf: times[times.length - 1] } : { state: "waiting" };
+  return projects.size && lastFinished ? { state: "done", asOf: lastFinished } : { state: "waiting" };
 }
 
 /** Of these project roots, how many have an answer, out of those that exist here (or are not known to be missing). */
@@ -237,14 +295,19 @@ export function forgetScans(): void {
   projects.clear();
   missing.clear();
   wanted = new Map();
+  wantedKey = "";
   unfinished = false;
   cursor = 0;
+  quietPasses = 0;
+  lastPassAt = 0;
+  lastFinished = null;
+  version += 1;
 }
 
 function schedule(): void {
-  const delay = unfinished && failures === 0 ? CARRY_ON_MS : backoffMs(failures, INTERVAL_MS, 60 * 60_000);
+  const delay = unfinished && failures === 0 ? CARRY_ON_MS : failures ? backoffMs(failures, INTERVAL_MS, IDLE_MAX_MS) : Math.min(IDLE_MAX_MS, INTERVAL_MS * 2 ** Math.min(quietPasses, 3));
   timer = setTimeout(() => {
-    if (clientSeenWithin()) requestScan();
+    if (clientSeenWithin()) requestScan(undefined, true);
     schedule();
   }, delay);
   timer.unref?.();

@@ -20,7 +20,14 @@ export { KEY } from "./freshness";
 
 export function useInventory(hostId: string) {
   const call = useRpc(inventory);
-  return useQuery({ queryKey: [KEY, hostId, "inventory"], queryFn: () => call({}), retry: 1, refetchOnMount: "always" });
+  return useQuery({
+    queryKey: [KEY, hostId, "inventory"],
+    queryFn: () => call({}),
+    retry: 1,
+    refetchOnMount: "always",
+    // The host answered from its last look and is checking for changes: look again shortly.
+    refetchInterval: (query) => (query.state.data?.checking ? 3_000 : false),
+  });
 }
 
 export function useFindings(hostId: string) {
@@ -30,8 +37,8 @@ export function useFindings(hostId: string) {
     queryFn: () => call({}),
     retry: 1,
     refetchOnMount: "always",
-    // While the code-name scan runs in the background, look again shortly.
-    refetchInterval: (query) => (query.state.data?.symbolScan.state === "running" ? 5_000 : false),
+    // While the host checks for changes, or the code-name scan runs, look again shortly.
+    refetchInterval: (query) => (query.state.data?.checking ? 3_000 : query.state.data?.symbolScan.state === "running" ? 5_000 : false),
   });
 }
 

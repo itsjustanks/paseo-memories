@@ -2,10 +2,11 @@
   "name": "paseo-memories",
   "private": true,
   "type": "module",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts && npm run -s test:scale",
+    "test:scale": "node --import tsx --test tests/perf/*.test.ts",
     "smoke": "node --import tsx tests/smoke.ts",
     "preview:ui": "vite --config tests/ui/vite.config.mts"
   },
