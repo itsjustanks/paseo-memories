@@ -29,6 +29,14 @@ const EMPTY: SidebarState = { memories: null, skills: null };
 
 let state: SidebarState | null = null;
 let loading: Promise<SidebarState> | null = null;
+/**
+ * The newest summary each dot has taken, by when its answer was worked out
+ * (or the order it was asked for): one that was worked out earlier but lands
+ * later never flips the dot back.
+ */
+const taken = { memories: Number.NEGATIVE_INFINITY, skills: Number.NEGATIVE_INFINITY };
+/** Saves one after another, each writing what is held by then (the newest), so the file never ends on an older copy. */
+let saving: Promise<void> = Promise.resolve();
 
 export function sidebarStatePath(): string {
   return join(pluginDataDir(), "state", "sidebar.json");
@@ -73,20 +81,36 @@ async function save(next: SidebarState): Promise<void> {
   }
 }
 
-/** The findings were worked out: remember what the Memories dot should say (plain and technical views count differently). */
-export async function recordMemories(plain: QuickSummary, technical: QuickSummary, now = new Date()): Promise<void> {
-  const current = await readSidebarState();
-  if (current.memories && same(current.memories.plain, plain) && same(current.memories.technical, technical)) return;
-  state = { ...current, memories: { plain, technical, at: now.toISOString() } };
-  await save(state);
+function saveLatest(): Promise<void> {
+  saving = saving.then(() => (state ? save(state) : undefined));
+  return saving;
 }
 
-/** The skills list was worked out: remember what the Skills dot should say. */
-export async function recordSkills(summary: QuickSummary, now = new Date()): Promise<void> {
-  const current = await readSidebarState();
+/**
+ * The findings were worked out: remember what the Memories dot should say
+ * (plain and technical views count differently). `order`: when that answer
+ * was worked out; an older one arriving late is ignored. The other dot's
+ * summary is taken from what is held now, never from before the wait.
+ */
+export async function recordMemories(plain: QuickSummary, technical: QuickSummary, order = Date.now(), now = new Date()): Promise<void> {
+  await readSidebarState();
+  if (order < taken.memories) return;
+  taken.memories = order;
+  const current = state ?? EMPTY;
+  if (current.memories && same(current.memories.plain, plain) && same(current.memories.technical, technical)) return;
+  state = { ...current, memories: { plain, technical, at: now.toISOString() } };
+  await saveLatest();
+}
+
+/** The skills list was worked out: remember what the Skills dot should say. `order` as for `recordMemories`. */
+export async function recordSkills(summary: QuickSummary, order = Date.now(), now = new Date()): Promise<void> {
+  await readSidebarState();
+  if (order < taken.skills) return;
+  taken.skills = order;
+  const current = state ?? EMPTY;
   if (current.skills && same(current.skills.summary, summary)) return;
   state = { ...current, skills: { summary, at: now.toISOString() } };
-  await save(state);
+  await saveLatest();
 }
 
 /** The `sidebar-status` RPC: what is held, nothing worked out. */
@@ -96,4 +120,6 @@ export const handleSidebarStatus = () => readSidebarState();
 export function resetSidebarState(): void {
   state = null;
   loading = null;
+  taken.memories = Number.NEGATIVE_INFINITY;
+  taken.skills = Number.NEGATIVE_INFINITY;
 }

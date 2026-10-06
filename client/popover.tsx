@@ -1,6 +1,6 @@
 import { useRpc, type PluginPopoverProps } from "@getpaseo/plugin/client";
 import React, { useEffect, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { AppState, Pressable, ScrollView, Text, View } from "react-native";
 import { AddNote } from "./add-note";
 import { AddSkill } from "./skills-add";
 import { openSkills, type AddMode } from "./skills-nav";
@@ -10,7 +10,7 @@ import type { QuickAddButtonProps, SidebarDotProps, SidebarParts } from "./regis
 import { sidebarStatus } from "../shared/contracts";
 import { groupTitle, type Page } from "../shared/finding-groups";
 import { toScreenParams } from "./navigate";
-import { SEED_EVERY_MS, seedFromServer, useSidebarSummary } from "./sidebar-status";
+import { SEED_EVERY_MS, appInForeground, seedFromServer, useSidebarSummary } from "./sidebar-status";
 import { Button, Dot, SPACE, TokensProvider, useUi } from "./ui";
 import { recallTechnicalTitles } from "./web";
 
@@ -97,15 +97,29 @@ class Quiet extends React.Component<{ children: React.ReactNode }, { failed: boo
   }
 }
 
-/** One cheap read of the server's last known answer when the sidebar loads, and every few minutes after (0.5.1). Draws nothing. */
+/**
+ * One cheap read of the server's last known answer when the sidebar loads,
+ * and every few minutes after (0.5.1), only while the app is in front of the
+ * person; coming back to it reads once. The server answers from memory and
+ * starts no background work for it. Draws nothing.
+ */
 function SidebarSeedReader({ hostId }: { hostId: string }) {
   const call = useRpc(sidebarStatus);
   useEffect(() => {
     if (!hostId) return;
-    const read = () => void seedFromServer(hostId, () => call({}), recallTechnicalTitles());
+    const visibility = () => (globalThis as { document?: { visibilityState?: string } }).document?.visibilityState ?? null;
+    const read = () => {
+      if (appInForeground(AppState?.currentState, visibility())) void seedFromServer(hostId, () => call({}), recallTechnicalTitles());
+    };
     read();
     const timer = setInterval(read, SEED_EVERY_MS);
-    return () => clearInterval(timer);
+    const back = AppState?.addEventListener?.("change", (next) => {
+      if (next === "active") read();
+    });
+    return () => {
+      clearInterval(timer);
+      back?.remove?.();
+    };
   }, [hostId, call]);
   return null;
 }

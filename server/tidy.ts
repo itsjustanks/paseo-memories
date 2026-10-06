@@ -291,12 +291,12 @@ async function folderFindings(discovery: Discovery, probe: Probe, titles: Readon
       const where = source.projectPath ? basename(source.projectPath) : `other project (${source.slug})`;
       for (const line of lines) {
         if (names.has(line.file)) continue;
-        out.push({ id: id("index-drift", source.id, line.file), kind: "index-drift", severity: "warn", sourceIds: [source.id], entryKeys: [line.file], subject: line.title.trim() || noteStem(line.file), message: `MEMORY.md in ${where} lists ${line.file}, which does not exist.`, action: { label: `Remove the MEMORY.md line for ${line.file}`, kind: "edit", sourceId: source.id, key: "MEMORY.md" } });
+        out.push({ id: id("index-drift", source.id, line.file), kind: "index-drift", group: "index-gone", severity: "warn", sourceIds: [source.id], entryKeys: [line.file], subject: line.title.trim() || noteStem(line.file), message: `MEMORY.md in ${where} lists ${line.file}, which does not exist.`, action: { label: `Remove the MEMORY.md line for ${line.file}`, kind: "edit", sourceId: source.id, key: "MEMORY.md" } });
       }
       const named = new Set(lines.map((line) => line.file));
       for (const name of names) {
         if (named.has(name)) continue;
-        out.push({ id: id("index-drift", source.id, name), kind: "index-drift", severity: "warn", sourceIds: [source.id], entryKeys: [name], subject: titles.get(`${source.id}\u0000${name}`) ?? noteStem(name), message: `${name} in ${where} is not in MEMORY.md, so Claude does not know it is there.`, action: { label: `Add ${name} to MEMORY.md`, kind: "edit", sourceId: source.id, key: name } });
+        out.push({ id: id("index-drift", source.id, name), kind: "index-drift", group: "index-missing", severity: "warn", sourceIds: [source.id], entryKeys: [name], subject: titles.get(`${source.id}\u0000${name}`) ?? noteStem(name), message: `${name} in ${where} is not in MEMORY.md, so Claude does not know it is there.`, action: { label: `Add ${name} to MEMORY.md`, kind: "edit", sourceId: source.id, key: name } });
       }
       if (text !== null) {
         const load = claudeIndexLoad(text);
@@ -432,7 +432,11 @@ function toneOf(findings: Finding[]): "attention" | "error" | null {
 /** The last answer's findings with the scan's stale code names, kept until either changes. */
 let merged: { core: Core; scan: number; findings: Finding[]; nextStep: ReturnType<typeof nextStep> } | null = null;
 
+/** Orders the Memories dot's summaries by when their read began: newer inputs (answer and scan) are read later. */
+let summaryOrder = 0;
+
 async function withSymbols(core: Core): Promise<{ findings: Finding[]; nextStep: ReturnType<typeof nextStep> }> {
+  const order = (summaryOrder += 1);
   const scan = symbolsVersion();
   if (merged?.core === core && merged.scan === scan) return merged;
   const findings = core.stale ? rankFindings([...core.findings, ...(await staleSymbolFindings(core.mentions))]) : core.findings;
@@ -441,7 +445,7 @@ async function withSymbols(core: Core): Promise<{ findings: Finding[]; nextStep:
   merged = next;
   // The sidebar dots' summary (0.5.1), only when the answer is new: the same count and tone the page header shows.
   const plain = plainFindings(findings as Array<Finding & { sourceIds: string[] }>, core.sourceKinds);
-  await recordMemories(quickSummary("memories", plain, toneOf(plain)), quickSummary("memories", findings, toneOf(findings))).catch(() => undefined);
+  await recordMemories(quickSummary("memories", plain, toneOf(plain)), quickSummary("memories", findings, toneOf(findings)), order).catch(() => undefined);
   return next;
 }
 

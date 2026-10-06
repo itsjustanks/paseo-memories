@@ -47,7 +47,7 @@ export async function handleSkillsInventory({ refresh }: { refresh?: boolean }, 
   const discovery = await discoverSkills(paseo, { refresh: Boolean(refresh) });
   const usage = usageState(discovery.settings.skillsUsage);
   // The Skills dot's summary (0.5.1): the page's rule, warnings make the dot; kept for the sidebar at load.
-  await recordSkills(quickSummary("skills", discovery.findings, discovery.findings.some((finding) => finding.severity === "warn") ? "attention" : null)).catch(() => undefined);
+  await recordSkills(quickSummary("skills", discovery.findings, discovery.findings.some((finding) => finding.severity === "warn") ? "attention" : null), discovery.at).catch(() => undefined);
   return {
     checkedAt: new Date(discovery.at).toISOString(),
     skills: discovery.skills.map(publicSkill),
@@ -494,18 +494,32 @@ async function applyFix(session: Session, plan: FixPlan): Promise<WriteReport[]>
 /**
  * "Fix all" for one kind of thing worth a look (0.5.1): only the kinds whose
  * fix moves something to the backups or takes a line off the installer's
- * list, so each is undoable. Checked again first; `findingIds` (what the
- * page showed) narrows it. One backup session for the lot.
+ * list, so each is undoable. Checked again first; only the items the person
+ * confirmed (`findingIds`, required: never the whole kind unseen). One
+ * backup session for the lot. One at a time: a second Fix all waits, then
+ * finds those items already done and says so.
  */
-export async function handleSkillsFixAll({ kind, findingIds }: { kind: string; findingIds?: string[] | undefined }, { paseo }: Ctx) {
+let fixAllQueue: Promise<unknown> = Promise.resolve();
+
+export function handleSkillsFixAll(input: { kind: string; findingIds?: string[] | undefined }, ctx: Ctx) {
+  const run = fixAllQueue.then(() => skillsFixAllNow(input, ctx));
+  fixAllQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function skillsFixAllNow({ kind, findingIds }: { kind: string; findingIds?: string[] | undefined }, { paseo }: Ctx) {
   if (!canFixAll("skills", kind)) return result(false, "Those need a look one at a time. Nothing was changed.", []);
+  if (!findingIds?.length) return result(false, "Nothing was changed: Fix all needs the list of items you confirmed. Open the group and press Fix all again.", []);
   const discovery = await discoverSkills(paseo, { refresh: true });
-  const wanted = findingIds ? new Set(findingIds) : null;
-  const plans = discovery.findings.filter((finding) => finding.kind === kind && (!wanted || wanted.has(finding.id))).flatMap((finding) => {
+  const wanted = new Set(findingIds);
+  const plans = discovery.findings.filter((finding) => finding.kind === kind && wanted.has(finding.id)).flatMap((finding) => {
     const plan = discovery.fixes.get(finding.id);
     return plan ? [plan] : [];
   });
-  if (plans.length === 0) return result(true, "That's already sorted. Nothing needed changing.", []);
+  // Items asked for that are no longer there to fix: done already (by another Fix all, or by hand).
+  const already = wanted.size - plans.length;
+  const before = already ? ` ${already} ${already === 1 ? "was" : "were"} already done.` : "";
+  if (plans.length === 0) return result(true, already === 1 ? "Already done: that one was sorted already. Nothing needed changing." : `Already done: all ${already} were sorted already. Nothing needed changing.`, []);
   startWrite();
   forgetSkills();
   const session = newSession((await readMemoriesSettings()).backupsToKeep);
@@ -514,8 +528,8 @@ export async function handleSkillsFixAll({ kind, findingIds }: { kind: string; f
   forgetSkills();
   const failed = reports.filter((report) => !report.ok);
   const done = plans.length - new Set(failed.map((report) => report.target)).size;
-  if (failed.length) return result(false, `Fixed ${done} of ${plans.length}. ${failed[0]!.error ?? "Some could not be changed."} Anything taken out is in this plugin's backups.`, reports);
-  return result(true, `Fixed all ${plans.length}. Anything taken out is in this plugin's backups.`, reports);
+  if (failed.length) return result(false, `Fixed ${done} of ${plans.length}. ${failed[0]!.error ?? "Some could not be changed."} Anything taken out is in this plugin's backups.${before}`, reports);
+  return result(true, `Fixed all ${plans.length}. Anything taken out is in this plugin's backups.${before}`, reports);
 }
 
 // ------------------------------------------------------------------ link it for Claude

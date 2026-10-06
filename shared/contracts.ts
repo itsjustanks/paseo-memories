@@ -151,6 +151,8 @@ export const FindingSchema = z.object({
   message: z.string(),
   /** The item it is about, in a few words (a note's title, a file's name), so every row can name it (0.5.1; additive). */
   subject: z.string().optional(),
+  /** The finer job a finding does when one kind holds two (Claude's list: "index-missing" or "index-gone"); groups and Fix all key on it, never on the message (0.5.1; additive). */
+  group: z.string().max(64).optional(),
   detail: z.string().optional(),
   heuristic: z.boolean().optional(),
   /** The one thing to do about it. */

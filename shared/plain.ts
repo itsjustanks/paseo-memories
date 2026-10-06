@@ -555,7 +555,7 @@ function quoted(message: string): string | undefined {
 }
 
 /** A finding as a heading and one line saying where. `nameOf` gives each source its plain name. */
-export function plainFinding(finding: Pick<Finding, "kind" | "message" | "sourceIds"> & { subject?: string | undefined }, nameOf: (sourceId: string) => string): { title: string; detail: string } {
+export function plainFinding(finding: Pick<Finding, "kind" | "message" | "sourceIds"> & { subject?: string | undefined; group?: string | undefined }, nameOf: (sourceId: string) => string): { title: string; detail: string } {
   const where = plainWhere(finding, nameOf);
   const about = quoted(finding.message);
   // 0.5.1: every row names its item ("Claude may not find "Testing rules""), not just the kind of problem.
@@ -572,7 +572,7 @@ export function plainFinding(finding: Pick<Finding, "kind" | "message" | "source
     case "stale-symbol":
       return { title: it ? `${it} mentions something that is no longer in the project` : "A note mentions something that is no longer in the project", detail: where };
     case "index-drift":
-      return /does not exist/.test(finding.message)
+      return (finding.group ? finding.group === "index-gone" : /does not exist/.test(finding.message))
         ? { title: it ? `Claude's list mentions ${it}, which is gone` : "Claude's list of notes mentions one that's gone", detail: where }
         : { title: it ? `Claude may not find ${it}` : "Claude may not find one of its notes", detail: `${where} It is missing from Claude's list.`.trim() };
     case "over-limit":
@@ -591,7 +591,7 @@ export function plainWhere(finding: Pick<Finding, "sourceIds">, nameOf: (sourceI
 }
 
 /** A row inside a group (the group's heading already says what's wrong): the item, and where it is. */
-export function plainGroupedRow(finding: Pick<Finding, "kind" | "message" | "sourceIds"> & { subject?: string | undefined }, nameOf: (sourceId: string) => string): { title: string; detail: string } {
+export function plainGroupedRow(finding: Pick<Finding, "kind" | "message" | "sourceIds"> & { subject?: string | undefined; group?: string | undefined }, nameOf: (sourceId: string) => string): { title: string; detail: string } {
   const subject = finding.subject?.trim() || quoted(finding.message);
   if (!subject) return plainFinding(finding, nameOf);
   return { title: subject, detail: plainWhere(finding, nameOf).replace(/^In: /, "").replace(/\.$/, "") };

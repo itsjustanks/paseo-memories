@@ -6,7 +6,7 @@
  * uses it for the sidebar's quick summary, so both count the same way. Pure.
  */
 
-type Groupable = { kind: string; message: string; severity?: string; action?: { kind: string } | undefined };
+type Groupable = { kind: string; message: string; group?: string | undefined; severity?: string; action?: { kind: string } | undefined };
 
 export type FindingGroup<F> = {
   /** The finding kind, split where one kind holds two different jobs (Claude's list: missing notes, lines for gone notes). */
@@ -18,9 +18,14 @@ export type FindingGroup<F> = {
 
 export type Page = "memories" | "skills";
 
-/** Memories: Claude's list holds two jobs (a note missing from it, a line for a note that's gone); the rest by kind. */
-export function memoryGroupKey(finding: Pick<Groupable, "kind" | "message">): string {
-  if (finding.kind === "index-drift") return /does not exist/.test(finding.message) ? "index-gone" : "index-missing";
+/**
+ * Memories: Claude's list holds two jobs (a note missing from it, a line for
+ * a note that's gone), told apart by the finding's `group`, never its words
+ * (a note called "does not exist" must not move it). Without one it stays its
+ * own kind, which Fix all doesn't offer. The rest by kind.
+ */
+export function memoryGroupKey(finding: Pick<Groupable, "kind" | "group">): string {
+  if (finding.kind === "index-drift") return finding.group === "index-missing" || finding.group === "index-gone" ? finding.group : "index-drift";
   return finding.kind;
 }
 
@@ -171,6 +176,52 @@ export function groupSummary(page: Page, key: string): string {
     default:
       return "Open each one to decide.";
   }
+}
+
+// ------------------------------------------------------------------ Fix all, asked first (0.5.1)
+
+/** Where this plugin keeps what it changed or moved, in words a person can find. */
+export const BACKUPS_PLACE = "this plugin's backups (in Paseo's plugin-data folder, under paseo-memories/backups, one folder per date and time)";
+
+/** What Fix all does to each item, as the confirm lists it beside the item's name. */
+export function fixAllEffect(page: Page, key: string): string {
+  if (page === "memories") return key === "index-gone" ? "Its line comes off Claude's list" : "Added to Claude's list";
+  switch (key) {
+    case "broken-link":
+      return "The link moves to the backups";
+    case "empty-folder":
+      return "The empty folder moves to the backups";
+    case "stray-file":
+      return "The file moves to the backups";
+    case "paseo-orphan":
+      return "The skill's folder moves to the backups";
+    case "lock-missing":
+      return "Taken off the installer's list";
+    default:
+      return "Fixed";
+  }
+}
+
+/** Fix all for this group moves things or edits another tool's list (not only Claude's list of notes). */
+export function fixAllMoves(page: Page, key: string): boolean {
+  return page === "skills" && canFixAll(page, key);
+}
+
+/** The confirm's question, and what it says about backups (where they go, for anything moved). */
+export function fixAllConfirm(page: Page, key: string, count: number): { question: string; backup: string; yes: string } {
+  const c = n(count);
+  const yes = count === 1 ? "Fix it" : `Fix all ${c}`;
+  if (page === "memories") {
+    return {
+      question: key === "index-gone" ? `Take ${count === 1 ? "this line" : `these ${c} lines`} off Claude's list?` : `Add ${count === 1 ? "this note" : `these ${c} notes`} to Claude's list?`,
+      backup: `Only Claude's list changes, never the notes. Each list is copied to ${BACKUPS_PLACE} first.`,
+      yes,
+    };
+  }
+  if (key === "lock-missing") {
+    return { question: `Take ${count === 1 ? "this skill" : `these ${c} skills`} off the installer's list?`, backup: `Nothing on this computer is removed. The installer's list is copied to ${BACKUPS_PLACE} first.`, yes };
+  }
+  return { question: `Move ${count === 1 ? "this" : `these ${c}`} out of your skills folders?`, backup: `Nothing is deleted: each one is moved to ${BACKUPS_PLACE}, so you can put it back.`, yes };
 }
 
 /** The quick summary the sidebar's popover shows: the tone, how many, and the biggest groups. */

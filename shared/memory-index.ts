@@ -2,7 +2,15 @@
  * Claude's `MEMORY.md` index: one line per memory, `- [Title](file.md) — hook`.
  * There is no required format (memories-research/claude-code.md Q4), so lines
  * that do not look like this are kept as they are and never rewritten. Pure.
+ *
+ * A line this plugin writes never carries anything that looks like a secret
+ * (0.5.1): Claude loads MEMORY.md at the start of every chat, while the note
+ * itself is read only when needed. A hook (the note's description) that
+ * holds one is left off; a title that holds one becomes the file's name, or
+ * "A note" if the name holds one too.
  */
+
+import { findSecrets } from "./secrets";
 
 export type IndexLine = {
   /** 0-based line number. */
@@ -61,9 +69,18 @@ function usualSeparator(lines: IndexLine[]): string {
   return best;
 }
 
+/** The title and hook a written line may carry: nothing that looks like a secret. */
+export function safeIndexText(title: string, hook: string, target: string): { title: string; hook: string } {
+  const flagged = (text: string) => findSecrets(text).length > 0;
+  const name = normalizeTarget(target).replace(/\.md$/, "");
+  const safeTitle = !flagged(title) ? title : !flagged(name) ? name : "A note";
+  return { title: safeTitle, hook: flagged(hook) ? "" : hook };
+}
+
 function render(prefix: string, title: string, target: string, separator: string, hook: string): string {
-  const cleanTitle = title.replace(/[\]\n\r]/g, " ").trim();
-  const cleanHook = hook.replace(/[\n\r]+/g, " ").trim();
+  const safe = safeIndexText(title, hook, target);
+  const cleanTitle = safe.title.replace(/[\]\n\r]/g, " ").trim();
+  const cleanHook = safe.hook.replace(/[\n\r]+/g, " ").trim();
   return cleanHook ? `${prefix}[${cleanTitle}](${target})${separator.trim() ? separator : " — "}${cleanHook}` : `${prefix}[${cleanTitle}](${target})`;
 }
 

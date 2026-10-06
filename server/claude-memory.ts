@@ -326,7 +326,13 @@ export async function claudeIndexFix(paseo: Paseo | null, input: { sourceId: str
   const settings = await readMemoriesSettings();
   const write = session ?? newSession(settings.backupsToKeep);
   let after = "";
+  // What this write really changes: a line already there (or already gone) isn't counted.
+  let added = 0;
+  let removed = 0;
   const change = (text: string) => {
+    const before = new Set(parseIndex(text).map((line) => line.file));
+    added = add.filter((line) => !before.has(line.file)).length;
+    removed = remove.filter((file) => before.has(file)).length;
     let next = text;
     for (const file of remove) next = removeIndexLine(next, file);
     for (const line of add) next = upsertIndexLine(next, line.file, line.title, line.hook);
@@ -346,7 +352,7 @@ export async function claudeIndexFix(paseo: Paseo | null, input: { sourceId: str
   forgetDiscovery();
   logWrite("claude-index-fix", join(folder.dir, "MEMORY.md"), !report || report.ok ? `+${add.length} -${remove.length}` : "failed");
   const ok = !report || report.ok;
-  return { report, added: ok ? add.length : 0, removed: ok ? remove.length : 0, ...(report && !report.ok && report.error ? { error: report.error } : {}), overLimit: ok && claudeIndexLoad(after).truncated };
+  return { report, added: ok ? added : 0, removed: ok ? removed : 0, ...(report && !report.ok && report.error ? { error: report.error } : {}), overLimit: ok && claudeIndexLoad(after).truncated };
 }
 
 export const handleClaudeCreate = (input: Parameters<typeof claudeCreate>[1], { paseo }: Ctx) => claudeCreate(paseo, input);

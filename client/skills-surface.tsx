@@ -129,10 +129,11 @@ export function useFindingAction(hostId: string, onGo: (place: SkillsPlace) => v
     else if (finding.sourceIds[0]) onGo({ tab: "skills", skillId: finding.sourceIds[0] });
     else onGo({ tab: "skills" });
   };
-  const fixAll = async (group: FindingGroup<Finding>) => {
+  // Only the items the confirm listed are sent (client/finding-groups.tsx).
+  const fixAll = async (group: FindingGroup<Finding>, findingIds: string[]) => {
     setBusyGroup(group.key);
     try {
-      setResult(await callAll({ kind: group.key, findingIds: group.findings.map((finding) => finding.id) }));
+      setResult(await callAll({ kind: group.key, findingIds }));
     } catch (error) {
       setResult({ ok: false, message: plainError(error) });
     } finally {
@@ -171,7 +172,7 @@ export function FindingsCard({ findings, hostId, onGo }: { findings: Finding[]; 
   return (
     <>
       {result ? <SkillsResult hostId={hostId} result={result} onDismiss={clear} /> : null}
-      <GroupedFindings page="skills" findings={findings} renderRow={row} busyGroup={busyGroup} onFixAll={(group) => void fixAll(group)} />
+      <GroupedFindings page="skills" findings={findings} renderRow={row} busyGroup={busyGroup} onFixAll={(group, ids) => void fixAll(group, ids)} itemName={(finding) => [skillSubject(finding), finding.detail].filter(Boolean).join(" · ")} />
     </>
   );
 }

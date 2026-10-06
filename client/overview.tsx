@@ -81,20 +81,28 @@ function CardFooter({ children }: { children: React.ReactNode }) {
   return <View style={{ gap: t.space.xs, paddingVertical: t.space.row, paddingHorizontal: t.compact ? t.space.row : t.space.md, borderTopWidth: 1, borderTopColor: t.color.borderSubtle }}>{children}</View>;
 }
 
+/** How Fix all's confirm names a note: its title, and where it is. */
+function confirmName(finding: Finding, nameOf: (sourceId: string) => string): string {
+  const words = plainGroupedRow(finding, nameOf);
+  return words.detail ? `${words.title} · ${words.detail}` : words.title;
+}
+
 /** Things worth a look grouped by kind, each kind with its count and Fix all where that is safe (0.5.1), and the lines that say what was checked. */
 function TidyCard({ title, findings, none, notes, onOpen }: { title: string; findings: Finding[] | null; none: string; notes: string[]; onOpen: (action: FindingAction) => void }) {
   const t = useTokens();
   const hostId = useHostId();
   const fixAll = useRpc(tidyFixAll);
+  const names = useSourceNames(hostId);
   const invalidate = useInvalidate(hostId);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<WriteResult | null>(null);
   const count = findings?.length ?? 0;
   const tone: Status = findings?.some((finding) => finding.severity === "error") ? "error" : count ? "attention" : "ok";
-  const onFixAll = async (group: FindingGroup<Finding>) => {
+  // Only the items the confirm listed are sent (client/finding-groups.tsx).
+  const onFixAll = async (group: FindingGroup<Finding>, findingIds: string[]) => {
     setBusy(group.key);
     try {
-      setResult(await fixAll({ group: group.key, findingIds: group.findings.map((finding) => finding.id) }));
+      setResult(await fixAll({ group: group.key, findingIds }));
     } catch (error) {
       setResult({ ok: false, message: plainError(error), reports: [], warnings: [] });
     } finally {
@@ -107,7 +115,7 @@ function TidyCard({ title, findings, none, notes, onOpen }: { title: string; fin
       {result ? <WriteReportView result={result} /> : null}
       <Card padded={false} title={title} icon="ListChecks" {...(findings ? { iconTone: tone } : {})} trailing={findings ? <Tag label={String(count)} tone={tone} /> : null}>
         {findings && count ? (
-          <GroupedFindings page="memories" findings={findings} busyGroup={busy} onFixAll={(group) => void onFixAll(group)} renderRow={(finding, { grouped, first }) => <FindingRow finding={finding} first={first} grouped={grouped} onOpen={onOpen} />} />
+          <GroupedFindings page="memories" findings={findings} busyGroup={busy} onFixAll={(group, ids) => void onFixAll(group, ids)} itemName={(finding) => confirmName(finding, names.byId)} renderRow={(finding, { grouped, first }) => <FindingRow finding={finding} first={first} grouped={grouped} onOpen={onOpen} />} />
         ) : null}
         {findings && !count ? (
           <View style={{ padding: t.compact ? t.space.row : t.space.md }}>

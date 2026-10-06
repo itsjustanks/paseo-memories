@@ -57,8 +57,9 @@ function seedListDrift(): void {
 // ------------------------------------------------------------------ grouping (pure)
 
 test("findings group by kind in list order; Claude's list splits into missing notes and gone notes", () => {
-  const f = (id: string, kind: string, message = "", severity = "warn", action?: { kind: string }) => ({ id, kind, message, severity, sourceIds: [], ...(action ? { action } : {}) });
-  const findings = [f("s", "secret", "", "error"), f("m1", "index-drift", "a.md in x is not in MEMORY.md"), f("g1", "index-drift", "MEMORY.md in x lists b.md, which does not exist."), f("m2", "index-drift", "c.md in y is not in MEMORY.md"), f("d", "duplicate", "", "info")];
+  const f = (id: string, kind: string, message = "", severity = "warn", action?: { kind: string }, group?: string) => ({ id, kind, message, severity, sourceIds: [], ...(action ? { action } : {}), ...(group ? { group } : {}) });
+  // Claude's list findings carry their job in `group` (0.5.1 review), never in their words.
+  const findings = [f("s", "secret", "", "error"), f("m1", "index-drift", "a.md in x is not in MEMORY.md", "warn", undefined, "index-missing"), f("g1", "index-drift", "MEMORY.md in x lists b.md, which does not exist.", "warn", undefined, "index-gone"), f("m2", "index-drift", "c.md in y is not in MEMORY.md", "warn", undefined, "index-missing"), f("d", "duplicate", "", "info")];
   const groups = groupFindings("memories", findings);
   assert.deepEqual(groups.map((group) => [group.key, group.findings.map((finding) => finding.id)]), [["secret", ["s"]], ["index-missing", ["m1", "m2"]], ["index-gone", ["g1"]], ["duplicate", ["d"]]]);
   assert.equal(groups[1]!.fixAll, true, "two missing notes: Fix all");
@@ -96,8 +97,8 @@ test("plain words: no 'points to nothing'; every skill row names its skill", () 
 });
 
 test("the sidebar's quick summary: biggest kinds first, at most three", () => {
-  const f = (id: string, kind: string, message = "") => ({ id, kind, message, sourceIds: [] });
-  const summary = quickSummary("memories", [f("a", "secret"), ...[1, 2, 3].map((n) => f(`m${n}`, "index-drift", "x is not in MEMORY.md")), f("d1", "duplicate"), f("d2", "duplicate"), f("c", "conflict")], "error");
+  const f = (id: string, kind: string, message = "", group?: string) => ({ id, kind, message, sourceIds: [], ...(group ? { group } : {}) });
+  const summary = quickSummary("memories", [f("a", "secret"), ...[1, 2, 3].map((n) => f(`m${n}`, "index-drift", "x is not in MEMORY.md", "index-missing")), f("d1", "duplicate"), f("d2", "duplicate"), f("c", "conflict")], "error");
   assert.deepEqual(summary, { tone: "error", count: 7, groups: [{ key: "index-missing", count: 3 }, { key: "duplicate", count: 2 }, { key: "secret", count: 1 }] });
 });
 
@@ -146,14 +147,16 @@ test("Fix all adds the missing notes to Claude's list (one write, a backup), the
   assert.ok(added.reports.length === 1 && added.reports[0]!.backupPath && existsSync(added.reports[0]!.backupPath), "one write to the list, the old one kept");
   assert.ok(added.reports[0]!.backupPath!.startsWith(backupsRoot()));
 
-  const gone = await tidyFixAll(fake.api as never, { group: "index-gone" });
+  // Fix all sends the items the person confirmed (0.5.1 review): here, every line for a gone note in the list.
+  const goneIds = (await findingsFor(fake.api as never, true)).findings.filter((finding) => memoryGroupKey(finding) === "index-gone").map((finding) => finding.id);
+  const gone = await tidyFixAll(fake.api as never, { group: "index-gone", findingIds: goneIds });
   assert.equal(gone.ok, true, gone.message);
   assert.ok(!parseIndex(readFileSync(index, "utf8")).some((entry) => entry.file === "old_plan.md"), "the line for the gone note is off");
   const after = await findingsFor(fake.api as never, true);
   assert.ok(!after.findings.some((finding) => finding.kind === "index-drift" && finding.sourceIds?.[0] === sb.appMemory), "nothing left to fix in that folder");
   const again = await tidyFixAll(fake.api as never, { group: "index-missing", findingIds: shown });
   assert.equal(again.ok, true);
-  assert.match(again.message, /already sorted/);
+  assert.match(again.message, /^Already done/);
 });
 
 test("Fix all never adds a note that's gone by the time it runs, or a line whose note came back", async () => {

@@ -17,7 +17,7 @@ import type { QuickSummary } from "../shared/finding-groups";
 /** "attention": something is worth a look; "error": something needs attention now (a password in a note). */
 export type SidebarTone = "attention" | "error";
 
-type Held = { tone: SidebarTone | null; summary: QuickSummary | null };
+type Held = { tone: SidebarTone | null; summary: QuickSummary | null; /** When the server worked the seed out (ISO), so an older answer never replaces a newer one. */ at?: string };
 
 const live = new Map<string, Held>();
 const seeded = new Map<string, Held>();
@@ -41,13 +41,14 @@ export function reportSidebarStatus(screenId: string, hostId: string, tone: Side
   notify();
 }
 
-/** The server's last known answer, for a row no page has reported on yet. */
-export function seedSidebarStatus(screenId: string, hostId: string, summary: QuickSummary | null): void {
+/** The server's last known answer, for a row no page has reported on yet. An answer older than the one held (`at`) is ignored. */
+export function seedSidebarStatus(screenId: string, hostId: string, summary: QuickSummary | null, at?: string): void {
   const key = keyOf(screenId, hostId);
   const held = seeded.get(key);
+  if (held?.at && at && at < held.at) return;
   const tone = summary?.tone ?? null;
   if (held && held.tone === tone && sameSummary(held.summary, summary)) return;
-  seeded.set(key, { tone, summary });
+  seeded.set(key, { tone, summary, ...(at ? { at } : {}) });
   if (!live.has(key)) notify();
 }
 
@@ -93,9 +94,19 @@ export function useSidebarSummary(screenId: string, hostId: string): QuickSummar
 export const SEED_EVERY_MS = 5 * 60_000;
 
 export type SeedAnswer = {
-  memories: { plain: QuickSummary; technical: QuickSummary } | null;
-  skills: { summary: QuickSummary } | null;
+  memories: { plain: QuickSummary; technical: QuickSummary; at?: string } | null;
+  skills: { summary: QuickSummary; at?: string } | null;
 };
+
+/**
+ * Whether the app is in front of the person: React Native's app state where
+ * there is one ("active"), and the page's visibility on the web. Unknown
+ * counts as in front. The rows ask the server again only then.
+ */
+export function appInForeground(appState: string | null | undefined, visibility?: string | null): boolean {
+  if (visibility === "hidden") return false;
+  return !appState || appState === "active";
+}
 
 const asked = new Map<string, { at: number; promise: Promise<void> }>();
 
@@ -109,8 +120,8 @@ export function seedFromServer(hostId: string, fetch: () => Promise<SeedAnswer>,
   if (last && now - last.at < SEED_EVERY_MS) return last.promise;
   const promise = fetch()
     .then((answer) => {
-      if (answer.memories) seedSidebarStatus("memories", hostId, technical ? answer.memories.technical : answer.memories.plain);
-      if (answer.skills) seedSidebarStatus("skills", hostId, answer.skills.summary);
+      if (answer.memories) seedSidebarStatus("memories", hostId, technical ? answer.memories.technical : answer.memories.plain, answer.memories.at);
+      if (answer.skills) seedSidebarStatus("skills", hostId, answer.skills.summary, answer.skills.at);
     })
     .catch(() => undefined);
   asked.set(hostId, { at: now, promise });
