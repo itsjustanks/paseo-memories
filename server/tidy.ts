@@ -18,6 +18,7 @@ import { discover, writeGeneration, type Discovery } from "./discover";
 import { userHome } from "./env";
 import { eachLimited, Probe, sha256 } from "./files";
 import { runSliced, Slicer } from "./pace";
+import { pageOpen } from "./presence";
 import { Revalidating } from "./revalidate";
 import { recordMemories } from "./sidebar-cache";
 import { requestScan, scanProgress, scanState, symbolIndex, symbolsVersion } from "./symbols";
@@ -388,8 +389,8 @@ async function computeFindings(paseo: Paseo | null, refresh: boolean): Promise<{
   return { value, seen: probe.seen, inputs: await findingsInputs(discovery) };
 }
 
-/** Re-checked at most every 10 s while a page asks; worked out again only when something it read changed. Tests may change these. */
-export const FINDINGS_TIMING = { reuseMs: 2_000, checkEveryMs: 10_000 };
+/** Re-checked at most every 10 s while a page asks (a request in the last minute); worked out again only when something it read changed. Tests may change these. */
+export const FINDINGS_TIMING = { reuseMs: 2_000, checkEveryMs: 10_000, checkWhile: pageOpen };
 const cache = new Revalidating<Core>(writeGeneration, FINDINGS_TIMING);
 
 /** For tests: how many times the findings were worked out. */

@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import { extname, join } from "node:path";
+import { z } from "zod";
 import { backoffMs } from "../shared/schedule";
 import { onShutdown, onStart } from "./lifecycle";
 import { Pacer } from "./pace";
-import { clientSeenWithin } from "./presence";
+import { clientSeenWithin, pageOpen } from "./presence";
 import { readMemoriesSettings } from "./settings";
-import { statSafe } from "./files";
+import { sha256, statSafe } from "./files";
+import { readState, StateSaver, STATE_MAX_BYTES } from "./state-file";
 
 /**
  * Does a code name a memory mentions still exist in its project? Answered
@@ -20,10 +22,15 @@ import { statSafe } from "./files";
  * at most PASS_LIMITS.readBytes per pass across all projects.
  *
  * CPU stays small too: a read of the findings starts a pass only when the
- * names asked about changed (otherwise the timer runs one every 10 minutes,
- * backing off to an hour while nothing changes), and a pass works at most a
- * quarter of the time (server/pace.ts). `symbolsVersion()` changes only when
- * an answer changes, so the cached findings are worked out again only then.
+ * names asked about changed (otherwise the timer runs one every 10 minutes
+ * while a page is open, backing off to an hour while nothing changes), and a
+ * pass works at most 4% of one core (server/pace.ts). `symbolsVersion()`
+ * changes only when an answer changes, so the cached findings are worked out
+ * again only then.
+ *
+ * The per-file findings are saved (state/code-names.json: paths, stamps and
+ * which of the asked-for names appear, never a file's text), so after a
+ * reload a pass only looks at file dates and reads what changed.
  */
 
 const SKIP = new Set(["node_modules", ".git", "dist", "build", ".next", "vendor", "target", ".venv", "venv", "__pycache__", ".turbo", "coverage", ".cache", "out", ".output", "Pods"]);
@@ -41,6 +48,7 @@ const IDENT = /[A-Za-z_$][\w$]{3,}/g;
 const NONE: readonly string[] = Object.freeze([]);
 
 type FileHits = { stamp: string; hits: readonly string[] };
+/** `key`: a hash of the names asked about; findings for other names don't count. */
 type ProjectCache = { key: string; files: Map<string, FileHits> };
 export type ProjectIndex = { names: ReadonlySet<string>; found: ReadonlySet<string>; asOf: string; files: number; capped: boolean };
 type Budget = { readBytes: number; cachedFiles: number };
@@ -61,7 +69,59 @@ let lastFinished: string | null = null;
 let failures = 0;
 let unfinished = false;
 let cursor = 0;
+/** Bytes of source read by the last pass (tests and diagnostics). */
+let lastPassBytes = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let loading: Promise<void> | null = null;
+let forgets = 0;
+
+const STATE_NAME = "code-names";
+const SavedScan = z.object({
+  version: z.literal(1),
+  projects: z
+    .array(
+      z.object({
+        root: z.string().min(1).max(4096),
+        key: z.string().regex(/^[0-9a-f]{64}$/),
+        files: z.array(z.tuple([z.string().min(1).max(4096), z.string().max(128), z.array(z.string().max(512)).max(5000)])).max(PASS_LIMITS.cachedFiles),
+      }),
+    )
+    .max(1000),
+});
+
+/** Per-file findings, up to the size cap; files left out are read again after the next load. */
+function snapshot(): z.infer<typeof SavedScan> {
+  let bytes = 1024;
+  const out: z.infer<typeof SavedScan>["projects"] = [];
+  for (const [root, cache] of caches) {
+    const files: Array<[string, string, string[]]> = [];
+    bytes += root.length + 200;
+    for (const [path, hit] of cache.files) {
+      bytes += path.length + hit.stamp.length + 16 + hit.hits.reduce((sum, name) => sum + name.length + 3, 0);
+      if (bytes > STATE_MAX_BYTES) break;
+      files.push([path, hit.stamp, [...hit.hits]]);
+    }
+    out.push({ root, key: cache.key, files });
+    if (bytes > STATE_MAX_BYTES) break;
+  }
+  return { version: 1, projects: out };
+}
+
+const saver = new StateSaver(STATE_NAME, snapshot);
+
+/** Once per plugin load, before the first pass. A bad or unknown file means starting fresh. */
+function loadSaved(): Promise<void> {
+  if (!loading) {
+    const before = forgets;
+    loading = readState(STATE_NAME, SavedScan)
+      .then((saved) => {
+        if (!saved || before !== forgets || caches.size) return;
+        for (const project of saved.projects) caches.set(project.root, { key: project.key, files: new Map(project.files.map(([path, stamp, hits]) => [path, { stamp, hits: hits.length ? hits : NONE }])) });
+      })
+      .catch(() => undefined);
+  }
+  return loading;
+}
 
 /**
  * A copy that shares no memory with its source. A name cut out of a memory
@@ -88,7 +148,7 @@ function namesIn(text: string, names: Map<string, string>): readonly string[] {
  * pass. Either way the cache ends up holding only files seen in this pass.
  */
 async function scanProject(root: string, list: string[], budget: Budget): Promise<ProjectIndex | null> {
-  const key = list.join("\u0000");
+  const key = sha256(list.join("\u0000"));
   const old = caches.get(root);
   const previous = old?.key === key ? old.files : null;
   const names = new Map(list.map((name) => [name, name]));
@@ -163,15 +223,21 @@ async function runPass(): Promise<void> {
   const settings = await readMemoriesSettings();
   if (!settings.staleChecks) {
     if (projects.size) version += 1;
+    forgets += 1;
+    loading = Promise.resolve();
+    void saver.cancel();
     caches.clear();
     projects.clear();
     missing.clear();
     unfinished = false;
     return;
   }
+  await loadSaved();
   const request = wanted;
   const before = version;
-  for (const root of [...caches.keys()]) if (!request.has(root)) caches.delete(root);
+  const readBefore = PASS_LIMITS.readBytes;
+  let dropped = false;
+  for (const root of [...caches.keys()]) if (!request.has(root)) dropped = caches.delete(root) || dropped;
   for (const root of [...projects.keys()]) if (!request.has(root) && projects.delete(root)) version += 1;
   for (const root of [...missing]) if (!request.has(root)) missing.delete(root);
   // Start where the last cut-short pass stopped, so no project waits forever behind the others.
@@ -179,17 +245,20 @@ async function runPass(): Promise<void> {
   const start = roots.length ? cursor % roots.length : 0;
   const order = [...roots.slice(start), ...roots.slice(0, start)];
   const budget: Budget = { ...PASS_LIMITS };
+  let forgotten = 0;
   let firstCut = -1;
   for (const [i, root] of order.entries()) {
     if (!(await statSafe(root))?.isDirectory) {
-      caches.delete(root);
+      if (caches.delete(root)) dropped = true;
       if (projects.delete(root)) version += 1;
       if (!missing.has(root)) version += 1;
       missing.add(root);
       continue;
     }
     if (missing.delete(root)) version += 1;
+    const kept = caches.get(root)?.files.size ?? 0;
     const index = await scanProject(root, request.get(root)!, budget);
+    forgotten += Math.max(0, kept - (caches.get(root)?.files.size ?? 0));
     // An unchanged answer keeps its first time: nothing that reads it has to be worked out again.
     if (index && !sameAnswer(projects.get(root), index)) {
       projects.set(root, index);
@@ -201,6 +270,8 @@ async function runPass(): Promise<void> {
   quietPasses = version === before && !unfinished ? quietPasses + 1 : 0;
   lastPassAt = Date.now();
   lastFinished = new Date().toISOString();
+  lastPassBytes = readBefore - budget.readBytes;
+  if (lastPassBytes > 0 || dropped || forgotten > 0) saver.soon();
 }
 
 /** Changes whenever an answer changes (the findings cache keys on it). */
@@ -284,13 +355,41 @@ export async function scanSettled(): Promise<void> {
 }
 
 /** For tests and diagnostics: how much the scan keeps between passes. */
-export function scanStats(): { files: number; projects: number; wanted: number; unfinished: boolean } {
+export function scanStats(): { files: number; projects: number; wanted: number; unfinished: boolean; readBytes: number } {
   let files = 0;
   for (const cache of caches.values()) files += cache.files.size;
-  return { files, projects: projects.size, wanted: wanted.size, unfinished };
+  return { files, projects: projects.size, wanted: wanted.size, unfinished, readBytes: lastPassBytes };
+}
+
+/** For tests: write the saved copy now. */
+export function saveScansNow(): Promise<void> {
+  return saver.now();
+}
+
+/** For tests: what a new plugin load starts with (the saved copy is read before the next pass). */
+export async function reloadScans(): Promise<void> {
+  await running;
+  await saver.flush();
+  caches.clear();
+  projects.clear();
+  missing.clear();
+  wanted = new Map();
+  wantedKey = "";
+  unfinished = false;
+  cursor = 0;
+  quietPasses = 0;
+  lastPassAt = 0;
+  lastPassBytes = 0;
+  lastFinished = null;
+  failures = 0;
+  loading = null;
+  version += 1;
 }
 
 export function forgetScans(): void {
+  forgets += 1;
+  loading = Promise.resolve();
+  void saver.cancel();
   caches.clear();
   projects.clear();
   missing.clear();
@@ -307,14 +406,20 @@ export function forgetScans(): void {
 function schedule(): void {
   const delay = unfinished && failures === 0 ? CARRY_ON_MS : failures ? backoffMs(failures, INTERVAL_MS, IDLE_MAX_MS) : Math.min(IDLE_MAX_MS, INTERVAL_MS * 2 ** Math.min(quietPasses, 3));
   timer = setTimeout(() => {
-    if (clientSeenWithin()) requestScan(undefined, true);
+    if (timerScanDue()) requestScan(undefined, true);
     schedule();
   }, delay);
   timer.unref?.();
+}
+
+/** The timer's next pass: finishing a cut-short scan while an app is connected; a routine re-check only while a page is open. */
+export function timerScanDue(): boolean {
+  return unfinished ? clientSeenWithin() : pageOpen();
 }
 
 onStart(schedule);
 onShutdown(() => {
   if (timer) clearTimeout(timer);
   timer = null;
+  void saver.flush();
 });

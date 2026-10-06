@@ -193,16 +193,19 @@ function looksSame(stat: Stat | null, was: string): boolean {
 
 /**
  * Whether any path looks different now: one stat each, `limit` at a time,
- * stopping at the first change. About 25 ms for 4,500 paths.
+ * stopping at the first change, and letting other work in after every
+ * `batch` stats. About 25 ms for 4,500 paths.
  */
-export async function changedSince(seen: Seen, limit = 16): Promise<boolean> {
+export async function changedSince(seen: Seen, limit = 8, batch = 64): Promise<boolean> {
   const paths = [...seen.keys()];
   let next = 0;
   let changed = false;
   const worker = async () => {
     while (!changed && next < paths.length) {
-      const path = paths[next++]!;
+      const index = next++;
+      const path = paths[index]!;
       if (!looksSame(await statSafe(path), seen.get(path)!)) changed = true;
+      if (index % batch === batch - 1) await new Promise((resolve) => setImmediate(resolve));
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, paths.length) }, worker));

@@ -201,20 +201,23 @@ test("the usage count streams large chat logs: never a whole log in memory", asy
   }, 5);
   const began = performance.now();
   let passes = 0;
+  let mostRead = 0;
   try {
     while (!usage.usageStats().complete && passes < 20) {
       passes += 1;
       usage.requestUsagePass(accounts, { force: true });
       await usage.usageSettled();
+      mostRead = Math.max(mostRead, usage.usageStats().readBytes);
     }
   } finally {
     clearInterval(sampler);
   }
   await settle();
-  t.diagnostic(`usage: ${(big.logBytes / MB).toFixed(0)} MB of logs in ${big.logFiles} files counted in ${passes} passes, ${((performance.now() - began) / 1000).toFixed(1)} s; peak buffers +${(peak / MB).toFixed(1)} MB`);
+  t.diagnostic(`usage: ${(big.logBytes / MB).toFixed(0)} MB of logs in ${big.logFiles} files counted in ${passes} passes (at most ${(mostRead / MB).toFixed(1)} MB each), ${((performance.now() - began) / 1000).toFixed(1)} s; peak buffers +${(peak / MB).toFixed(1)} MB`);
   assert.ok(usage.usageStats().complete, "every log counted");
   assert.ok(usage.usageStats().skills > 0);
   assert.ok(peak < 12 * MB, `buffers peaked at +${(peak / MB).toFixed(1)} MB with 16 MB logs`);
+  assert.ok(mostRead <= usage.PASS_LIMITS.readBytes + usage.MAX_LINE, `a pass read ${(mostRead / MB).toFixed(1)} MB (budget ${usage.PASS_LIMITS.readBytes / MB} MB)`);
 });
 
 test("the event loop never stops for more than 100 ms", (t) => {

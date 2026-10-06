@@ -1,15 +1,23 @@
 /**
+ * How hard the background scans (chat-log counting, the code-name scan) may
+ * work: at most `share` of one core. 0.5.1 lowered it from a quarter to 4%,
+ * so a first read of gigabytes of chat history is slow and quiet rather than
+ * quick and noticeable. Tests may raise it.
+ */
+export const BACKGROUND_PACE = { busyMs: 20, share: 0.04 };
+
+/**
  * Background work that never hogs the host: after each `busyMs` of work it
  * rests long enough that the work takes at most `share` of one core
- * (a quarter by default), and in between it lets the RPCs in. A pass over a
- * big backlog takes longer; nothing else slows down.
+ * (BACKGROUND_PACE by default), and in between it lets the RPCs in. A pass
+ * over a big backlog takes longer; nothing else slows down.
  */
 export class Pacer {
   private since = performance.now();
 
   constructor(
-    private readonly busyMs = 40,
-    private readonly share = 0.25,
+    private readonly busyMs = BACKGROUND_PACE.busyMs,
+    private readonly share = BACKGROUND_PACE.share,
   ) {}
 
   /** Call between pieces of work. */

@@ -25,6 +25,7 @@ import {
   type PlanCtx,
   type PlanItem,
 } from "./plans";
+import { pageOpen } from "./presence";
 import { Revalidating } from "./revalidate";
 import { readMemoriesSettings } from "./settings";
 import { applyWritable } from "./writable";
@@ -53,7 +54,7 @@ export type Discovery = {
 const MAX_PROJECTS = 200;
 /** A discovery checked this recently is used as it is. */
 const REUSE_MS = 2_000;
-/** A page left open re-checks in the background at most this often. */
+/** A page left open re-checks in the background at most this often (and only while it is open: a request in the last minute). */
 const CHECK_EVERY_MS = 10_000;
 
 let generation = 0;
@@ -64,7 +65,7 @@ export function writeGeneration(): number {
   return generation;
 }
 
-const cache = new Revalidating<Discovery>(writeGeneration, { reuseMs: REUSE_MS, checkEveryMs: CHECK_EVERY_MS });
+const cache = new Revalidating<Discovery>(writeGeneration, { reuseMs: REUSE_MS, checkEveryMs: CHECK_EVERY_MS, checkWhile: pageOpen });
 
 /** A write happened: the next read discovers again (and waits for it). */
 export function forgetDiscovery(): void {

@@ -17,9 +17,9 @@ import { changedSince, type Seen } from "./files";
  *  - "verified": the answer, checked first unless checked in the last
  *    `reuseMs`.
  *  - "stale-ok": the last answer straight away; a check (and, on a change,
- *    the work) runs in the background, at most once per `checkEveryMs`. The
- *    first answer ever, or the first after a write, is worked out and waited
- *    for.
+ *    the work) runs in the background, at most once per `checkEveryMs` and
+ *    only while `checkWhile()` holds (a page is open). The first answer ever,
+ *    or the first after a write, is worked out and waited for.
  */
 
 export type Computed<T> = { value: T; seen: Seen; inputs: string };
@@ -39,7 +39,7 @@ export class Revalidating<T> {
 
   constructor(
     private readonly generation: () => number,
-    private readonly opts: { reuseMs: number; checkEveryMs: number },
+    private readonly opts: { reuseMs: number; checkEveryMs: number; checkWhile?: () => boolean },
   ) {}
 
   async get(work: Work<T>, mode: Mode): Promise<Answer<T>> {
@@ -50,7 +50,7 @@ export class Revalidating<T> {
       if (Date.now() - held.verifiedAt >= this.opts.reuseMs) await this.check(work);
       return this.answer(this.held ?? held);
     }
-    if (!this.checking && !this.computing && Date.now() - held.verifiedAt >= this.opts.checkEveryMs) {
+    if (!this.checking && !this.computing && Date.now() - held.verifiedAt >= this.opts.checkEveryMs && (this.opts.checkWhile?.() ?? true)) {
       this.check(work).catch(() => undefined);
     }
     return this.answer(held);
