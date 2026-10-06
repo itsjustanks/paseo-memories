@@ -149,6 +149,8 @@ export const FindingSchema = z.object({
   sourceIds: z.array(z.string()).default([]),
   entryKeys: z.array(z.string()).default([]),
   message: z.string(),
+  /** The item it is about, in a few words (a note's title, a file's name), so every row can name it (0.5.1; additive). */
+  subject: z.string().optional(),
   detail: z.string().optional(),
   heuristic: z.boolean().optional(),
   /** The one thing to do about it. */
@@ -273,6 +275,8 @@ export const inventory = defineRpc({
     notes: z.array(z.string()).default([]),
     /** This is the last answer (right as of `checkedAt`); a check for changes is running in the background. */
     checking: z.boolean().default(false),
+    /** The home folder, so a project there is called "Your home folder" (0.5.1; additive). */
+    home: z.string().default(""),
   }),
 });
 
@@ -439,6 +443,34 @@ export const findings = defineRpc({
     symbolScan: z.object({ state: z.string(), asOf: z.string().optional(), checked: z.number().optional(), total: z.number().optional(), note: z.string().default("") }),
     /** This is the last answer (right as of `checkedAt`); a check for changes is running in the background. Ask again shortly. */
     checking: z.boolean().default(false),
+  }),
+});
+
+/** Fix a whole group of things worth a look at once (0.5.1): only the safe, undoable groups (Claude's list). `findingIds`: the ones the page showed. */
+export const tidyFixAll = defineRpc({
+  name: "paseo-memories.tidy-fix-all",
+  input: z.object({ group: z.string().max(64), findingIds: z.array(z.string().max(200)).max(5000).optional() }),
+  output: WriteResultSchema,
+});
+
+const QuickSummarySchema = z.object({
+  tone: z.enum(["attention", "error"]).nullable(),
+  count: z.number(),
+  groups: z.array(z.object({ key: z.string(), count: z.number() })).default([]),
+});
+
+/**
+ * The sidebar dots' last known answer (0.5.1), for both pages: from what the
+ * pages last worked out (kept in memory and in a small file), never worked
+ * out for this call. Null for a page nothing has looked at yet. Asking does
+ * not count as someone looking, so it wakes no background work.
+ */
+export const sidebarStatus = defineRpc({
+  name: "paseo-memories.sidebar-status",
+  input: z.object({}),
+  output: z.object({
+    memories: z.object({ plain: QuickSummarySchema, technical: QuickSummarySchema, at: z.string() }).nullable(),
+    skills: z.object({ summary: QuickSummarySchema, at: z.string() }).nullable(),
   }),
 });
 

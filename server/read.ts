@@ -123,6 +123,7 @@ export async function inventoryFor(paseo: Paseo | null, refresh = false) {
     checkedAt: new Date(answer.asOf).toISOString(),
     accounts: discovery.accounts.accounts,
     sources: discovery.sources,
+    home: userHome(),
     groups: groupSources(discovery.sources),
     counts: {
       claudeMemoryFolders: folders.length,

@@ -322,3 +322,10 @@ export const skillsFix = defineRpc({
   input: z.object({ findingId: z.string() }),
   output: WriteResultSchema,
 });
+
+/** Fix every finding of one safe kind at once (0.5.1); `findingIds`: the ones the page showed. */
+export const skillsFixAll = defineRpc({
+  name: "paseo-memories.skills-fix-all",
+  input: z.object({ kind: z.string().max(64), findingIds: z.array(z.string().max(300)).max(5000).optional() }),
+  output: WriteResultSchema,
+});

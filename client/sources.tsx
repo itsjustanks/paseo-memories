@@ -1,69 +1,25 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { Text, View } from "react-native";
-import { AGENT_LABELS } from "../shared/agents";
-import type { Account, Source } from "../shared/contracts";
+import type { Source } from "../shared/contracts";
 import { formatBytes, formatTokens, plural } from "../shared/format";
-import { folderName, kindLabel, shortPath } from "../shared/labels";
-import { PLAIN, plainAgent, plainAgents, plainWords } from "../shared/plain";
+import { kindLabel, shortPath } from "../shared/labels";
+import { PLAIN, plainAgents, plainWords } from "../shared/plain";
+import { notesIn, projectGroups, splitEmpty, userGroups, type SourceGroup } from "../shared/source-groups";
 import { SourceDetail } from "./detail";
 import { usePlain, useSourceNames } from "./mode";
-import { Button, Card, EmptyState, Facts, PathText, Row, Section, Tag, useTokens } from "./ui";
+import { Button, Card, EmptyState, Facts, Link, PathText, Row, Section, Tag, useTokens } from "./ui";
 
 /**
  * User and Projects: a list of sources on the left, the chosen one on the
- * right (stacked on a narrow screen). User groups by agent and account;
- * Projects puts Paseo's workspaces first, then other known folders, then
- * Claude memory for projects whose path is unknown.
+ * right (stacked on a narrow screen). The groups and counts come from
+ * shared/source-groups.ts, the same ones the Overview adds up (0.5.1): each
+ * badge is the group's number of notes, and groups with none fold behind
+ * "Show empty".
  */
 
-type Group = { key: string; title: string; icon: string; caption?: string; path?: string; sources: Source[] };
+type Group = SourceGroup;
 
-function accountTitle(account: Account | undefined, agent: string): string {
-  const name = AGENT_LABELS[agent] ?? agent;
-  if (!account) return name;
-  return account.email ? `${name} · ${account.email}` : `${name} · ${account.label}`;
-}
-
-function plainAccountTitle(account: Account | undefined, agent: string): string {
-  const name = plainAgent(agent);
-  return account && account.origin !== "default" ? `${name} · ${account.email ?? account.label}` : name;
-}
-
-export function userGroups(sources: Source[], accounts: Account[], plain = false): Group[] {
-  const groups = new Map<string, Group>();
-  for (const source of sources) {
-    if (source.scope !== "user" && source.scope !== "managed" && source.scope !== "host") continue;
-    const account = accounts.find((entry) => entry.id === source.accountId);
-    const key = source.scope === "managed" ? "managed" : source.scope === "host" ? "host" : source.accountId ?? source.agent;
-    const title = plain
-      ? source.scope === "managed" ? "Set by your organisation" : source.scope === "host" ? "Every agent on this computer" : plainAccountTitle(account, source.agent)
-      : source.scope === "managed" ? "Managed by your organisation" : source.scope === "host" ? "Paseo (every agent on this host)" : accountTitle(account, source.agent);
-    const icon = source.scope === "managed" ? "Building2" : source.scope === "host" ? "Monitor" : "Bot";
-    const group = groups.get(key) ?? { key, title, icon, ...(account && !plain ? { path: account.dir } : {}), sources: [] };
-    group.sources.push(source);
-    groups.set(key, group);
-  }
-  return [...groups.values()];
-}
-
-export function projectGroups(sources: Source[], workspaces: Array<{ name: string; path: string }>, plain = false): Group[] {
-  const groups = new Map<string, Group & { rank: number }>();
-  for (const source of sources) {
-    if (source.scope !== "project") continue;
-    const path = source.projectPath;
-    const key = path ?? "unknown";
-    const workspace = path ? workspaces.find((entry) => entry.path === path || path.startsWith(`${entry.path}/`) || entry.path.startsWith(`${path}/`)) : undefined;
-    const rank = workspace ? 0 : path ? 1 : 2;
-    const unknown = plain
-      ? { title: "Projects not found on this computer", caption: "Claude kept notes for these, but their project folders aren't here." }
-      : { title: "Other projects (path unknown)", caption: "Claude keeps these by a folder name that cannot be turned back into a path." };
-    const group = groups.get(key) ?? { key, rank, title: path ? (workspace ? workspace.name : folderName(path)) : unknown.title, icon: path ? "FolderCode" : "FolderSearch", ...(path ? (plain ? {} : { path }) : { caption: unknown.caption }), sources: [] };
-    group.rank = Math.min(group.rank, rank);
-    group.sources.push(source);
-    groups.set(key, group);
-  }
-  return [...groups.values()].sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title));
-}
+export { projectGroups, userGroups };
 
 function PlainSourceRow({ source, name, first, selected, onPress }: { source: Source; name: string; first: boolean; selected: boolean; onPress: () => void }) {
   const t = useTokens();
@@ -120,6 +76,7 @@ export function SourcesTab({
   onOpenEntry,
   onCopy,
   empty,
+  foldEmpty = false,
 }: {
   hostId: string;
   groups: Group[];
@@ -129,16 +86,21 @@ export function SourcesTab({
   onOpenEntry: (key: string | null) => void;
   onCopy: (from: Array<{ sourceId: string; key?: string }>) => void;
   empty: string;
+  /** Projects: groups with no notes fold behind "Show empty". */
+  foldEmpty?: boolean;
 }) {
   const t = useTokens();
   const plain = usePlain();
   const names = useSourceNames(hostId);
+  const [showEmpty, setShowEmpty] = useState(false);
   const total = useMemo(() => groups.reduce((sum, group) => sum + group.sources.length, 0), [groups]);
   if (total === 0) return <EmptyState icon="Sparkles" title={PLAIN.nothingYet.title} body={empty} />;
+  const split = foldEmpty ? splitEmpty(groups, selected) : { shown: groups, empty: [] };
+  const visible = showEmpty ? groups : split.shown;
   const list = (
     <View style={{ gap: t.space.md }}>
-      {groups.map((group) => (
-        <Section key={group.key} title={group.title} icon={group.icon} trailing={<Tag label={String(group.sources.length)} />}>
+      {visible.map((group) => (
+        <Section key={group.key} title={group.title} icon={group.icon} trailing={<Tag label={String(notesIn(group.sources))} />}>
           {group.path ? <PathText path={group.path} /> : group.caption ? <Text style={t.text.caption}>{group.caption}</Text> : null}
           <Card padded={false}>
             {group.sources.map((source, index) =>
@@ -151,6 +113,11 @@ export function SourcesTab({
           </Card>
         </Section>
       ))}
+      {split.empty.length ? (
+        <View style={{ flexDirection: "row" }}>
+          <Link label={showEmpty ? PLAIN.hideEmpty : PLAIN.showEmpty(split.empty.length)} onPress={() => setShowEmpty(!showEmpty)} />
+        </View>
+      ) : null}
     </View>
   );
   const detail = selected ? (

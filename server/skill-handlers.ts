@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { WriteReport } from "../shared/contracts";
 import { codexSkillEnabled, setSkillEnabled } from "../shared/codex-skills-toml";
+import { canFixAll, quickSummary } from "../shared/finding-groups";
 import { maskSecrets } from "../shared/secrets";
 import { lockLooksValid, readLock, serializeLock, withoutEntry } from "../shared/skill-lock";
 import { nameKey } from "../shared/skill-md";
@@ -15,6 +16,7 @@ import { Probe } from "./files";
 import { logWrite } from "./log";
 import { withDeadline } from "./run";
 import { readMemoriesSettings } from "./settings";
+import { recordSkills } from "./sidebar-cache";
 import { addSkill, previewSkill } from "./skill-add";
 import { forgetAdded } from "./skill-records";
 import { projectRoots } from "./skill-roots";
@@ -44,6 +46,8 @@ function result(ok: boolean, message: string, reports: WriteReport[], warnings: 
 export async function handleSkillsInventory({ refresh }: { refresh?: boolean }, { paseo }: Ctx) {
   const discovery = await discoverSkills(paseo, { refresh: Boolean(refresh) });
   const usage = usageState(discovery.settings.skillsUsage);
+  // The Skills dot's summary (0.5.1): the page's rule, warnings make the dot; kept for the sidebar at load.
+  await recordSkills(quickSummary("skills", discovery.findings, discovery.findings.some((finding) => finding.severity === "warn") ? "attention" : null)).catch(() => undefined);
   return {
     checkedAt: new Date(discovery.at).toISOString(),
     skills: discovery.skills.map(publicSkill),
@@ -467,7 +471,15 @@ export async function handleSkillsFix({ findingId }: { findingId: string }, { pa
   startWrite();
   forgetSkills();
   const settings = await readMemoriesSettings();
-  const session = newSession(settings.backupsToKeep);
+  const reports = await applyFix(newSession(settings.backupsToKeep), plan);
+  forgetSkills();
+  const ok = reports.length > 0 && reports.every((report) => report.ok);
+  return result(ok, ok ? "Done. Anything taken out is in this plugin's backups." : reports.find((report) => !report.ok)?.error ?? "Nothing was changed.", reports);
+}
+
+type FixPlan = NonNullable<ReturnType<SkillsDiscovery["fixes"]["get"]>>;
+
+async function applyFix(session: Session, plan: FixPlan): Promise<WriteReport[]> {
   const reports: WriteReport[] = [];
   if (plan.kind === "unlink" || plan.kind === "move-to-backup") reports.push(await moveToBackup(session, plan.path));
   else if (plan.kind === "remove-orphan") for (const path of plan.paths) reports.push(await moveToBackup(session, path, { paseoOrphan: true }));
@@ -476,9 +488,34 @@ export async function handleSkillsFix({ findingId }: { findingId: string }, { pa
     if (report) reports.push(report);
   }
   for (const report of reports) logWrite("skills-fix", report.target, report.ok ? report.action : "failed");
+  return reports;
+}
+
+/**
+ * "Fix all" for one kind of thing worth a look (0.5.1): only the kinds whose
+ * fix moves something to the backups or takes a line off the installer's
+ * list, so each is undoable. Checked again first; `findingIds` (what the
+ * page showed) narrows it. One backup session for the lot.
+ */
+export async function handleSkillsFixAll({ kind, findingIds }: { kind: string; findingIds?: string[] | undefined }, { paseo }: Ctx) {
+  if (!canFixAll("skills", kind)) return result(false, "Those need a look one at a time. Nothing was changed.", []);
+  const discovery = await discoverSkills(paseo, { refresh: true });
+  const wanted = findingIds ? new Set(findingIds) : null;
+  const plans = discovery.findings.filter((finding) => finding.kind === kind && (!wanted || wanted.has(finding.id))).flatMap((finding) => {
+    const plan = discovery.fixes.get(finding.id);
+    return plan ? [plan] : [];
+  });
+  if (plans.length === 0) return result(true, "That's already sorted. Nothing needed changing.", []);
+  startWrite();
   forgetSkills();
-  const ok = reports.length > 0 && reports.every((report) => report.ok);
-  return result(ok, ok ? "Done. Anything taken out is in this plugin's backups." : reports.find((report) => !report.ok)?.error ?? "Nothing was changed.", reports);
+  const session = newSession((await readMemoriesSettings()).backupsToKeep);
+  const reports: WriteReport[] = [];
+  for (const plan of plans) reports.push(...(await applyFix(session, plan)));
+  forgetSkills();
+  const failed = reports.filter((report) => !report.ok);
+  const done = plans.length - new Set(failed.map((report) => report.target)).size;
+  if (failed.length) return result(false, `Fixed ${done} of ${plans.length}. ${failed[0]!.error ?? "Some could not be changed."} Anything taken out is in this plugin's backups.`, reports);
+  return result(true, `Fixed all ${plans.length}. Anything taken out is in this plugin's backups.`, reports);
 }
 
 // ------------------------------------------------------------------ link it for Claude

@@ -349,6 +349,8 @@ export const PLAIN = {
   wholeFileSummary: "Everything at once, as plain text: for people who know the file",
   pickLeft: { title: "Pick something on the left", body: "Each row is a set of notes an agent reads. Open one to read it, change it or add to it." },
   back: "Back to the list",
+  showEmpty: (count: number) => `Show ${count} empty ${count === 1 ? "project" : "projects"}`,
+  hideEmpty: "Hide empty projects",
   emptyUser: "No agent has notes of its own on this computer yet. Use Add a note to write the first one.",
   emptyProjects: "No project has notes yet. Open a project in Paseo, then use Add a note.",
   nothingYet: { title: "Nothing here yet", body: "No agent on this computer has notes yet. Use Add a note to write the first one." },
@@ -375,6 +377,9 @@ export const PLAIN = {
     primaryHint: "Tell your agents something once, and they follow it from then on.",
     remember: "What your agents remember",
     projectNotes: "Notes in your projects",
+    everywhere: "Notes for every project",
+    followedBy: (agents: string) => `your own notes for ${agents}`,
+    inProjects: (count: number) => `in ${count} ${count === 1 ? "project" : "projects"}`,
     projectNotesHint: "Instructions that belong to one project",
     otherAgents: "Other agents",
     checkedAt: (time: string) => `Checked at ${time}.`,
@@ -550,32 +555,46 @@ function quoted(message: string): string | undefined {
 }
 
 /** A finding as a heading and one line saying where. `nameOf` gives each source its plain name. */
-export function plainFinding(finding: Pick<Finding, "kind" | "message" | "sourceIds">, nameOf: (sourceId: string) => string): { title: string; detail: string } {
-  const places = [...new Set(finding.sourceIds.map(nameOf))];
-  const where = places.length ? `In: ${places.slice(0, 3).join("; ")}${places.length > 3 ? ` and ${places.length - 3} more` : ""}.` : "";
+export function plainFinding(finding: Pick<Finding, "kind" | "message" | "sourceIds"> & { subject?: string | undefined }, nameOf: (sourceId: string) => string): { title: string; detail: string } {
+  const where = plainWhere(finding, nameOf);
   const about = quoted(finding.message);
+  // 0.5.1: every row names its item ("Claude may not find "Testing rules""), not just the kind of problem.
+  const it = finding.subject?.trim() ? `"${finding.subject.trim()}"` : null;
   switch (finding.kind) {
     case "secret":
-      return { title: "A note contains something that looks like a password or key", detail: `${where} Anyone whose agent reads it can see it. Remove it?`.trim() };
+      return { title: it ? `${it} holds something that looks like a password or key` : "A note contains something that looks like a password or key", detail: `${where} Anyone whose agent reads it can see it. Remove it?`.trim() };
     case "duplicate":
-      return { title: "Two notes say the same thing", detail: `${where} Keeping one is enough.`.trim() };
+      return { title: it ? `${it} says the same as another note` : "Two notes say the same thing", detail: `${where} Keeping one is enough.`.trim() };
     case "conflict":
       return { title: about ? `Notes about "${about}" may disagree` : "Two notes may disagree", detail: `${where} This is a guess: check before changing anything.`.trim() };
     case "stale-path":
-      return { title: "A note mentions a file or folder that no longer exists", detail: where };
+      return { title: it ? `${it} mentions a file or folder that no longer exists` : "A note mentions a file or folder that no longer exists", detail: where };
     case "stale-symbol":
-      return { title: "A note mentions something that is no longer in the project", detail: where };
+      return { title: it ? `${it} mentions something that is no longer in the project` : "A note mentions something that is no longer in the project", detail: where };
     case "index-drift":
       return /does not exist/.test(finding.message)
-        ? { title: "Claude's list of notes mentions one that's gone", detail: where }
-        : { title: "Claude may not find one of its notes", detail: `${where} It is missing from Claude's list.`.trim() };
+        ? { title: it ? `Claude's list mentions ${it}, which is gone` : "Claude's list of notes mentions one that's gone", detail: where }
+        : { title: it ? `Claude may not find ${it}` : "Claude may not find one of its notes", detail: `${where} It is missing from Claude's list.`.trim() };
     case "over-limit":
-      return { title: "A note is too long for the agent to read in full", detail: where };
+      return { title: it ? `${it} is too long for the agent to read in full` : "A note is too long for the agent to read in full", detail: where };
     case "codex-pending":
       return { title: "Codex is still tidying its notes", detail: "Changes you make now will be folded in when it finishes." };
     default:
-      return { title: "Something to look at", detail: where };
+      return { title: it ? `Something to look at in ${it}` : "Something to look at", detail: where };
   }
+}
+
+/** "In: Claude's notes for acme-web." — the places a finding is about, by their plain names. */
+export function plainWhere(finding: Pick<Finding, "sourceIds">, nameOf: (sourceId: string) => string): string {
+  const places = [...new Set(finding.sourceIds.map(nameOf))];
+  return places.length ? `In: ${places.slice(0, 3).join("; ")}${places.length > 3 ? ` and ${places.length - 3} more` : ""}.` : "";
+}
+
+/** A row inside a group (the group's heading already says what's wrong): the item, and where it is. */
+export function plainGroupedRow(finding: Pick<Finding, "kind" | "message" | "sourceIds"> & { subject?: string | undefined }, nameOf: (sourceId: string) => string): { title: string; detail: string } {
+  const subject = finding.subject?.trim() || quoted(finding.message);
+  if (!subject) return plainFinding(finding, nameOf);
+  return { title: subject, detail: plainWhere(finding, nameOf).replace(/^In: /, "").replace(/\.$/, "") };
 }
 
 export function plainNextStep(step: NextStep, first: Pick<Finding, "kind" | "message" | "sourceIds"> | undefined, total: number, nameOf: (sourceId: string) => string): { title: string; detail: string } {

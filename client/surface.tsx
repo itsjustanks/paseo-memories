@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Text, View } from "react-native";
-import { PLAIN, isCodexInternal } from "../shared/plain";
+import { quickSummary } from "../shared/finding-groups";
+import { PLAIN, isCodexInternal, plainFindings } from "../shared/plain";
 import { AddNote } from "./add-note";
 import { QueryState, useCachedFindings, useInvalidate, useInventory, useLastWrite, useSourceDetail, useWorkspaceFolders } from "./data";
 import { headerStatus, sidebarToneFrom } from "./freshness";
@@ -203,11 +204,15 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
   };
   const addNote = (workspaceId?: string) => setAdding(workspaceId ? { workspaceId } : {});
   const header = useHeaderStatus(hostId, host.label ?? hostId, plain);
-  // The sidebar row's dot says the same as the header, from what was already read (no extra call).
+  const cachedFindings = useCachedFindings(hostId);
+  // The sidebar row's dot says the same as the header, from what was already read (no extra call); its popover gets the counts by kind.
   useEffect(() => {
     const tone = sidebarToneFrom(header, Boolean(inventory.data));
-    if (tone !== undefined) reportSidebarStatus("memories", hostId, tone);
-  }, [header.status, header.retry, Boolean(inventory.data)]);
+    if (tone === undefined) return;
+    const all = cachedFindings.data?.findings ?? [];
+    const shown = plain ? plainFindings(all, inventory.data?.sources ?? []) : all;
+    reportSidebarStatus("memories", hostId, tone, quickSummary("memories", shown, tone));
+  }, [header.status, header.retry, Boolean(inventory.data), cachedFindings.dataUpdatedAt, plain]);
   const lists = tab === "overview" || tab === "user" || tab === "projects";
   return (
     <Screen t={t}>
@@ -230,7 +235,7 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
           {inventory.data ? (
             <SourcesTab
               hostId={hostId}
-              groups={tab === "user" ? userGroups(listed, accounts, plain) : projectGroups(listed, workspaces.data ?? [], plain)}
+              groups={tab === "user" ? userGroups(listed, accounts, plain) : projectGroups(listed, workspaces.data ?? [], plain, inventory.data.home)}
               selected={sourceId && sources.some((source) => source.id === sourceId && (tab === "projects") === (source.scope === "project")) ? sourceId : null}
               entryKey={entryKey}
               onSelect={(id) => {
@@ -239,6 +244,7 @@ function MemoriesBody({ host, params }: MemoriesScreenProps) {
               }}
               onOpenEntry={setEntryKey}
               onCopy={copy}
+              foldEmpty={tab === "projects"}
               empty={plain ? (tab === "user" ? PLAIN.emptyUser : PLAIN.emptyProjects) : tab === "user" ? "No agent has a user-level memory or instruction file on this host." : (inventory.data.checked[0] ?? "No project files found.")}
             />
           ) : (

@@ -98,7 +98,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
   const plain = usePlain();
   const T = PLAIN.transfer;
   const folders = useWorkspaceFolders(hostId);
-  const namer = projectNamer(folders.data ?? []);
+  const namer = projectNamer(folders.data ?? [], useInventory(hostId).data?.home ?? "");
   const parse = useRpc(importParse);
   const previewRpc = useRpc(importPreview);
   const apply = useRpc(importApply);

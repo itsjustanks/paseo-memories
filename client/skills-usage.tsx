@@ -8,7 +8,7 @@ import { QueryState } from "./data";
 import { SkillsResult, type SkillsResultValue } from "./skills-report";
 import { usePlain } from "./mode";
 import { useSkillsInventory, useSkillsRefresh, useSkillsUsage } from "./skills-data";
-import { Accordion, AccordionItem, Button, Card, Facts, Meta, Notice, Row, Segmented, useTokens } from "./ui";
+import { Accordion, AccordionItem, Button, Card, Facts, Meta, Notice, Row, Pills, useTokens } from "./ui";
 
 /**
  * Which skills ran, and how often, over 7, 30 or 90 days: the busiest first,
@@ -69,7 +69,7 @@ export function SkillsUsage({ hostId, onOpen }: { hostId: string; onOpen: (skill
   };
   return (
     <>
-      <Segmented<Days> options={(["7", "30", "90"] as const).map((value) => ({ value, label: U.days(Number(value)) }))} value={days} onChange={setDays} />
+      <Pills<Days> label={U.daysLabel} options={(["7", "30", "90"] as const).map((value) => ({ value, label: U.days(Number(value)) }))} value={days} onChange={setDays} />
       <QueryState query={usage} what="which skills ran" />
       {result ? <SkillsResult hostId={hostId} result={result} onDismiss={() => setResult(null)} /> : null}
       {data ? (

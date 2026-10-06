@@ -779,6 +779,40 @@ export function ConfirmLink({ label, question, yes, no = "Keep it", onConfirm }:
   );
 }
 
+/** Filter pills (0.5.1, as Connectors and Hosts): one row of rounded chips, the chosen one tinted. For filters; Segmented stays for switches inside a form. */
+export function Pills<T extends string>({ options, value, onChange, label }: { options: ReadonlyArray<{ value: T; label: string }>; value: T; onChange: (value: T) => void; label?: string }) {
+  const t = useTokens();
+  return (
+    <View accessibilityRole="radiogroup" {...(label ? { accessibilityLabel: label } : {})} style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <Pressable
+            key={option.value}
+            accessibilityRole="radio"
+            accessibilityLabel={option.label}
+            accessibilityState={{ selected: active, checked: active }}
+            {...({ "aria-checked": active } as object)}
+            onPress={() => onChange(option.value)}
+            hitSlop={t.control.hit}
+            style={{
+              minHeight: t.compact ? 40 : 34,
+              justifyContent: "center",
+              paddingHorizontal: t.space.row,
+              borderRadius: t.radius.pill,
+              borderWidth: 1,
+              borderColor: active ? t.color.accentLine : t.color.border,
+              backgroundColor: active ? t.color.accentWash : "transparent",
+            }}
+          >
+            <Text style={{ ...TYPE.secondary, fontWeight: "600", color: active ? t.color.accent : t.color.fg }}>{option.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export function Segmented<T extends string>({
   options,
   value,

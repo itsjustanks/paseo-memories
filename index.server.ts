@@ -17,6 +17,7 @@ import {
   handleSkillsAgent,
   handleSkillsCatalog,
   handleSkillsFix,
+  handleSkillsFixAll,
   handleSkillsInventory,
   handleSkillsLink,
   handleSkillsPreview,
@@ -25,7 +26,9 @@ import {
   handleSkillsUsage,
   handleSkillsWorkspace,
 } from "./server/skill-handlers";
+import { handleSidebarStatus } from "./server/sidebar-cache";
 import { handleFindings } from "./server/tidy";
+import { handleTidyFixAll } from "./server/tidy-fix";
 import { handleExport, handleImportApply, handleImportParse, handleImportPreview } from "./server/transfer";
 import {
   agentPlan,
@@ -46,11 +49,13 @@ import {
   promptGet,
   promptSet,
   search,
+  sidebarStatus,
   sourceDetail,
+  tidyFixAll,
   workspacePlan,
 } from "./shared/contracts";
 import { maskTextFields } from "./shared/secrets";
-import { skillDetail, skillsAdd, skillsAgent, skillsCatalog, skillsFix, skillsInventory, skillsLink, skillsPreview, skillsRemove, skillsToggle, skillsUsage, skillsWorkspace } from "./shared/skill-contracts";
+import { skillDetail, skillsAdd, skillsAgent, skillsCatalog, skillsFix, skillsFixAll, skillsInventory, skillsLink, skillsPreview, skillsRemove, skillsToggle, skillsUsage, skillsWorkspace } from "./shared/skill-contracts";
 import { memoriesSettings } from "./shared/settings";
 import { readMemoriesSettings, adoptSettingsHandle } from "./server/settings";
 
@@ -71,10 +76,10 @@ export default function contribute(server: PluginServerContext) {
   const handle = <I extends ZodType, O extends ZodType>(
     contract: PluginRpcContract<I, O>,
     handler: (input: ZodOutput<I>, context: PluginHandlerContext) => ZodInput<O> | Promise<ZodInput<O>>,
-    { maskOutput = true }: { maskOutput?: boolean } = {},
+    { maskOutput = true, looking = true }: { maskOutput?: boolean; /** The call means someone is looking at a page (false: the sidebar's dot). */ looking?: boolean } = {},
   ) =>
     server.handle(contract, async (input, context) => {
-      markClientSeen();
+      if (looking) markClientSeen();
       const began = Date.now();
       try {
         const output = await handler(input, context);
@@ -112,6 +117,9 @@ export default function contribute(server: PluginServerContext) {
   handle(exportMemories, handleExport, { maskOutput: false });
   handle(notePreview, handleNotePreview);
   handle(noteAdd, handleNoteAdd);
+  // 0.5.1: Fix all for Claude's list, and the sidebar dots' last known answer (a sidebar isn't someone looking at a page).
+  handle(tidyFixAll, handleTidyFixAll);
+  handle(sidebarStatus, handleSidebarStatus, { maskOutput: false, looking: false });
   // Skills (0.4.0).
   handle(skillsInventory, handleSkillsInventory);
   handle(skillDetail, handleSkillDetail);
@@ -124,6 +132,7 @@ export default function contribute(server: PluginServerContext) {
   handle(skillsToggle, handleSkillsToggle);
   handle(skillsRemove, handleSkillsRemove);
   handle(skillsFix, handleSkillsFix);
+  handle(skillsFixAll, handleSkillsFixAll);
   handle(skillsLink, handleSkillsLink);
 
   runStart();

@@ -112,16 +112,21 @@ export function plainState(state: string | undefined): string {
   }
 }
 
+/** The skill (or file) a finding is about: the first word of the host's message. */
+export function skillSubject(finding: { message: string; subject?: string | undefined }): string {
+  return finding.subject?.trim() || (finding.message.split(/[ :]/)[0] ?? "");
+}
+
 /** A "Worth a look" finding in plain words; the host's own message is the technical view's. */
 export function plainSkillFinding(finding: { kind: string; message: string }): { title: string; detail: string } {
   const name = finding.message.split(/[ :]/)[0] ?? "";
   switch (finding.kind) {
     case "broken-link":
-      return { title: "A skill that points to nothing", detail: `${name} leads to a skill that's no longer there. Removing it changes nothing for your agents.` };
+      return { title: "A link to a skill that's gone", detail: `${name} is a shortcut to a skill that's no longer there. Removing it changes nothing for your agents.` };
     case "empty-folder":
       return { title: "An empty skill", detail: `${name} has nothing in it. Moving it out of the way changes nothing for your agents.` };
     case "stray-file":
-      return { title: "A packed file agents don't read", detail: `${name} sits with your skills, but agents can't use a packed file. It can go to the backups.` };
+      return { title: "A compressed file (like a zip) agents can't use", detail: `${name} sits with your skills, but agents can't open a compressed file. It can go to the backups.` };
     case "invalid":
       return /instructions file/.test(finding.message)
         ? { title: "A skill without instructions", detail: `${name} has no instructions, so agents skip it.` }
@@ -268,6 +273,7 @@ export const SKILLS_PLAIN = {
       other: "Looked after elsewhere",
     } as Record<string, string>,
     filterAll: "All agents",
+    filterLabel: "Show skills for",
     search: "Find a skill by name or what it does",
     none: "No skill matches.",
     empty: "No agent on this computer has any skills yet. Use Add a skill to add the first one.",
@@ -304,6 +310,7 @@ export const SKILLS_PLAIN = {
   },
   usage: {
     days: (n: number) => `${n} days`,
+    daysLabel: "Time to count",
     total: (uses: number, skills: number) => `${uses} ${uses === 1 ? "use" : "uses"} of ${skills} ${skills === 1 ? "skill" : "skills"}`,
     none: (days: number) => `No skill was used in the last ${days} days on this computer.`,
     by: (claude: number, codex: number) => [claude ? `Claude ${claude}` : "", codex ? `Codex about ${codex}` : ""].filter(Boolean).join(" · "),

@@ -13,7 +13,7 @@ import { Markdown } from "./markdown";
 import { usePlain } from "./mode";
 import { useSkillDetail, useSkillsInventory, useSkillsRefresh } from "./skills-data";
 import type { SkillsPlace } from "./skills-nav";
-import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmLink, EmptyState, Field, Link, Meta, Notice, PathText, Row, Segmented, Tag, useTokens } from "./ui";
+import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmLink, EmptyState, Field, Link, Meta, Notice, PathText, Row, Pills, Tag, useTokens } from "./ui";
 
 /**
  * Your skills: every skill, grouped by where it lives, with a filter by
@@ -99,7 +99,8 @@ export function SkillsList({ hostId, skillId, onOpen, onGo }: { hostId: string; 
     <>
       <QueryState query={inventory} what="your agents' skills" />
       <View style={{ gap: t.space.row }}>
-        <Segmented<Filter>
+        <Pills<Filter>
+          label={S.list.filterLabel}
           options={[
             { value: "all", label: S.list.filterAll },
             { value: "claude", label: "Claude" },

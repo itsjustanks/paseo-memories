@@ -3,13 +3,16 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Text, View } from "react-native";
 import { AGENT_LABELS } from "../shared/agents";
-import { search, type Finding, type FindingAction } from "../shared/contracts";
+import { search, tidyFixAll, type Finding, type FindingAction, type WriteResult } from "../shared/contracts";
+import { groupFindings, groupTitle, type FindingGroup } from "../shared/finding-groups";
 import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, scopeLabel } from "../shared/labels";
-import { PLAIN, isCodexInternal, plainAgent, plainFinding, plainFindings, plainNextStep, plainWords, scanProgressNote } from "../shared/plain";
+import { PLAIN, isCodexInternal, plainAgent, plainAgents, plainFinding, plainFindings, plainGroupedRow, plainNextStep, plainWords, scanProgressNote } from "../shared/plain";
 import { OverviewGuide } from "./about";
-import { KEY, QueryState, useFindings, useInventory } from "./data";
+import { KEY, QueryState, WriteReportView, useFindings, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
+import { placeCounts } from "../shared/source-groups";
+import { GroupedFindings } from "./finding-groups";
 import { usePlain, useSourceNames } from "./mode";
 import type { SectionId } from "./navigation";
 import { clockTime } from "../shared/schedule";
@@ -43,16 +46,18 @@ function waitingHero(failed: boolean): Hero {
   return failed ? { tone: "attention", icon: "TriangleAlert", ...PLAIN.hero.checksFailed } : { tone: "neutral", icon: "Loader", ...PLAIN.hero.checking };
 }
 
-function FindingRow({ finding, first, onOpen }: { finding: Finding; first: boolean; onOpen: (action: FindingAction) => void }) {
+function FindingRow({ finding, first, grouped, onOpen }: { finding: Finding; first: boolean; grouped?: boolean; onOpen: (action: FindingAction) => void }) {
   const t = useTokens();
   const plain = usePlain();
   const names = useSourceNames(useHostId());
+  // Inside a group the heading says what's wrong: the row names the item and where it is (0.5.1).
+  const tone = grouped ? undefined : (TONE[finding.severity] ?? "neutral");
   if (plain) {
-    const words = plainFinding(finding, names.byId);
+    const words = grouped ? plainGroupedRow(finding, names.byId) : plainFinding(finding, names.byId);
     return (
       <Row
         first={first}
-        tone={TONE[finding.severity] ?? "neutral"}
+        {...(tone ? { tone } : {})}
         title={<Text style={t.text.bodyStrong}>{words.title}</Text>}
         meta={words.detail ? <Text style={t.text.body}>{words.detail}</Text> : null}
         trailing={finding.action?.sourceId ? <Button label={PLAIN.tidy.show} variant="ghost" onPress={() => onOpen(finding.action!)} /> : null}
@@ -62,7 +67,7 @@ function FindingRow({ finding, first, onOpen }: { finding: Finding; first: boole
   return (
     <Row
       first={first}
-      tone={TONE[finding.severity] ?? "neutral"}
+      {...(tone ? { tone } : {})}
       title={<Text style={t.text.body}>{finding.message}</Text>}
       meta={finding.heuristic ? <Text style={t.text.caption}>A guess: check before acting on it.</Text> : null}
       trailing={finding.action?.sourceId ? <Button label={finding.action.kind === "delete" ? "Review" : "Open"} variant="ghost" onPress={() => onOpen(finding.action!)} /> : null}
@@ -76,35 +81,50 @@ function CardFooter({ children }: { children: React.ReactNode }) {
   return <View style={{ gap: t.space.xs, paddingVertical: t.space.row, paddingHorizontal: t.compact ? t.space.row : t.space.md, borderTopWidth: 1, borderTopColor: t.color.borderSubtle }}>{children}</View>;
 }
 
-/** Up to five things worth a look, the rest behind "N more", and the lines that say what was checked. */
+/** Things worth a look grouped by kind, each kind with its count and Fix all where that is safe (0.5.1), and the lines that say what was checked. */
 function TidyCard({ title, findings, none, notes, onOpen }: { title: string; findings: Finding[] | null; none: string; notes: string[]; onOpen: (action: FindingAction) => void }) {
   const t = useTokens();
-  const [all, setAll] = useState(false);
+  const hostId = useHostId();
+  const fixAll = useRpc(tidyFixAll);
+  const invalidate = useInvalidate(hostId);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<WriteResult | null>(null);
   const count = findings?.length ?? 0;
   const tone: Status = findings?.some((finding) => finding.severity === "error") ? "error" : count ? "attention" : "ok";
+  const onFixAll = async (group: FindingGroup<Finding>) => {
+    setBusy(group.key);
+    try {
+      setResult(await fixAll({ group: group.key, findingIds: group.findings.map((finding) => finding.id) }));
+    } catch (error) {
+      setResult({ ok: false, message: plainError(error), reports: [], warnings: [] });
+    } finally {
+      setBusy(null);
+      void invalidate();
+    }
+  };
   return (
-    <Card padded={false} title={title} icon="ListChecks" {...(findings ? { iconTone: tone } : {})} trailing={findings ? <Tag label={String(count)} tone={tone} /> : null}>
-      {findings && count ? findings.slice(0, all ? 100 : 5).map((finding, index) => <FindingRow key={finding.id} finding={finding} first={index === 0} onOpen={onOpen} />) : null}
-      {findings && count > 5 ? (
-        <CardFooter>
-          <Link label={all ? PLAIN.tidy.fewer : PLAIN.tidy.more(count - 5)} onPress={() => setAll(!all)} />
-        </CardFooter>
-      ) : null}
-      {findings && !count ? (
-        <View style={{ padding: t.compact ? t.space.row : t.space.md }}>
-          <Text style={t.text.body}>{none}</Text>
-        </View>
-      ) : null}
-      {notes.length ? (
-        <CardFooter>
-          {notes.map((line) => (
-            <Text key={line} style={t.text.caption}>
-              {line}
-            </Text>
-          ))}
-        </CardFooter>
-      ) : null}
-    </Card>
+    <View style={{ gap: t.space.sm }}>
+      {result ? <WriteReportView result={result} /> : null}
+      <Card padded={false} title={title} icon="ListChecks" {...(findings ? { iconTone: tone } : {})} trailing={findings ? <Tag label={String(count)} tone={tone} /> : null}>
+        {findings && count ? (
+          <GroupedFindings page="memories" findings={findings} busyGroup={busy} onFixAll={(group) => void onFixAll(group)} renderRow={(finding, { grouped, first }) => <FindingRow finding={finding} first={first} grouped={grouped} onOpen={onOpen} />} />
+        ) : null}
+        {findings && !count ? (
+          <View style={{ padding: t.compact ? t.space.row : t.space.md }}>
+            <Text style={t.text.body}>{none}</Text>
+          </View>
+        ) : null}
+        {notes.length ? (
+          <CardFooter>
+            {notes.map((line) => (
+              <Text key={line} style={t.text.caption}>
+                {line}
+              </Text>
+            ))}
+          </CardFooter>
+        ) : null}
+      </Card>
+    </View>
   );
 }
 
@@ -208,6 +228,7 @@ function lastEvent(checkedAt: string | undefined, scanNote: string | null): stri
 function PlainOverview({ hostId, onOpen, onAddNote, onGo, worth = 0 }: Props) {
   const t = useTokens();
   const inventory = useInventory(hostId);
+  const workspaces = useWorkspaceFolders(hostId);
   const findings = useFindings(hostId);
   const names = useSourceNames(hostId);
   const inv = inventory.data;
@@ -222,36 +243,24 @@ function PlainOverview({ hostId, onOpen, onAddNote, onGo, worth = 0 }: Props) {
     );
   }
   const openAction = (action: FindingAction) => action.sourceId && onOpen(action.sourceId, action.key === "MEMORY.md" ? undefined : action.key);
-  // Counted from the sources, leaving out Codex's own working files.
-  const listed = inv.sources.filter((source) => !isCodexInternal(source));
-  const count = (sources: typeof listed) => sources.reduce((sum, source) => sum + (source.isDirectory ? source.files ?? 0 : source.exists ? 1 : 0), 0);
-  const accountRows = inv.accounts
-    .map((account) => {
-      const own = listed.filter((source) => source.accountId === account.id);
-      return { account, files: count(own), tokens: own.reduce((sum, source) => sum + source.loaded.tokens, 0) };
-    })
-    .filter((row) => row.account.exists && row.files > 0)
-    .sort((a, b) => b.files - a.files);
-  // At most three agent rows and the projects row; the rest add up into one.
-  const top = accountRows.length > 3 ? accountRows.slice(0, 2) : accountRows;
-  const rest = accountRows.length > 3 ? accountRows.slice(2) : [];
-  const projectFiles = count(listed.filter((source) => source.scope === "project" && !source.accountId));
+  // Counted the same way as the Everywhere and Projects tabs, from the same groups (0.5.1): their badges add up to these.
+  const counts = placeCounts(inv.sources, inv.accounts, workspaces.data ?? [], true);
   const shown = tidy ? plainFindings(tidy.findings, inv.sources) : [];
   const next = tidy ? plainNextStep(tidy.nextStep, shown[0], shown.length, names.byId) : null;
   const scanNote = tidy ? scanProgressNote(tidy.symbolScan) : null;
   const notes = (n: number) => `${n} ${n === 1 ? "note" : "notes"}`;
-  const hero = tidy ? heroFor(shown, next?.title) : waitingHero(Boolean(findings.error));
+  // The hero names the biggest job first: the top kind with its count when it has several ("58 notes missing from Claude's list").
+  const top = groupFindings("memories", shown)[0];
+  const lead = top && top.findings.length > 1 ? groupTitle("memories", top.key, top.findings.length) : next?.title;
+  const hero = tidy ? heroFor(shown, lead) : waitingHero(Boolean(findings.error));
   const action = shown[0]?.action?.sourceId ? shown[0].action : null;
   return (
     <>
       <QueryState query={inventory} what="what your agents remember" />
       <HeroCard tone={hero.tone} icon={hero.icon} title={hero.title} lead={hero.lead}>
         <View style={{ gap: t.space.xs }}>
-          {top.map((row) => (
-            <StatusLine key={row.account.id} label={`${plainAgent(row.account.agent)}${row.account.origin !== "default" ? ` · ${row.account.email ?? row.account.label}` : ""}`} value={notes(row.files)} status="neutral" hint={O.readAtStart(plainWords(row.tokens))} />
-          ))}
-          {rest.length ? <StatusLine label={O.otherAgents} value={notes(rest.reduce((sum, row) => sum + row.files, 0))} status="neutral" hint={O.readAtStart(plainWords(rest.reduce((sum, row) => sum + row.tokens, 0)))} action={{ label: PLAIN.tabLabels.user, onPress: () => onGo("user") }} /> : null}
-          <StatusLine label={O.projectNotes} value={notes(projectFiles)} status="neutral" action={{ label: PLAIN.tabLabels.projects, onPress: () => onGo("projects") }} />
+          <StatusLine label={O.everywhere} value={notes(counts.everywhere.notes)} status="neutral" hint={counts.everywhere.agents.length ? O.followedBy(plainAgents(counts.everywhere.agents)) : null} action={{ label: PLAIN.tabLabels.user, onPress: () => onGo("user") }} />
+          <StatusLine label={O.projectNotes} value={notes(counts.projects.notes)} status="neutral" hint={counts.projects.projects ? O.inProjects(counts.projects.projects) : null} action={{ label: PLAIN.tabLabels.projects, onPress: () => onGo("projects") }} />
         </View>
         {!tidy ? <QueryState query={findings} what="the checks" /> : <Meta>{lastEvent(tidy.checkedAt, scanNote)}</Meta>}
         <HeroActions show={Boolean(action)} onShow={() => action && openAction(action)} onAddNote={onAddNote} />

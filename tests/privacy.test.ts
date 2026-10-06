@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DENY = ["YW5raXQ=", "cGFsaXdhbA==", "dW5mb2xk", "aW52ZXN0b3JraXQ=", "ZGF0YS1nbHVl", "ZGF0YWdsdWU=", "a3lvdG8=", "d2hvbGV0ZWNo", "bWVkaWFu", "c3RhdGVtZW50X3RpbWVvdXQ=", "bGlzdGNoYW5uZWxz", "bWFya19hbGxfbWVzc2FnZXM=", "c3VwZXJzZXQ=", "Y29uZHVjdG9y", "aWNsb3Vk", "YXVzdHJhbGlhbg==", "YXR0aW8=", "Z2xlYXA=", "c29sYWNl", "Zm91cmFjcmU=", "emVuZmxvdw==", "Y2xhdWRlLXdvcmt0cmVlcw=="].map((word) => Buffer.from(word, "base64").toString());
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
-const SKIP_FILES = new Set(["LICENSE", "package-lock.json"]);
+// ".git" is a file, not a folder, in a git worktree: it holds the main checkout's path.
+const SKIP_FILES = new Set(["LICENSE", "package-lock.json", ".git"]);
 
 function files(folder: string, out: string[] = []): string[] {
   for (const entry of readdirSync(folder, { withFileTypes: true })) {

@@ -104,7 +104,7 @@ export function maskDeep<T>(value: T): T {
 export const TEXT_FIELDS = new Set([
   "body", "snippet", "title", "description", "hook", "heading", "message", "text", "value", "name",
   "label", "detail", "note", "notes", "warnings", "checked", "reason", "lockReason", "pending",
-  "duplicateOf", "error", "unsure", "type",
+  "duplicateOf", "error", "unsure", "type", "subject",
 ]);
 
 /** Free-form maps (unknown frontmatter keys): every string inside is text, whatever its key. */

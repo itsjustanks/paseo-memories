@@ -1,4 +1,5 @@
 {
   "id": "paseo-memories",
-  "requirements": { "paseo": ">=0.8.0" }
+  "description": "Memories & Skills: see and tidy what your agents remember, add notes they follow, and see which skills your agents have and actually use.",
+  "requirements": { "paseo": ">=0.9.0" }
 }

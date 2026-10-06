@@ -1,3 +1,4 @@
+import { projectTitle } from "../shared/source-groups";
 import { useSettings } from "@getpaseo/plugin/client";
 import React, { useEffect, useMemo } from "react";
 import type { Account, Source } from "../shared/contracts";
@@ -30,11 +31,9 @@ export function ModeProvider({ children }: { children: React.ReactNode }) {
 }
 
 /** Project folder → the name a person knows it by: the Paseo workspace's, else the folder's. */
-export function projectNamer(workspaces: Array<{ name: string; path: string }>) {
-  return (path: string) => {
-    const hit = workspaces.find((entry) => entry.path === path) ?? workspaces.find((entry) => path.startsWith(`${entry.path}/`) || entry.path.startsWith(`${path}/`));
-    return hit?.name || path.split("/").filter(Boolean).pop() || path;
-  };
+/** A project's name from its folder: the rule the Projects tab's headings use too (shared/source-groups.ts). */
+export function projectNamer(workspaces: Array<{ name: string; path: string }>, home = "") {
+  return (path: string) => projectTitle(path, workspaces, home) || path;
 }
 
 /** One name per source, the same in every view. */
@@ -44,7 +43,7 @@ export function useSourceNames(hostId: string) {
   return useMemo(() => {
     const sources = inventory.data?.sources ?? [];
     const accounts: Account[] = inventory.data?.accounts ?? [];
-    const namer = projectNamer(workspaces.data ?? []);
+    const namer = projectNamer(workspaces.data ?? [], inventory.data?.home ?? "");
     const name = (source: Source) => plainSourceName(source, accounts, namer);
     const byId = (id: string) => {
       const source = sources.find((entry) => entry.id === id);

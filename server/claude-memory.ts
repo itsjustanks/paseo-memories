@@ -11,6 +11,7 @@ import {
   setField,
   type FrontmatterShape,
 } from "../shared/frontmatter";
+import { claudeIndexLoad } from "../shared/limits";
 import { parseIndex, removeIndexLine, renameIndexLine, upsertIndexLine } from "../shared/memory-index";
 import { hasNewMask, MASK_FILL, maskSecrets } from "../shared/secrets";
 import type { Paseo } from "./daemon";
@@ -300,6 +301,54 @@ export async function claudeDelete(paseo: Paseo | null, input: { sourceId: strin
 
 type Ctx = PluginHandlerContext;
 // The RPC never passes allowMasked: only imports do.
+/**
+ * Put Claude's list (MEMORY.md) in step with its folder in one write (0.5.1,
+ * "Fix all"): a line for each note in `add` that is there but missing from
+ * the list (titled from its own name and description), and no line for each
+ * file in `remove` that is gone. Only the list changes, and the old one goes
+ * to the backups. A note that isn't there, or a line whose file came back
+ * since the check, is left alone.
+ */
+export async function claudeIndexFix(paseo: Paseo | null, input: { sourceId: string; add: string[]; remove: string[] }, session?: Session): Promise<{ report: WriteReport | null; added: number; removed: number; error?: string; overLimit: boolean }> {
+  const folder = await memoryFolder(paseo, input.sourceId);
+  if ("error" in folder) return { report: null, added: 0, removed: 0, error: folder.error, overLimit: false };
+  const add: Array<{ file: string; title: string; hook: string }> = [];
+  for (const file of input.add) {
+    if (validName(file) || isIndexName(file)) continue;
+    const current = await readCurrent(join(folder.dir, file));
+    if (!current.exists) continue;
+    const fields = readFields(parseMemoryFile(current.text));
+    add.push({ file, title: fields.name?.trim() || file.replace(/\.md$/, ""), hook: fields.description ?? "" });
+  }
+  const remove: string[] = [];
+  for (const file of input.remove) if (!validName(file) && !(await readCurrent(join(folder.dir, file))).exists) remove.push(file);
+  if (!add.length && !remove.length) return { report: null, added: 0, removed: 0, overLimit: false };
+  const settings = await readMemoriesSettings();
+  const write = session ?? newSession(settings.backupsToKeep);
+  let after = "";
+  const change = (text: string) => {
+    let next = text;
+    for (const file of remove) next = removeIndexLine(next, file);
+    for (const line of add) next = upsertIndexLine(next, line.file, line.title, line.hook);
+    after = next;
+    return next;
+  };
+  const check = (text: string) => {
+    const files = new Set(parseIndex(text).map((line) => line.file));
+    return add.every((line) => files.has(line.file)) && remove.every((file) => !files.has(file));
+  };
+  let report: WriteReport | null;
+  try {
+    report = await writeIndex(write, folder.dir, change, check);
+  } catch (error) {
+    report = { target: join(folder.dir, "MEMORY.md"), ok: false, action: "refused", readBack: "skipped", error: fsError(error, join(folder.dir, "MEMORY.md")) };
+  }
+  forgetDiscovery();
+  logWrite("claude-index-fix", join(folder.dir, "MEMORY.md"), !report || report.ok ? `+${add.length} -${remove.length}` : "failed");
+  const ok = !report || report.ok;
+  return { report, added: ok ? add.length : 0, removed: ok ? remove.length : 0, ...(report && !report.ok && report.error ? { error: report.error } : {}), overLimit: ok && claudeIndexLoad(after).truncated };
+}
+
 export const handleClaudeCreate = (input: Parameters<typeof claudeCreate>[1], { paseo }: Ctx) => claudeCreate(paseo, input);
 export const handleClaudeUpdate = (input: Parameters<typeof claudeUpdate>[1], { paseo }: Ctx) => claudeUpdate(paseo, input);
 export const handleClaudeDelete = (input: Parameters<typeof claudeDelete>[1], { paseo }: Ctx) => claudeDelete(paseo, input);

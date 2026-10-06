@@ -5,9 +5,11 @@ import type { Finding } from "../shared/contracts";
 import { plainError } from "../shared/errors";
 import { PLAIN } from "../shared/plain";
 import { clockTime } from "../shared/schedule";
-import { skillsFix } from "../shared/skill-contracts";
-import { SKILL_ADD_PAGE, SKILL_TABS, SKILLS_PLAIN as S, plainSkillFinding, plainSkillMessage, plainWordsFromChars, skillLitTab, type SkillTabId } from "../shared/skills-plain";
+import { groupFindings, groupTitle, quickSummary, type FindingGroup } from "../shared/finding-groups";
+import { skillsFix, skillsFixAll } from "../shared/skill-contracts";
+import { SKILL_ADD_PAGE, SKILL_TABS, SKILLS_PLAIN as S, plainSkillFinding, plainSkillMessage, skillSubject, plainWordsFromChars, skillLitTab, type SkillTabId } from "../shared/skills-plain";
 import { QueryState } from "./data";
+import { GroupedFindings } from "./finding-groups";
 import { ModeProvider, usePlain } from "./mode";
 import { TabBarOf } from "./navigation";
 import type { MemoriesScreenProps } from "./register";
@@ -71,7 +73,9 @@ function SkillsBody({ host, params }: MemoriesScreenProps) {
   const caption = inventory.error && !inv ? S.status.cantRead(label) : !inv ? S.status.checking(label) : S.status.on(label);
   // The sidebar row's dot: something worth a look among the skills (from the list already read; no extra call).
   useEffect(() => {
-    if (inv) reportSidebarStatus("skills", hostId, status === "attention" ? "attention" : null);
+    if (!inv) return;
+    const tone = status === "attention" ? "attention" : null;
+    reportSidebarStatus("skills", hostId, tone, quickSummary("skills", inv.findings, tone));
   }, [inv, status]);
   return (
     <Screen t={t}>
@@ -103,8 +107,10 @@ function costFor(inv: Inventory, agent: string) {
 /** A finding's one action, as the Overview offers it. */
 export function useFindingAction(hostId: string, onGo: (place: SkillsPlace) => void) {
   const call = useRpc(skillsFix);
+  const callAll = useRpc(skillsFixAll);
   const refresh = useSkillsRefresh(hostId);
   const [busy, setBusy] = useState<string | null>(null);
+  const [busyGroup, setBusyGroup] = useState<string | null>(null);
   const [result, setResult] = useState<SkillsResultValue | null>(null);
   const act = async (finding: Finding) => {
     const action = finding.action;
@@ -123,7 +129,18 @@ export function useFindingAction(hostId: string, onGo: (place: SkillsPlace) => v
     else if (finding.sourceIds[0]) onGo({ tab: "skills", skillId: finding.sourceIds[0] });
     else onGo({ tab: "skills" });
   };
-  return { act, busy, result, clear: () => setResult(null) };
+  const fixAll = async (group: FindingGroup<Finding>) => {
+    setBusyGroup(group.key);
+    try {
+      setResult(await callAll({ kind: group.key, findingIds: group.findings.map((finding) => finding.id) }));
+    } catch (error) {
+      setResult({ ok: false, message: plainError(error) });
+    } finally {
+      setBusyGroup(null);
+      void refresh();
+    }
+  };
+  return { act, busy, result, clear: () => setResult(null), fixAll, busyGroup };
 }
 
 function actionLabel(finding: Finding, plain: boolean): string {
@@ -135,25 +152,26 @@ function actionLabel(finding: Finding, plain: boolean): string {
 export function FindingsCard({ findings, hostId, onGo }: { findings: Finding[]; hostId: string; onGo: (place: SkillsPlace) => void }) {
   const t = useTokens();
   const plain = usePlain();
-  const { act, busy, result, clear } = useFindingAction(hostId, onGo);
+  const { act, busy, result, clear, fixAll, busyGroup } = useFindingAction(hostId, onGo);
+  // One row per kind with its count and Fix all where safe (0.5.1); a kind with one item keeps its own row.
+  const row = (finding: Finding, { grouped, first }: { grouped: boolean; first: boolean }) => {
+    const words = plain ? plainSkillFinding(finding) : { title: finding.message, detail: finding.detail ?? "" };
+    const title = grouped && plain ? skillSubject(finding) : words.title;
+    const detail = grouped && plain ? "" : words.detail;
+    return (
+      <Row
+        first={first}
+        {...(grouped ? {} : { tone: finding.severity === "warn" ? ("attention" as const) : ("neutral" as const) })}
+        title={<Text style={t.text.bodyStrong}>{title}</Text>}
+        meta={detail ? <Text style={plain ? t.text.body : t.text.caption}>{detail}</Text> : null}
+        trailing={finding.action ? <Button label={actionLabel(finding, plain)} variant="ghost" loading={busy === finding.id} onPress={() => void act(finding)} /> : null}
+      />
+    );
+  };
   return (
     <>
       {result ? <SkillsResult hostId={hostId} result={result} onDismiss={clear} /> : null}
-      <Card padded={false}>
-        {findings.map((finding, index) => {
-          const words = plain ? plainSkillFinding(finding) : { title: finding.message, detail: finding.detail ?? "" };
-          return (
-            <Row
-              key={finding.id}
-              first={index === 0}
-              tone={finding.severity === "warn" ? "attention" : "neutral"}
-              title={<Text style={t.text.bodyStrong}>{words.title}</Text>}
-              meta={words.detail ? <Text style={plain ? t.text.body : t.text.caption}>{words.detail}</Text> : null}
-              trailing={finding.action ? <Button label={actionLabel(finding, plain)} variant="ghost" loading={busy === finding.id} onPress={() => void act(finding)} /> : null}
-            />
-          );
-        })}
-      </Card>
+      <GroupedFindings page="skills" findings={findings} renderRow={row} busyGroup={busyGroup} onFixAll={(group) => void fixAll(group)} />
     </>
   );
 }
@@ -209,7 +227,8 @@ function OverviewHero({ inv, onGo, onAct }: { inv: Inventory; onGo: (place: Skil
   const first = [...warn, ...inv.findings][0];
   const tone: Status = warn.length ? "attention" : "ok";
   const title = inv.findings.length ? S.hero.worth(inv.findings.length) : S.hero.tidy;
-  const lead = first ? (plain ? plainSkillFinding(first).title : first.message) : S.hero.tidyLead;
+  const top = groupFindings("skills", [...warn, ...inv.findings.filter((finding) => finding.severity !== "warn")])[0];
+  const lead = first ? (plain ? (top && top.findings.length > 1 ? groupTitle("skills", top.key, top.findings.length) : plainSkillFinding(first).title) : first.message) : S.hero.tidyLead;
   const claude = costFor(inv, "claude");
   const codex = costFor(inv, "codex");
   const others = inv.skills.filter((skill) => !skill.readBy.includes("claude") && !skill.readBy.includes("codex")).length;

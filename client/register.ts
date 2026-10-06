@@ -67,10 +67,19 @@ export type Registration = {
 /** What the sidebar dot says, for screen readers too. */
 export const SIDEBAR_DOT_LABEL: Record<SidebarTone, string> = { attention: "Something is worth a look", error: "Something needs your attention" };
 
-export type SidebarDotProps = { color: string; label: string };
+/** `onPress`: opens the quick popover (0.5.1, as AI Router and Hosts); missing where the app has no popovers. */
+export type SidebarDotProps = { color: string; label: string; onPress?: () => void };
 
-/** The row's status dot and the box that holds it beside the "+" (client/popover.tsx draws them; this file stays free of react-native). */
-export type SidebarParts = { Dot: ComponentType<SidebarDotProps>; Group: ComponentType<{ children?: ReactNode }> };
+/**
+ * The row's status dot and the box that holds it beside the "+" (client/popover.tsx draws them; this file stays free of react-native).
+ * 0.5.1: `Seed` (draws nothing) reads the server's last known answer once, so the dot shows from load; `Quick` is the dot's popover for a page.
+ */
+export type SidebarParts = {
+  Dot: ComponentType<SidebarDotProps>;
+  Group: ComponentType<{ children?: ReactNode }>;
+  Seed?: ComponentType<{ hostId: string }>;
+  Quick?: (screenId: string) => ComponentType<PluginPopoverProps>;
+};
 
 function dotColor(tone: SidebarTone, theme: ItemProps["theme"] | undefined): string {
   const colors = (theme?.colors ?? {}) as Partial<Record<"statusWarning" | "statusDanger", string>>;
@@ -91,13 +100,18 @@ export function sidebarItem(screen: MainScreen, SidebarRow: SidebarRowComponent,
       : null;
     const plus = quick && add ? React.createElement(quick.Button, { label: quick.label, color: theme?.colors?.foregroundMuted ?? "#888888", onPress: add, testID: `${screen.id}-sidebar-add` }) : null;
     // The dot only where the app draws it (client/popover.tsx); the "+" alone is as before 0.5.0.
-    const trailing = () => (tone && parts ? React.createElement(parts.Group, null, React.createElement(parts.Dot, { color: dotColor(tone, theme), label: SIDEBAR_DOT_LABEL[tone] }), plus) : plus);
+    // Pressing the dot opens its quick popover where the app has popovers (0.5.1).
+    const quickStatus = parts?.Quick && typeof openPopover === "function" ? parts.Quick : null;
+    const dot = tone && parts ? React.createElement(parts.Dot, { key: "dot", color: dotColor(tone, theme), label: SIDEBAR_DOT_LABEL[tone], ...(quickStatus ? { onPress: () => openPopover!(quickStatus(screen.id)) } : {}) }) : null;
+    // The seed draws nothing: it asks the server's last known answer once, so the dot shows from load (0.5.1).
+    const seed = parts?.Seed ? React.createElement(parts.Seed, { key: "seed", hostId: host?.id ?? "" }) : null;
+    const trailing = parts && (dot || seed) ? React.createElement(parts.Group, null, seed, dot, plus ? React.cloneElement(plus, { key: "plus" }) : null) : plus;
     return React.createElement(SidebarRow, {
       icon: screen.icon,
       label: screen.title,
       active: currentScreen?.screenId === screen.id,
       onPress: () => openScreen({ screenId: screen.id }),
-      ...(quick || (tone && parts) ? { trailing: trailing() } : {}),
+      ...(trailing ? { trailing } : {}),
     });
   }
   return PluginSidebarRowItem;

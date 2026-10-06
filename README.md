@@ -21,7 +21,7 @@ Memories shows what your AI agents remember and follow, in plain words, and lets
 - **Add a skill** (the button on Your skills or the Overview, or the "+" beside Skills in the sidebar): pick one from a short checked list, bring one from a GitHub link, or write your own. You see every file first; a skill that includes code your agents may run needs an extra confirm.
 - **Help** answers common questions, each folded, with the technical details folded at the end.
 
-Common jobs are commands too (Paseo's command center): "Add a note for your agents", "Tidy memories", "Add a skill", "Open Skills". In a chat, `/remember <text>` starts Add a note for that project, and `/memories` opens what that agent remembers. When something is worth a look, a small dot shows beside Memories or Skills in the sidebar; nothing is added to the chat composer.
+Common jobs are commands too (Paseo's command center): "Add a note for your agents", "Tidy memories", "Add a skill", "Open Skills". In a chat, `/remember <text>` starts Add a note for that project, and `/memories` opens what that agent remembers. When something is worth a look, a small dot shows beside Memories or Skills in the sidebar from the moment Paseo opens; press it for a quick look (how many, the biggest kinds, Show me). Nothing is added to the chat composer.
 
 Nothing technical shows unless you ask for it: turn on **Show technical details** in Settings → Memories & Skills for file names, paths, sizes and whole-file editing. The rest of this page is the technical side.
 

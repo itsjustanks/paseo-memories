@@ -7,7 +7,8 @@ import type { FindingAction, FindingInput } from "../shared/contracts";
 type Finding = FindingInput & { severity: string };
 import { CLAUDE_MD_ADVISORY_LINES, CODEX_MEMORY_SUMMARY_TOKENS, CODEX_PROJECT_DOC_MAX_BYTES, claudeIndexLoad } from "../shared/limits";
 import { parseIndex } from "../shared/memory-index";
-import { scanProgressNote } from "../shared/plain";
+import { quickSummary } from "../shared/finding-groups";
+import { plainFindings, scanProgressNote } from "../shared/plain";
 import { findSecrets } from "../shared/secrets";
 import { duplicateSteps, findConflicts, nextStep, pathRefs, rankFindings, symbolRefs, type Unit } from "../shared/tidy";
 import { pendingDiff } from "./codex-pending";
@@ -18,6 +19,7 @@ import { userHome } from "./env";
 import { eachLimited, Probe, sha256 } from "./files";
 import { runSliced, Slicer } from "./pace";
 import { Revalidating } from "./revalidate";
+import { recordMemories } from "./sidebar-cache";
 import { requestScan, scanProgress, scanState, symbolIndex, symbolsVersion } from "./symbols";
 
 /**
@@ -48,6 +50,23 @@ function id(kind: string, ...parts: string[]): string {
 function where(unit: Unit): string {
   const home = userHome();
   return unit.projectPath ? `${basename(unit.projectPath)}: ${unit.title}` : `${tilde(unit.path, home)}: ${unit.title}`;
+}
+
+/** A note's file name without ".md": how a note with no title is named in a row. */
+function noteStem(file: string): string {
+  return file.replace(/\.md$/i, "");
+}
+
+/** The item a finding is about, in a few words: a note's title, or the file's name for the top of a file. */
+function subjectOf(unit: Unit): string {
+  return unit.key === "0:" || !unit.title.trim() ? basename(unit.path) : unit.title;
+}
+
+/** Each Claude memory file's title, by source and file name, so a finding about the file can name it. */
+function noteTitles(units: Unit[]): Map<string, string> {
+  const titles = new Map<string, string>();
+  for (const unit of units) if (unit.kind === "claude-auto-memory" && unit.title.trim()) titles.set(`${unit.sourceId}\u0000${unit.key}`, unit.title);
+  return titles;
 }
 
 function editAction(label: string, unit: Unit): FindingAction {
@@ -82,6 +101,7 @@ async function duplicateFindings(units: Unit[], slicer: Slicer): Promise<Finding
       severity: "info",
       sourceIds: [...new Set(group.units.map((unit) => unit.sourceId))],
       entryKeys: group.units.map((unit) => unit.key),
+      subject: subjectOf(copy),
       message: group.exact
         ? `The same text is in ${group.units.length} places: ${group.units.slice(0, 3).map(where).join("; ")}.${where2}`
         : `Two places say nearly the same thing (${Math.round(group.score * 100)}% alike): ${where(keep)}; ${where(copy)}.${where2}`,
@@ -98,6 +118,7 @@ function conflictFindings(units: Unit[]): Finding[] {
     heuristic: true,
     sourceIds: [...new Set(group.units.map((unit) => unit.sourceId))],
     entryKeys: group.units.map((unit) => unit.key),
+    subject: group.title,
     message: `Possible conflict (a guess): "${group.title}" appears in ${group.units.length} places with different text: ${group.units.slice(0, 3).map(where).join("; ")}.`,
     action: { label: `Compare the "${group.title}" entries and keep one`, kind: "review", sourceId: group.units[0]!.sourceId, key: group.units[0]!.key },
   }));
@@ -184,6 +205,7 @@ async function stalePathFindings(units: Unit[], probe: Probe, slicer: Slicer): P
       severity: "info",
       sourceIds: [...new Set(units.map((unit) => unit.sourceId))],
       entryKeys: units.map((unit) => unit.key),
+      subject: units.length === 1 ? subjectOf(first.unit) : `${units.length} notes`,
       message: one
         ? `${where(first.unit)} mentions \`${first.ref}\`, which no longer exists on this machine.`
         : `${units.length === 1 ? `${where(first.unit)} mentions` : `${units.length} memories mention`} ${tilde(top, home)}/…, which no longer exists on this machine.`,
@@ -230,6 +252,7 @@ async function staleSymbolFindings(mentions: SymbolMentions["mentions"]): Promis
         heuristic: true,
         sourceIds: [unit.sourceId],
         entryKeys: [unit.key],
+        subject: subjectOf(unit),
         message: `${where(unit)} mentions \`${name}\`, which is not in the project's code any more (as of ${index.asOf.slice(0, 16).replace("T", " ")}).`,
         action: editAction(`Update or remove the mention of ${name}`, unit),
       });
@@ -238,7 +261,7 @@ async function staleSymbolFindings(mentions: SymbolMentions["mentions"]): Promis
   return out;
 }
 
-async function folderFindings(discovery: Discovery, probe: Probe): Promise<Finding[]> {
+async function folderFindings(discovery: Discovery, probe: Probe, titles: ReadonlyMap<string, string> = new Map()): Promise<Finding[]> {
   const out: Finding[] = [];
   const home = userHome();
   for (const source of discovery.sources) {
@@ -250,28 +273,28 @@ async function folderFindings(discovery: Discovery, probe: Probe): Promise<Findi
       const where = source.projectPath ? basename(source.projectPath) : `other project (${source.slug})`;
       for (const line of lines) {
         if (names.has(line.file)) continue;
-        out.push({ id: id("index-drift", source.id, line.file), kind: "index-drift", severity: "warn", sourceIds: [source.id], entryKeys: [line.file], message: `MEMORY.md in ${where} lists ${line.file}, which does not exist.`, action: { label: `Remove the MEMORY.md line for ${line.file}`, kind: "edit", sourceId: source.id, key: "MEMORY.md" } });
+        out.push({ id: id("index-drift", source.id, line.file), kind: "index-drift", severity: "warn", sourceIds: [source.id], entryKeys: [line.file], subject: line.title.trim() || noteStem(line.file), message: `MEMORY.md in ${where} lists ${line.file}, which does not exist.`, action: { label: `Remove the MEMORY.md line for ${line.file}`, kind: "edit", sourceId: source.id, key: "MEMORY.md" } });
       }
       const named = new Set(lines.map((line) => line.file));
       for (const name of names) {
         if (named.has(name)) continue;
-        out.push({ id: id("index-drift", source.id, name), kind: "index-drift", severity: "warn", sourceIds: [source.id], entryKeys: [name], message: `${name} in ${where} is not in MEMORY.md, so Claude does not know it is there.`, action: { label: `Add ${name} to MEMORY.md`, kind: "edit", sourceId: source.id, key: name } });
+        out.push({ id: id("index-drift", source.id, name), kind: "index-drift", severity: "warn", sourceIds: [source.id], entryKeys: [name], subject: titles.get(`${source.id}\u0000${name}`) ?? noteStem(name), message: `${name} in ${where} is not in MEMORY.md, so Claude does not know it is there.`, action: { label: `Add ${name} to MEMORY.md`, kind: "edit", sourceId: source.id, key: name } });
       }
       if (text !== null) {
         const load = claudeIndexLoad(text);
-        if (load.truncated) out.push({ id: id("over-limit", source.id), kind: "over-limit", severity: "warn", sourceIds: [source.id], entryKeys: ["MEMORY.md"], message: `MEMORY.md in ${where} is over Claude's limit: only the first ${load.lines} lines load (200 lines or 25,000 bytes).`, action: { label: "Trim MEMORY.md below 200 lines", kind: "edit", sourceId: source.id, key: "MEMORY.md" } });
+        if (load.truncated) out.push({ id: id("over-limit", source.id), kind: "over-limit", severity: "warn", sourceIds: [source.id], entryKeys: ["MEMORY.md"], subject: `Claude's list for ${where}`, message: `MEMORY.md in ${where} is over Claude's limit: only the first ${load.lines} lines load (200 lines or 25,000 bytes).`, action: { label: "Trim MEMORY.md below 200 lines", kind: "edit", sourceId: source.id, key: "MEMORY.md" } });
       }
       continue;
     }
     if (source.isDirectory) continue;
     if ((source.kind === "claude-md" || source.kind === "claude-local") && source.lines > CLAUDE_MD_ADVISORY_LINES) {
-      out.push({ id: id("over-limit", source.id), kind: "over-limit", severity: "info", sourceIds: [source.id], message: `${tilde(source.path, home)} has ${source.lines} lines; Claude's docs suggest under 200.`, action: { label: `Shorten ${basename(source.path)}`, kind: "edit", sourceId: source.id } });
+      out.push({ id: id("over-limit", source.id), kind: "over-limit", severity: "info", sourceIds: [source.id], subject: basename(source.path), message: `${tilde(source.path, home)} has ${source.lines} lines; Claude's docs suggest under 200.`, action: { label: `Shorten ${basename(source.path)}`, kind: "edit", sourceId: source.id } });
     }
     if (source.kind === "agents-md" && source.scope === "project" && source.bytes > CODEX_PROJECT_DOC_MAX_BYTES && source.readBy.includes("codex")) {
-      out.push({ id: id("over-limit", source.id), kind: "over-limit", severity: "warn", sourceIds: [source.id], message: `${tilde(source.path, home)} is ${source.bytes.toLocaleString("en-US")} bytes; Codex reads only the first 32 KiB of project docs.`, action: { label: `Shorten ${basename(source.path)}`, kind: "edit", sourceId: source.id } });
+      out.push({ id: id("over-limit", source.id), kind: "over-limit", severity: "warn", sourceIds: [source.id], subject: basename(source.path), message: `${tilde(source.path, home)} is ${source.bytes.toLocaleString("en-US")} bytes; Codex reads only the first 32 KiB of project docs.`, action: { label: `Shorten ${basename(source.path)}`, kind: "edit", sourceId: source.id } });
     }
     if (source.kind === "codex-memory" && basename(source.path) === "memory_summary.md" && source.bytes > CODEX_MEMORY_SUMMARY_TOKENS * 4) {
-      out.push({ id: id("over-limit", source.id), kind: "over-limit", severity: "info", sourceIds: [source.id], message: `Codex's memory_summary.md is about ${Math.round(source.bytes / 4).toLocaleString("en-US")} tokens; Codex injects only the first ≈2,500.`, action: { label: "Open Codex's memory summary", kind: "open", sourceId: source.id } });
+      out.push({ id: id("over-limit", source.id), kind: "over-limit", severity: "info", sourceIds: [source.id], subject: "What Codex has learned · short version", message: `Codex's memory_summary.md is about ${Math.round(source.bytes / 4).toLocaleString("en-US")} tokens; Codex injects only the first ≈2,500.`, action: { label: "Open Codex's memory summary", kind: "open", sourceId: source.id } });
     }
   }
   // Codex pending consolidation, from its working diff only (never the sqlite).
@@ -297,7 +320,7 @@ function secretFindings(units: Unit[]): Finding[] {
         : unit.key === "0:"
           ? `The top of ${tilde(unit.path, userHome())}`
           : `The "${unit.title}" section of ${tilde(unit.path, userHome())}`;
-    out.push({ id: id("secret", unit.id), kind: "secret", severity: "error", sourceIds: [unit.sourceId], entryKeys: [unit.key], message: `${what} ${holds}. Every agent that loads it can see it.`, detail: kinds.join(", "), action: editAction("Move the secret out of memory", unit) });
+    out.push({ id: id("secret", unit.id), kind: "secret", severity: "error", sourceIds: [unit.sourceId], entryKeys: [unit.key], message: `${what} ${holds}. Every agent that loads it can see it.`, subject: subjectOf(unit), detail: kinds.join(", "), action: editAction("Move the secret out of memory", unit) });
   }
   return out;
 }
@@ -313,6 +336,8 @@ type Core = {
   roots: string[];
   /** The code names each unit mentions; their findings come from the scan's answers at read time. */
   mentions: SymbolMentions["mentions"];
+  /** Each source's id, kind and path: what plain mode leaves out (Codex's own working files), for the sidebar's summary. */
+  sourceKinds: Array<{ id: string; kind: string; path: string }>;
 };
 
 /** Everything the findings depend on besides the files they read: the discovery and Codex's pending work. */
@@ -338,7 +363,7 @@ async function computeFindings(paseo: Paseo | null, refresh: boolean): Promise<{
   const symbols = stale ? symbolMentions(units) : { queries: new Map<string, Set<string>>(), mentions: [] };
   const unknownFolders = new Set(units.filter((unit) => unit.kind === "claude-auto-memory" && !unit.projectPath && refsOf(unit).paths.some((ref) => !ref.startsWith("~/") && !isAbsolute(ref))).map((unit) => unit.sourceId));
   if (stale) requestScan(symbols.queries, refresh);
-  const found = [...secretFindings(units), ...(await folderFindings(discovery, probe)), ...(await duplicateFindings(units, slicer))];
+  const found = [...secretFindings(units), ...(await folderFindings(discovery, probe, noteTitles(units))), ...(await duplicateFindings(units, slicer))];
   await slicer.step();
   const conflicts = conflictFindings(units);
   await slicer.step();
@@ -358,6 +383,7 @@ async function computeFindings(paseo: Paseo | null, refresh: boolean): Promise<{
     sources,
     roots: [...symbols.queries.keys()],
     mentions: symbols.mentions,
+    sourceKinds: discovery.sources.map((source) => ({ id: source.id, kind: source.kind, path: source.path })),
   };
   return { value, seen: probe.seen, inputs: await findingsInputs(discovery) };
 }
@@ -376,6 +402,11 @@ export function findingsSettled(): Promise<void> {
   return cache.settled();
 }
 
+/** What the sidebar dot says for a list of findings: the page header's rule. */
+function toneOf(findings: Finding[]): "attention" | "error" | null {
+  return findings.some((finding) => finding.severity === "error") ? "error" : findings.length ? "attention" : null;
+}
+
 /** The last answer's findings with the scan's stale code names, kept until either changes. */
 let merged: { core: Core; scan: number; findings: Finding[]; nextStep: ReturnType<typeof nextStep> } | null = null;
 
@@ -386,6 +417,9 @@ async function withSymbols(core: Core): Promise<{ findings: Finding[]; nextStep:
   const next = { core, scan, findings, nextStep: nextStep(findings, { sources: core.sources }) };
   // A read that started later may have stored a newer one meanwhile; it is no worse to keep this one.
   merged = next;
+  // The sidebar dots' summary (0.5.1), only when the answer is new: the same count and tone the page header shows.
+  const plain = plainFindings(findings as Array<Finding & { sourceIds: string[] }>, core.sourceKinds);
+  await recordMemories(quickSummary("memories", plain, toneOf(plain)), quickSummary("memories", findings, toneOf(findings))).catch(() => undefined);
   return next;
 }
 
