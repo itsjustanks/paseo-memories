@@ -26,7 +26,8 @@ import { Button, Card, Disclosure, ErrorText, Facts, Field, HeroCard, Link, Load
 
 const TONE: Record<string, Status> = { error: "error", warn: "attention", info: "neutral" };
 
-type Props = { hostId: string; onOpen: (sourceId: string, key?: string) => void; onAddNote: () => void; onGo: (tab: SectionId) => void };
+/** `worth`: changes each time something asks for the list of things worth a look to open (Help, "Tidy memories"). */
+type Props = { hostId: string; onOpen: (sourceId: string, key?: string) => void; onAddNote: () => void; onGo: (tab: SectionId) => void; worth?: number };
 type Hero = { tone: Status; icon: string; title: string; lead: string };
 
 /** The state in words, from the first thing worth a look (findings are sorted most serious first). */
@@ -168,7 +169,7 @@ export function Overview(props: Props) {
   return (
     <HostContext.Provider value={props.hostId}>
       {plain ? <PlainOverview {...props} /> : <TechnicalOverview {...props} />}
-      <OverviewGuide key={String(firstRun)} agents={agents} onGuide={() => props.onGo("guide")} open={firstRun} />
+      <OverviewGuide key={String(firstRun)} agents={agents} onGuide={() => props.onGo("help")} open={firstRun} />
       {canOpenScreen() ? <QuietLine icon="Sparkles" links={[{ label: PLAIN.overview.openSkills, onPress: () => openScreenById("skills") }]}>{PLAIN.overview.skillsPointer}</QuietLine> : null}
     </HostContext.Provider>
   );
@@ -204,7 +205,7 @@ function lastEvent(checkedAt: string | undefined, scanNote: string | null): stri
   return [when, scanNote ?? ""].filter(Boolean).join(" ");
 }
 
-function PlainOverview({ hostId, onOpen, onAddNote, onGo }: Props) {
+function PlainOverview({ hostId, onOpen, onAddNote, onGo, worth = 0 }: Props) {
   const t = useTokens();
   const inventory = useInventory(hostId);
   const findings = useFindings(hostId);
@@ -256,7 +257,7 @@ function PlainOverview({ hostId, onOpen, onAddNote, onGo }: Props) {
         <HeroActions show={Boolean(action)} onShow={() => action && openAction(action)} onAddNote={onAddNote} />
       </HeroCard>
       {tidy && shown.length ? (
-        <Disclosure quiet title={O.allWorth(shown.length)} openTitle={O.hideWorth}>
+        <Disclosure key={worth} open={worth > 0} quiet title={O.allWorth(shown.length)} openTitle={O.hideWorth}>
           <TidyCard title={PLAIN.tidy.title} findings={shown} none={PLAIN.tidy.none} notes={[]} onOpen={openAction} />
         </Disclosure>
       ) : null}
@@ -267,7 +268,7 @@ function PlainOverview({ hostId, onOpen, onAddNote, onGo }: Props) {
   );
 }
 
-function TechnicalOverview({ hostId, onOpen, onAddNote }: Props) {
+function TechnicalOverview({ hostId, onOpen, onAddNote, worth = 0 }: Props) {
   const t = useTokens();
   const inventory = useInventory(hostId);
   const findings = useFindings(hostId);
@@ -332,7 +333,7 @@ function TechnicalOverview({ hostId, onOpen, onAddNote }: Props) {
         </Card>
       </Disclosure>
       {tidy && tidy.findings.length ? (
-        <Disclosure quiet title={`Needs tidying (${tidy.findings.length})`}>
+        <Disclosure key={worth} open={worth > 0} quiet title={`Needs tidying (${tidy.findings.length})`}>
           <TidyCard title="Needs tidying" findings={tidy.findings} none="Nothing needs tidying." notes={tidy.notes} onOpen={openAction} />
         </Disclosure>
       ) : null}

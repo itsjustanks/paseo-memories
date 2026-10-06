@@ -6,23 +6,29 @@ import { plainError } from "../shared/errors";
 import { PLAIN } from "../shared/plain";
 import { clockTime } from "../shared/schedule";
 import { skillsFix } from "../shared/skill-contracts";
-import { SKILL_TABS, SKILLS_PLAIN as S, plainSkillFinding, plainSkillMessage, plainWordsFromChars, type SkillTabId } from "../shared/skills-plain";
+import { SKILL_ADD_PAGE, SKILL_TABS, SKILLS_PLAIN as S, plainSkillFinding, plainSkillMessage, plainWordsFromChars, skillLitTab, type SkillTabId } from "../shared/skills-plain";
 import { QueryState } from "./data";
 import { ModeProvider, usePlain } from "./mode";
-import { IntroBlock, TabBarOf } from "./navigation";
+import { TabBarOf } from "./navigation";
 import type { MemoriesScreenProps } from "./register";
 import { canOpenScreen, openScreenById } from "./screens";
 import { FlowSteps, Glossary } from "./about";
 import { AddSkill } from "./skills-add";
 import { useSkillsInventory, useSkillsRefresh } from "./skills-data";
-import { SkillsGuide } from "./skills-guide";
+import { SkillsHelp } from "./skills-help";
 import { SkillsList } from "./skills-list";
 import { onSkillsPlace, skillsLanding, skillsParams, syncSkillsParams, takeSkillsPlace, type AddMode, type SkillsPlace } from "./skills-nav";
 import { SkillsResult, type SkillsResultValue } from "./skills-report";
+import { reportSidebarStatus } from "./sidebar-status";
 import { SkillsUsage } from "./skills-usage";
-import { Button, Card, Disclosure, Divider, ErrorText, HeroCard, Header, Link, Meta, NumberedStep, Notice, QuietLine, Row, Screen, SectionTitle, StatusLine, TokensProvider, useTokens, useUi, type Status } from "./ui";
+import { Button, Card, Disclosure, Divider, ErrorText, HeroCard, Header, Link, Meta, NumberedStep, Notice, QuietLine, Row, Screen, SectionTitle, StatusLine, SubPageTop, TabLine, TokensProvider, useTokens, useUi, type Status } from "./ui";
 
-/** The Skills page: Overview · Your skills · Usage · Add a skill · Guide. */
+/**
+ * The Skills page (0.5.0): Overview · Your skills · Usage · Help. Add a skill
+ * is a page under Your skills (that tab stays lit), opened from its button,
+ * the Overview, the sidebar's "+" and Help. Each tab starts with its own
+ * content: one plain sentence at most.
+ */
 
 export function SkillsSurface(props: MemoriesScreenProps) {
   const t = useUi(props.theme, props.layout.compact);
@@ -63,24 +69,28 @@ function SkillsBody({ host, params }: MemoriesScreenProps) {
   const status: Status = inventory.error && !inv ? "error" : !inv ? "busy" : inv.findings.some((finding) => finding.severity === "warn") ? "attention" : "ok";
   const label = host.label ?? hostId;
   const caption = inventory.error && !inv ? S.status.cantRead(label) : !inv ? S.status.checking(label) : S.status.on(label);
+  // The sidebar row's dot: something worth a look among the skills (from the list already read; no extra call).
+  useEffect(() => {
+    if (inv) reportSidebarStatus("skills", hostId, status === "attention" ? "attention" : null);
+  }, [inv, status]);
   return (
     <Screen t={t}>
       <Header title="Skills" icon="Sparkles" status={status} caption={caption} trailing={<Button label={PLAIN.refresh} icon="RefreshCw" variant="ghost" onPress={() => void refresh()} loading={inventory.isFetching} />} />
-      <TabBarOf tabs={tabs} active={place.tab} onSelect={(tab: SkillTabId) => go({ tab })} name="Skills sections" />
-      {place.tab !== "overview" ? <TabIntroFor tab={place.tab} /> : null}
+      <TabBarOf tabs={tabs} active={skillLitTab(place.tab)} onSelect={(tab: SkillTabId) => go({ tab })} name="Skills sections" />
       {place.tab === "overview" ? <SkillsOverview hostId={hostId} onGo={go} /> : null}
+      {place.tab === "skills" && !place.skillId && inv?.skills.length ? <TabLine action={<Button label={S.addButton} icon="Plus" onPress={() => go({ tab: "add" })} />}>{S.lines.skills}</TabLine> : null}
       {place.tab === "skills" ? <SkillsList hostId={hostId} skillId={place.skillId ?? null} onOpen={(skillId) => go({ tab: "skills", ...(skillId ? { skillId } : {}) })} onGo={go} /> : null}
+      {place.tab === "usage" ? <TabLine>{S.lines.usage}</TabLine> : null}
       {place.tab === "usage" ? <SkillsUsage hostId={hostId} onOpen={(skillId) => go({ tab: "skills", skillId })} /> : null}
+      {place.tab === "add" ? (
+        <SubPageTop back={S.more.back} onBack={() => go({ tab: "skills" })} title={SKILL_ADD_PAGE.label}>
+          {S.lines.add}
+        </SubPageTop>
+      ) : null}
       {place.tab === "add" ? <AddSkill hostId={hostId} mode={place.add ?? "catalog"} onMode={(add: AddMode) => go({ tab: "add", add })} onOpen={(skillId) => go({ tab: "skills", skillId })} /> : null}
-      {place.tab === "guide" ? <SkillsGuide /> : null}
+      {place.tab === "help" ? <SkillsHelp onGo={go} /> : null}
     </Screen>
   );
-}
-
-function TabIntroFor({ tab }: { tab: Exclude<SkillTabId, "overview"> }) {
-  const intro = S.intros[tab];
-  const icon = SKILL_TABS.find((entry) => entry.id === tab)!.icon;
-  return <IntroBlock icon={icon} title={intro.title} summary={intro.summary} canDo={intro.canDo} />;
 }
 
 // ------------------------------------------------------------------ Overview
@@ -216,7 +226,7 @@ function OverviewHero({ inv, onGo, onAct }: { inv: Inventory; onGo: (place: Skil
         {claude ? <StatusLine label={R.claude} value={R.skills(claude.skills)} status={claude.overBudget ? "attention" : "neutral"} hint={costHint(claude)} /> : null}
         {codex ? <StatusLine label={R.codex} value={R.skills(codex.skills)} status="neutral" hint={costHint(codex)} /> : null}
         {!claude && !codex && others ? <StatusLine label={R.others} value={R.skills(others)} status="neutral" /> : null}
-        <StatusLine label={R.used} value={usedValue} status="neutral" hint={usage.state === "ready" ? R.usedHint(inv.windowDays) : null} action={{ label: S.intros.usage.title, onPress: () => onGo({ tab: "usage" }) }} />
+        <StatusLine label={R.used} value={usedValue} status="neutral" hint={usage.state === "ready" ? R.usedHint(inv.windowDays) : null} action={{ label: SKILL_TABS.find((tab) => tab.id === "usage")!.label, onPress: () => onGo({ tab: "usage" }) }} />
       </View>
       <Meta>{usage.state !== "ready" && usage.note ? `${event} ${usage.note}` : event}</Meta>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>

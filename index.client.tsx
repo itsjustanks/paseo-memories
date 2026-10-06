@@ -1,10 +1,10 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import * as HostUI from "@getpaseo/plugin/client/ui";
-import { registerSurfaceOpener, rememberTitleMode, screenTitle } from "./client/navigate";
+import { openMemories, registerSurfaceOpener, rememberTitleMode, screenTitle } from "./client/navigate";
 import { MemoriesAgentPanel, MemoriesWorkspacePanel } from "./client/panels";
-import { AddNotePopover, AddSkillPopover, QuickAddButton } from "./client/popover";
+import { AddNotePopover, AddSkillPopover, QuickAddButton, SIDEBAR_PARTS } from "./client/popover";
 import { registerScreenOpener } from "./client/screens";
-import { skillsScreenTitle } from "./client/skills-nav";
+import { openSkills, skillsScreenTitle } from "./client/skills-nav";
 import { SkillsSurface } from "./client/skills-surface";
 import { openFrom, registerMainScreen, type SidebarRowComponent } from "./client/register";
 import { MemoriesSettingsScreen } from "./client/settings";
@@ -29,6 +29,7 @@ export default function contribute(client: PluginClientContext) {
       quickAdd: { label: "Add a note", Button: QuickAddButton, params: { add: "note" }, Popover: AddNotePopover },
     },
     SidebarRow,
+    SIDEBAR_PARTS,
   );
   // The second page, Skills (0.4.0), the same way: its own screen and sidebar row, with "+" for Add a skill.
   registerMainScreen(
@@ -42,6 +43,7 @@ export default function contribute(client: PluginClientContext) {
       quickAdd: { label: "Add a skill", Button: QuickAddButton, params: { tab: "add" }, Popover: AddSkillPopover },
     },
     SidebarRow,
+    SIDEBAR_PARTS,
   );
   // Panels have no way to open a page of their own; lend them this one. Native screens keep their place in params.
   registerSurfaceOpener(page.open, { params: page.screen === "native" });
@@ -83,6 +85,70 @@ export default function contribute(client: PluginClientContext) {
       openFrom(context, "skills");
     },
   });
+  // 0.5.0: the common jobs as commands, so nothing needs a composer chip.
+  client.addCommandCenterItem({
+    id: "add-memory-note",
+    title: "Add a note for your agents",
+    icon: "NotebookPen",
+    keywords: ["memory", "memories", "note", "remember", "instructions", "add"],
+    context: "global",
+    onSelect() {
+      openMemories({ addNote: {} });
+    },
+  });
+  client.addCommandCenterItem({
+    id: "tidy-memories",
+    title: "Tidy memories",
+    icon: "ListChecks",
+    keywords: ["memory", "memories", "tidy", "worth a look", "duplicates", "clean up", "passwords"],
+    context: "global",
+    onSelect() {
+      openMemories({ tab: "overview", worth: true });
+    },
+  });
+  client.addCommandCenterItem({
+    id: "add-skill",
+    title: "Add a skill",
+    icon: "PackagePlus",
+    keywords: ["skill", "skills", "add", "install", "SKILL.md"],
+    context: "global",
+    onSelect() {
+      openSkills({ tab: "add" });
+    },
+  });
+  client.addCommandCenterItem({
+    id: "add-workspace-note",
+    title: "Add a note for this project",
+    icon: "NotebookPen",
+    keywords: ["memory", "memories", "note", "remember", "project", "instructions"],
+    context: "workspace",
+    onSelect({ workspace }) {
+      openMemories({ addNote: { workspaceId: workspace.id } });
+    },
+  });
+  // In a chat: "/remember <text>" starts Add a note in this project; "/memories" opens what this agent loads.
+  // Feature-detected, as every newer API: an app without slash commands simply doesn't get them.
+  if (typeof client.addSlashCommand === "function") {
+    client.addSlashCommand({
+      name: "remember",
+      description: "Add a note your agents will follow (Memories)",
+      argumentHint: "what to remember",
+      context: "agent",
+      onSubmit({ workspace, args }) {
+        const text = args.trim();
+        openMemories({ addNote: { workspaceId: workspace.id, ...(text ? { text } : {}) } });
+      },
+    });
+    client.addSlashCommand({
+      name: "memories",
+      description: "See what this agent remembers and which skills it has",
+      argumentHint: "",
+      context: "agent",
+      onSubmit({ openPanel }) {
+        openPanel("memories-agent");
+      },
+    });
+  }
   client.addCommandCenterItem({
     id: "open-workspace-memories",
     title: "What agents load in this workspace",

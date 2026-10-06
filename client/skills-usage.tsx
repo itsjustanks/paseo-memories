@@ -8,7 +8,7 @@ import { QueryState } from "./data";
 import { SkillsResult, type SkillsResultValue } from "./skills-report";
 import { usePlain } from "./mode";
 import { useSkillsInventory, useSkillsRefresh, useSkillsUsage } from "./skills-data";
-import { Button, Card, Disclosure, Facts, Meta, Notice, Row, Segmented, useTokens } from "./ui";
+import { Accordion, AccordionItem, Button, Card, Facts, Meta, Notice, Row, Segmented, useTokens } from "./ui";
 
 /**
  * Which skills ran, and how often, over 7, 30 or 90 days: the busiest first,
@@ -97,9 +97,9 @@ export function SkillsUsage({ hostId, onOpen }: { hostId: string; onOpen: (skill
             <Text style={t.text.body}>{U.none(data.days)}</Text>
           ) : null}
           {data.neverUsed.length ? (
-            <Disclosure quiet title={U.neverTitle(data.neverUsed.length)}>
-              <Meta>{U.neverHint}</Meta>
-              <Card padded={false}>
+            <Accordion>
+              <AccordionItem key={data.days} icon="ListMinus" title={U.neverTitle(data.neverUsed.length)} summary={S.more.neverSummary}>
+              <Card padded={false} level={2}>
                 {data.neverUsed.map((entry, index) => {
                   const skill = inventory.data?.skills.find((item) => item.id === entry.skillId);
                   const can = Boolean(skill?.can.turnOff.length) && !skill?.can.turnOff.every((agent) => skill.state[agent] === "off");
@@ -114,7 +114,8 @@ export function SkillsUsage({ hostId, onOpen }: { hostId: string; onOpen: (skill
                   );
                 })}
               </Card>
-            </Disclosure>
+              </AccordionItem>
+            </Accordion>
           ) : null}
           <Meta>{U.estimated}</Meta>
         </>

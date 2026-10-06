@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 (2026-10-06)
+
+Both pages are simpler: fewer tabs, no stacked headers, and the technical parts folded into rows you open in place. The same look as Connectors (paseo-mcp 0.19.0).
+
+- **Four tabs on each page**, grouped by what you come to do. Memories: Overview, Everywhere, Projects, Help. Skills: Overview, Your skills, Usage, Help.
+- **No intro block under the tabs.** Each tab starts with its own content and at most one plain sentence. "What you can do here" is now a question in Help ("What can I do on each tab?").
+- **Help replaces the Guide.** Plain questions, each folded ("How do I move my notes to another Paseo computer?"), with a button where it helps. The technical reference and the agents' own docs fold at the end (open in technical mode).
+- **Fold-out rows for the less-used and technical parts** (a card of rows: icon, title, one line saying what's inside). Memories: "Bring notes in", "Take a copy out" and "What was checked" under Everywhere and Projects; "Edit the whole file" and "Where it's saved" under a set of notes. Skills: "Looked after elsewhere" and "What was checked" under Your skills; "Read its instructions", "See its files", why a skill can't be changed, and (technical) where it lives under a skill; skills not used in this time under Usage.
+- **Import & Export and Add a skill are pages under a tab**, not tabs: Import & Export keeps Everywhere or Projects lit (whichever you came from) with a way back, and Add a skill keeps Your skills lit. Add a skill is a button on Your skills, as well as on the Overview and the sidebar's "+".
+- **Old links still land.** Saved links and screen params with `tab=guide` open Help on both pages; `tab=transfer`, `tab=add`, `tab=usage`, a source, a note and Add a note open where they did. Old ids handed over in memory (Paseo 0.10) are mapped the same way.
+- **Fewer things in the chat, more in Paseo's own places.** Memories still adds no composer chip. New command-center items: "Add a note for your agents", "Tidy memories" (opens the list of things worth a look), "Add a skill" and, in a workspace, "Add a note for this project". In a chat, `/remember <text>` opens Add a note for that project with the text filled in, and `/memories` opens what that agent remembers (slash commands only where the app has them). A small dot beside Memories or Skills in the sidebar says something is worth a look (red when a note holds a password); it uses what the page already read, so it costs no extra check, and shows once a page has looked this session.
+- **Nothing was removed.** Every option, setting and safety message is still there, one press away.
+- For developers: `Accordion`, `AccordionItem`, `TabLine` and `SubPageTop` in `client/ui.tsx`; `client/tabs.ts` (`pageFor`, `litTab`, `LEGACY_TABS`) and `skillPageFor` / `skillLitTab` / `LEGACY_SKILL_TABS` in `shared/skills-plain.ts`; `normalised` (client/navigate.ts) and `normalSkillsPlace` (client/skills-nav.ts) for in-memory hand-overs; `client/sidebar-status.ts` for the dot; `client/guide.tsx` is now `client/help.tsx` and `client/skills-guide.tsx` is `client/skills-help.tsx`. `addSlashCommand` is feature-detected; no new dependencies, settings or SDK import paths; `requirements.paseo` stays `>=0.8.0`. No server changes: the 0.4.1 caching is untouched and `tests/perf/scale.test.ts` still passes.
+
 ## 0.4.1 (2026-10-05)
 
 Memories is now light on big hosts. On the busiest one we run (899 memory files, 109 projects, 253 instruction files and 5.8 GB of chat logs), 0.4.0 worked out the whole tidy check again on every read: 12 s each time (41 s at worst, past the 30 s limit for a plugin call), every ~20 s while a page was open, with the plugin at ~950 MB and slowing the daemon's other plugin calls. Thanks to the agent that measured all this on that host (sandbox-97), and started the fix.

@@ -1,5 +1,5 @@
 import type { PluginScreenParams } from "@getpaseo/plugin/client";
-import { SKILL_TABS, type SkillTabId } from "../shared/skills-plain";
+import { SKILL_ADD_PAGE, SKILL_TABS, skillPageFor, type SkillPageId } from "../shared/skills-plain";
 import { openScreenById, screenParamsOn } from "./screens";
 
 /**
@@ -10,13 +10,15 @@ import { openScreenById, screenParamsOn } from "./screens";
  */
 
 export type AddMode = "catalog" | "github" | "write";
-export type SkillsPlace = { tab: SkillTabId; skillId?: string; add?: AddMode };
+/** `tab` is a tab or Add a skill (a page under Your skills). */
+export type SkillsPlace = { tab: SkillPageId; skillId?: string; add?: AddMode };
 
 const MODES: readonly AddMode[] = ["catalog", "github", "write"];
 const ID = /^sk_[0-9a-f]{24}$/;
 
 export function skillsLanding(params: PluginScreenParams | undefined): SkillsPlace {
-  const tab = SKILL_TABS.find((entry) => entry.id === params?.tab)?.id ?? "overview";
+  // Old ids still land: a link to the Guide opens Help.
+  const tab = skillPageFor(params?.tab) ?? "overview";
   const skillId = params?.skill && ID.test(params.skill) ? params.skill : undefined;
   const add = MODES.find((mode) => mode === params?.add);
   return { tab: skillId ? "skills" : add ? "add" : tab, ...(skillId ? { skillId } : {}), ...(add ? { add } : {}) };
@@ -33,7 +35,7 @@ export function skillsParams(place: SkillsPlace): PluginScreenParams {
 export function skillsScreenTitle(params: PluginScreenParams): string {
   const place = skillsLanding(params);
   if (place.tab === "overview") return "Skills";
-  return `Skills · ${SKILL_TABS.find((tab) => tab.id === place.tab)!.label}`;
+  return `Skills · ${(SKILL_TABS.find((tab) => tab.id === place.tab) ?? SKILL_ADD_PAGE).label}`;
 }
 
 function key(params: PluginScreenParams): string {
@@ -60,13 +62,20 @@ export function openSkills(place: SkillsPlace = { tab: "overview" }): void {
   openScreenById("skills");
 }
 
+/** A place with its tab as this version names it: an old id ("guide") becomes its new tab; an unknown one, the Overview. */
+export function normalSkillsPlace(place: SkillsPlace): SkillsPlace {
+  const tab = skillPageFor(place.tab) ?? "overview";
+  return tab === place.tab ? place : { ...place, tab };
+}
+
 export function takeSkillsPlace(): SkillsPlace | null {
   const value = pending;
   pending = null;
-  return value;
+  return value ? normalSkillsPlace(value) : null;
 }
 
 export function onSkillsPlace(listener: (place: SkillsPlace) => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  const heard = (place: SkillsPlace) => listener(normalSkillsPlace(place));
+  listeners.add(heard);
+  return () => listeners.delete(heard);
 }

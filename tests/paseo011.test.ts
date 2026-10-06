@@ -30,7 +30,8 @@ test("params round trip: tab, source and open entry come back after a reload", (
   assert.deepEqual(back, { tab: "projects", sourceRef: nav.sourceRef(SOURCE), entryRef: nav.entryRef(SOURCE, "deploy_notes.md") });
   assert.equal(nav.resolveSource(back.sourceRef, [{ id: SOURCE }]), SOURCE);
   assert.equal(nav.resolveEntry(SOURCE, back.entryRef, ["deploy_notes.md"]), "deploy_notes.md");
-  assert.deepEqual(nav.fromScreenParams(nav.toScreenParams({ tab: "guide" })), { tab: "guide" });
+  assert.deepEqual(nav.fromScreenParams(nav.toScreenParams({ tab: "help" })), { tab: "help" });
+  assert.deepEqual(nav.fromScreenParams({ tab: "guide" }), { tab: "help" }, "an old Guide link opens Help");
   assert.deepEqual(nav.toScreenParams({ tab: "overview" }), {}, "the Overview needs no params");
   assert.deepEqual(nav.fromScreenParams(nav.toScreenParams({ addNote: { workspaceId: "ws-1" } })), { addNote: { workspaceId: "ws-1" } });
 });

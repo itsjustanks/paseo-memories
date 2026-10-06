@@ -1,14 +1,18 @@
 /**
- * The Guide tab in plain mode: short how-tos, each three to six steps, naming
- * the real buttons. Pure text; the jargon test reads every line.
+ * Help's common questions (0.5.0; the Guide before): short how-tos, each
+ * three to six steps, naming the real buttons, each folded under a plain
+ * question. Pure text; the jargon test reads every line.
  */
 
-/** `icon` is a Lucide name the app draws beside the title. */
-export type PlainGuide = { title: string; icon: string; steps: string[] };
+/** Where a question's button goes (client/help.tsx). */
+export type HelpTarget = "add-note" | "worth" | "export" | "import" | "user";
+
+/** `icon` is a Lucide name the app draws beside the title; `action` is one button under the answer. */
+export type PlainGuide = { title: string; icon: string; steps: string[]; action?: { label: string; to: HelpTarget } };
 
 export const PLAIN_GUIDES: PlainGuide[] = [
   {
-    title: "What your agents remember, and where it comes from",
+    title: "Where does what my agents remember come from?",
     icon: "Map",
     steps: [
       "Open the Overview tab. Under \"What your agents remember\" you can see each agent and roughly how many words it reads when it starts.",
@@ -19,8 +23,9 @@ export const PLAIN_GUIDES: PlainGuide[] = [
     ],
   },
   {
-    title: "Add something every agent should know",
+    title: "How do I add something every agent should know?",
     icon: "NotebookPen",
+    action: { label: "Add a note", to: "add-note" },
     steps: [
       "On the Overview, press Add a note.",
       "Write what your agents should remember, in plain sentences. One idea per note works best.",
@@ -30,7 +35,7 @@ export const PLAIN_GUIDES: PlainGuide[] = [
     ],
   },
   {
-    title: "Fix a note an agent keeps getting wrong",
+    title: "How do I fix a note an agent keeps getting wrong?",
     icon: "Wrench",
     steps: [
       "Type a word from the note into \"Find a note\" on the Overview, or open Everywhere or Projects and pick where it lives.",
@@ -41,8 +46,9 @@ export const PLAIN_GUIDES: PlainGuide[] = [
     ],
   },
   {
-    title: "Keep passwords and keys out of notes",
+    title: "How do I keep passwords and keys out of notes?",
     icon: "KeyRound",
+    action: { label: "Show what's worth a look", to: "worth" },
     steps: [
       "Every agent that reads a note can see everything in it, including passwords and keys.",
       "When a note holds something that looks like one, the Overview lists it under \"Worth a look\". Press Show me.",
@@ -51,18 +57,19 @@ export const PLAIN_GUIDES: PlainGuide[] = [
     ],
   },
   {
-    title: "Move your notes to another Paseo computer",
+    title: "How do I move my notes to another Paseo computer?",
     icon: "ArrowLeftRight",
+    action: { label: "Take a copy", to: "export" },
     steps: [
-      "On this computer, open Import & Export. Under Export, choose Everything (or one project) and \"To bring into another computer\".",
+      "On this computer, open Everywhere, then \"Take a copy out\" at the bottom, and press Take a copy. Choose Everything (or one project) and \"To bring into another computer\".",
       "Press Export, then Download (or Copy).",
-      "On the other computer, open Import & Export. Paste the text, or press \"Pick files…\" and choose what you downloaded.",
+      "On the other computer, open Everywhere, then \"Bring notes in\" at the bottom, and press Bring notes in. Paste the text, or press \"Pick files…\" and choose what you downloaded.",
       "Press Read it, choose where the notes go, then press Check it.",
       "Tick the notes you want and press Save. Passwords and keys stay hidden unless you chose to include them.",
     ],
   },
   {
-    title: "What you can't change here, and why",
+    title: "What can't I change here, and why?",
     icon: "Lock",
     steps: [
       "Instructions your organisation sets: they come from your IT or admin team.",
@@ -73,4 +80,4 @@ export const PLAIN_GUIDES: PlainGuide[] = [
   },
 ];
 
-export const PLAIN_GUIDE_TECHNICAL_HINT = "The numbers, the files and the order each agent reads them in. Turn on \"Show technical details\" in Settings → Memories to see file names and edit whole files.";
+export const PLAIN_GUIDE_TECHNICAL_HINT = "Turn on \"Show technical details\" in Settings → Memories to see file names and edit whole files.";

@@ -44,12 +44,15 @@ function ProjectPicker({ workspaces, value, onChange }: { workspaces: Array<{ id
 export function AddNote({
   hostId,
   workspaceId: initialWorkspace,
+  text: initialText,
   onClose,
   closeLabel = "Back",
   draft,
 }: {
   hostId: string;
   workspaceId?: string;
+  /** The note's text to start with ("/remember …" in a chat); wins over a kept draft. */
+  text?: string;
   onClose: () => void;
   closeLabel?: "Back" | "Close";
   draft?: DraftStore;
@@ -62,7 +65,7 @@ export function AddNote({
   const folders = useWorkspaceFolders(hostId);
   // One row per project folder: a worktree's workspace and its project share notes.
   const workspaces = (folders.data ?? []).filter((entry, index, all) => entry.path && all.findIndex((other) => other.path === entry.path) === index);
-  const [text, setText] = useState(kept?.text ?? "");
+  const [text, setText] = useState(initialText?.trim() ? initialText : (kept?.text ?? ""));
   const [who, setWho] = useState<Who>(kept?.who ?? "all");
   const [where, setWhere] = useState<"everywhere" | "project">(kept?.where ?? (initialWorkspace ? "project" : "everywhere"));
   const [workspaceId, setWorkspaceId] = useState(kept?.workspaceId ?? initialWorkspace ?? "");

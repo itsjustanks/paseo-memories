@@ -1,12 +1,12 @@
 import type { PluginPopoverProps } from "@getpaseo/plugin/client";
 import React, { useState } from "react";
-import { Pressable, ScrollView, Text } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { AddNote } from "./add-note";
 import { AddSkill } from "./skills-add";
 import { openSkills, type AddMode } from "./skills-nav";
 import { ModeProvider } from "./mode";
 import { noteDrafts } from "./note-draft";
-import type { QuickAddButtonProps } from "./register";
+import type { QuickAddButtonProps, SidebarDotProps, SidebarParts } from "./register";
 import { SPACE, TokensProvider, useUi } from "./ui";
 
 /**
@@ -65,3 +65,14 @@ export function AddSkillPopover({ theme, host, close }: PluginPopoverProps) {
     </TokensProvider>
   );
 }
+
+/** The sidebar row's status dot (0.5.0): something worth a look, said in colour and to screen readers. */
+function SidebarDot({ color, label }: SidebarDotProps) {
+  return <View testID="sidebar-status-dot" accessibilityRole="image" accessibilityLabel={label} style={{ width: SPACE.sm, height: SPACE.sm, borderRadius: SPACE.xs, backgroundColor: color, marginHorizontal: SPACE.xs }} />;
+}
+
+function SidebarGroup({ children }: { children?: React.ReactNode }) {
+  return <View style={{ flexDirection: "row", alignItems: "center" }}>{children}</View>;
+}
+
+export const SIDEBAR_PARTS: SidebarParts = { Dot: SidebarDot, Group: SidebarGroup };

@@ -1,12 +1,16 @@
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { PLAIN_GUIDES, PLAIN_GUIDE_TECHNICAL_HINT } from "../shared/guides";
+import { PLAIN_GUIDES, PLAIN_GUIDE_TECHNICAL_HINT, type HelpTarget } from "../shared/guides";
 import { PLAIN } from "../shared/plain";
 import { canOpenLinks, openLink } from "./links";
 import { usePlain } from "./mode";
-import { Bullets, Card, Disclosure, HostIcon, NumberedStep, useTokens } from "./ui";
+import { Accordion, AccordionItem, Bullets, Button, Divider, HostIcon, NumberedStep, SectionTitle, useTokens } from "./ui";
 
-/** How each agent loads memory, with the real numbers, and what is read-only and why. */
+/**
+ * Help (0.5.0; the Guide before): plain questions, each folded, then the
+ * technical reference (how each agent loads memory, with the real numbers,
+ * and what is read-only and why) and the agents' own docs, folded too.
+ */
 
 type Block = { title: string; icon: string; lines: string[] };
 
@@ -82,64 +86,88 @@ const DOCS = [
 ] as const;
 
 /** The agents' own docs, opened in the browser. Only on apps that can open links (Paseo 0.10+). */
-function DocsCard() {
+function DocsList() {
   const t = useTokens();
   const [message, setMessage] = useState("");
-  if (!canOpenLinks()) return null;
   const open = (url: string) =>
     void openLink(url).then((outcome) => setMessage(outcome === "opened" ? "" : outcome === "copied" ? `Couldn't open a browser, so the link was copied: ${url}` : `Couldn't open a browser. The link is ${url}`));
   return (
-    <Card title="The agents' own docs" icon="ExternalLink" subtitle="Where the numbers above come from. Opens in your browser.">
-      <View style={{ gap: t.space.hair }}>
-        {DOCS.map((doc) => (
-          <Pressable key={doc.url} accessibilityRole="link" accessibilityLabel={`${doc.label} (opens in your browser)`} onPress={() => open(doc.url)} hitSlop={t.control.hit} style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, paddingVertical: t.space.xs + t.space.hair, alignSelf: "flex-start" }}>
-            {HostIcon ? <HostIcon name="ExternalLink" size={16} color={t.color.accent} /> : null}
-            <Text style={[t.text.body, { color: t.color.accent, fontWeight: "600", flexShrink: 1 }]}>{doc.label}</Text>
-          </Pressable>
-        ))}
-      </View>
-      {message ? <Text style={t.text.caption}>{message}</Text> : null}
-    </Card>
-  );
-}
-
-function Reference() {
-  const t = useTokens();
-  return (
-    <View style={{ gap: t.space.md }}>
-      {[...LOADING, READ_ONLY, SAFETY].map((block) => (
-        <Card key={block.title} title={block.title} icon={block.icon}>
-          <Bullets items={block.lines} icon="Dot" />
-        </Card>
+    <View style={{ gap: t.space.hair }}>
+      {DOCS.map((doc) => (
+        <Pressable key={doc.url} accessibilityRole="link" accessibilityLabel={`${doc.label} (opens in your browser)`} onPress={() => open(doc.url)} hitSlop={t.control.hit} style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, paddingVertical: t.space.xs + t.space.hair, alignSelf: "flex-start" }}>
+          {HostIcon ? <HostIcon name="ExternalLink" size={16} color={t.color.accent} /> : null}
+          <Text style={[t.text.body, { color: t.color.accent, fontWeight: "600", flexShrink: 1 }]}>{doc.label}</Text>
+        </Pressable>
       ))}
-      <DocsCard />
+      {message ? <Text style={t.text.caption}>{message}</Text> : null}
     </View>
   );
 }
 
-/** Plain: task guides, numbered, then the reference folded away. Technical: the reference as it was. */
-export function Guide() {
+/** The reference, one heading and its points per part, split by rules (no cards inside a fold-out). */
+function Reference() {
+  const t = useTokens();
+  return (
+    <>
+      {[...LOADING, READ_ONLY, SAFETY].map((block, index) => (
+        <React.Fragment key={block.title}>
+          {index > 0 ? <Divider /> : null}
+          <View style={{ gap: t.space.sm }}>
+            <SectionTitle icon={block.icon}>{block.title}</SectionTitle>
+            <Bullets items={block.lines} icon="Dot" />
+          </View>
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
+const H = PLAIN.help;
+
+/** Help: common questions, each folded with one button where it helps; then the details, folded (open in technical mode). */
+export function Help({ onAction }: { onAction: (target: HelpTarget) => void }) {
   const t = useTokens();
   const plain = usePlain();
-  if (!plain) return <Reference />;
   return (
-    <View style={{ gap: t.space.md }}>
-      {/* One how-to open at a time; the others are one tap away. */}
-      {PLAIN_GUIDES.map((guide, index) => (
-        <Disclosure key={guide.title} title={guide.title} open={index === 0}>
-          <Card>
-            {guide.steps.map((step, n) => (
-              <NumberedStep key={step} n={n + 1}>
-                {step}
-              </NumberedStep>
+    <View style={{ gap: t.space.section }}>
+      <View style={{ gap: t.space.row }}>
+        <SectionTitle icon="CircleHelp">{H.questions}</SectionTitle>
+        <Accordion>
+          {PLAIN_GUIDES.map((guide) => (
+            <AccordionItem key={guide.title} icon={guide.icon} title={guide.title}>
+              {guide.steps.map((step, n) => (
+                <NumberedStep key={step} n={n + 1}>
+                  {step}
+                </NumberedStep>
+              ))}
+              {guide.action ? (
+                <View style={{ flexDirection: "row" }}>
+                  <Button label={guide.action.label} onPress={() => onAction(guide.action!.to)} />
+                </View>
+              ) : null}
+            </AccordionItem>
+          ))}
+          <AccordionItem icon="LayoutGrid" title={H.tabsQuestion}>
+            {H.tabs.map((entry) => (
+              <View key={entry.tab} style={{ gap: t.space.xs }}>
+                <Text style={t.text.bodyStrong}>{entry.tab}</Text>
+                <Bullets items={entry.canDo} />
+              </View>
             ))}
-          </Card>
-        </Disclosure>
-      ))}
-      <Disclosure quiet title={PLAIN.technical}>
-        <Text style={t.text.body}>{PLAIN_GUIDE_TECHNICAL_HINT}</Text>
-        <Reference />
-      </Disclosure>
+          </AccordionItem>
+        </Accordion>
+      </View>
+      <Accordion>
+        <AccordionItem icon="SlidersHorizontal" title={H.detailsTitle} summary={H.detailsSummary} open={!plain}>
+          {plain ? <Text style={t.text.caption}>{PLAIN_GUIDE_TECHNICAL_HINT}</Text> : null}
+          <Reference />
+        </AccordionItem>
+        {canOpenLinks() ? (
+          <AccordionItem icon="ExternalLink" title={H.docsTitle} summary={H.docsSummary}>
+            <DocsList />
+          </AccordionItem>
+        ) : null}
+      </Accordion>
     </View>
   );
 }

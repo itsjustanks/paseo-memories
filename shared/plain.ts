@@ -223,37 +223,47 @@ export const PLAIN = {
     cantCheck: "Couldn't check just now",
     none: "no notes yet",
   },
-  /** The top of each tab: a title, one or two plain sentences, and what you can do there. */
-  intros: {
-    overview: {
-      title: "Overview",
-      summary: "What your agents remember on this computer, whether anything is worth a look, and a short guide to how it all fits together.",
-      canDo: ["See at a glance what each agent remembers", "Add a note your agents will follow from then on", "Go straight to the next thing worth a look", "Search every note for a word"],
-    },
-    user: {
-      title: "Notes that go everywhere",
-      summary: "Notes that go with you into every project: your own instructions for each agent, and the ones for every agent on this computer.",
-      canDo: ["Read what each agent follows in every project", "Change, remove or add a note", "Copy a note to another agent", "See which notes can't be changed here, and why"],
-    },
-    projects: {
-      title: "Notes for one project",
-      summary: "What each project adds: its own instructions, which everyone on the project may share, and the private notes Claude keeps about it.",
-      canDo: ["Pick a project and read everything its agents follow", "Change Claude's notes for it, or add a new one", "See which notes the whole team shares", "Copy or move a note to another project"],
-    },
-    transfer: {
-      title: "Import & Export",
-      summary: "Bring notes in from another computer, another agent or a file, or take a copy of yours with you.",
-      canDo: ["Paste text or pick files, and check each note before it's saved", "Choose exactly where the notes go", "Export everything, or one project, to download or copy", "Passwords and keys stay hidden unless you choose to include them"],
-    },
-    guide: {
-      title: "Guide",
-      summary: "Short how-tos for the things people most often want to do, with the details behind them at the end.",
-      canDo: ["Follow how-tos that name the real buttons", "Learn what can't be changed here, and why", "Open the details: what each agent reads, and when"],
-    },
+  /**
+   * Each tab's one plain sentence (0.5.0: no intro block). What you can do on
+   * each tab moved to Help, as one folded question (`help.tabs`).
+   */
+  lines: {
+    user: "Notes that go with you into every project: your own instructions for each agent, and the ones for every agent on this computer.",
+    projects: "What each project adds: its own instructions, which everyone on the project may share, and the private notes Claude keeps about it.",
+    transfer: "Bring notes in from another computer, another agent or a file, or take a copy of yours with you.",
   },
-  whatYouCanDo: "What you can do here",
-  learnMore: "Learn more: what you can do here",
-  hideMore: "Hide what you can do here",
+  /** Help: plain questions, each folded, then the details behind them. */
+  help: {
+    questions: "Common questions",
+    tabsQuestion: "What can I do on each tab?",
+    tabs: [
+      { tab: "Overview", canDo: ["See at a glance what each agent remembers", "Add a note your agents will follow from then on", "Go straight to the next thing worth a look", "Search every note for a word"] },
+      { tab: "Everywhere", canDo: ["Read what each agent follows in every project", "Change, remove or add a note", "Copy a note to another agent", "See which notes can't be changed here, and why"] },
+      { tab: "Projects", canDo: ["Pick a project and read everything its agents follow", "Change Claude's notes for it, or add a new one", "See which notes the whole team shares", "Copy or move a note to another project"] },
+      { tab: "Help", canDo: ["Follow how-tos that name the real buttons", "Learn what can't be changed here, and why", "Open the details: what each agent reads, and when"] },
+    ],
+    moveTitle: "Bring notes in, or take a copy out",
+    moveSummary: "From another computer, another agent or a file",
+    detailsTitle: "Technical details",
+    detailsSummary: "The files each agent reads, in what order, and how saving works",
+    docsTitle: "The agents' own docs",
+    docsSummary: "Where the numbers come from; opens in your browser",
+    howTitle: "How Memories works",
+  },
+  /** The fold-outs under Everywhere and Projects. */
+  more: {
+    importTitle: "Bring notes in",
+    importSummary: "From another computer, another agent or a file",
+    importText: "Paste notes you exported, or any text with headings, and check each note before it's saved.",
+    importButton: "Bring notes in",
+    exportTitle: "Take a copy out",
+    exportSummary: "Download or copy your notes, to keep or to move",
+    exportText: "Export everything, your own notes or one project. Passwords and keys stay hidden unless you choose to include them.",
+    exportButton: "Take a copy",
+    checkedTitle: "What was checked",
+    checkedSummary: "Where Memories looked on this computer",
+    back: (tab: string) => `Back to ${tab}`,
+  },
   /** The big card at the top of the Overview: the state in words. */
   hero: {
     loading: { title: "Checking what your agents remember", lead: "Reading every agent's notes on this computer. This takes a moment." },
@@ -292,7 +302,7 @@ export const PLAIN = {
     ],
     boxTitle: "Want to see what one agent reads?",
     boxText: "In a workspace, open the Memories panel. It lists what an agent started there reads, in order.",
-    boxLink: "Open the Guide",
+    boxLink: "Open Help",
     wordsTitle: "Words you'll see",
     words: [
       { icon: "StickyNote", term: "Note", text: "Something an agent should remember, such as \"Invoices go out on the 1st\". Agents read their notes when they start." },
@@ -307,7 +317,7 @@ export const PLAIN = {
       { icon: "SlidersHorizontal", term: "Technical details", text: "A switch in Settings → Memories that shows file names, sizes and whole-file editors." },
     ],
   },
-  tabLabels: { overview: "Overview", user: "Everywhere", projects: "Projects", transfer: "Import & Export", guide: "Guide" },
+  tabLabels: { overview: "Overview", user: "Everywhere", projects: "Projects", help: "Help", transfer: "Import & Export" },
   refresh: "Refresh",
   shared: "Everyone who works on this project will see these notes.",
   sharedShort: "Everyone who works on this project will see this note.",
@@ -333,8 +343,10 @@ export const PLAIN = {
   notSaved: "Not saved.",
   backupNote: "A copy of the old version was kept, so this can be undone.",
   whereSaved: "Where it's saved",
+  whereSavedSummary: "The file on this computer that holds these notes",
   technical: "Technical details",
-  wholeFile: "Edit the whole file (technical)",
+  wholeFile: "Edit the whole file",
+  wholeFileSummary: "Everything at once, as plain text: for people who know the file",
   pickLeft: { title: "Pick something on the left", body: "Each row is a set of notes an agent reads. Open one to read it, change it or add to it." },
   back: "Back to the list",
   emptyUser: "No agent has notes of its own on this computer yet. Use Add a note to write the first one.",

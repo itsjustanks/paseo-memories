@@ -1192,6 +1192,100 @@ export function Disclosure({ title, openTitle, children, open: initial = false, 
   );
 }
 
+/**
+ * A card of fold-out rows (0.5.0, as paseo-mcp 0.19.0): the technical or
+ * less-used parts of a page sit here, each one press away, so the page itself
+ * stays plain. Children are AccordionItems; the card draws the rule between them.
+ */
+export function Accordion({ children }: { children: React.ReactNode }) {
+  const t = useTokens();
+  const items = React.Children.toArray(children).filter(Boolean);
+  if (items.length === 0) return null;
+  return (
+    <View style={{ backgroundColor: t.color.surface1, borderRadius: t.radius.card, borderWidth: 1, borderColor: t.color.border, overflow: "hidden" }}>
+      {items.map((child, index) => (
+        <View key={index} style={index > 0 ? { borderTopWidth: 1, borderTopColor: t.color.border } : undefined}>
+          {child}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** One row of an Accordion: an icon, a title, a short summary and a chevron; its content opens below it. */
+export function AccordionItem({
+  icon,
+  title,
+  summary,
+  tone,
+  open: initial = false,
+  children,
+}: {
+  icon?: string;
+  title: string;
+  /** One line under the title, so the row says what's inside before it's opened. */
+  summary?: string;
+  tone?: Status;
+  open?: boolean;
+  children: React.ReactNode;
+}) {
+  const t = useTokens();
+  const [open, setOpen] = useState(initial);
+  const pad = t.compact ? t.space.md : t.space.card;
+  return (
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={title}
+        accessibilityState={{ expanded: open }}
+        // react-native-web 0.21 ignores accessibilityState; say it the web way too.
+        {...({ "aria-expanded": open } as object)}
+        onPress={() => setOpen((value) => !value)}
+        style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: t.space.row, paddingHorizontal: pad, paddingVertical: t.space.row + t.space.hair, minHeight: 56, opacity: pressed ? 0.7 : 1 })}
+      >
+        {icon ? <IconBadge name={icon} tone={tone && tone !== "neutral" ? tone : "accent"} size={32} /> : null}
+        <View style={{ flex: 1, gap: t.space.hair, minWidth: 0 }}>
+          <Text style={[t.text.bodyStrong, tone === "error" ? { color: statusColor(t, "error") } : null]}>{title}</Text>
+          {summary ? (
+            <Text style={t.text.caption} numberOfLines={2}>
+              {summary}
+            </Text>
+          ) : null}
+        </View>
+        {HostIcon ? <HostIcon name={open ? "ChevronUp" : "ChevronDown"} size={18} color={t.color.muted} /> : <Text style={{ ...TYPE.body, color: t.color.muted }}>{open ? "▴" : "▾"}</Text>}
+      </Pressable>
+      {open ? <View style={{ paddingHorizontal: pad, paddingBottom: pad, gap: t.space.row }}>{children}</View> : null}
+    </View>
+  );
+}
+
+/** A tab's one plain sentence (0.5.0: no intro block), with the tab's main button beside it when it has one. */
+export function TabLine({ children, action }: { children: string; action?: React.ReactNode }) {
+  const t = useTokens();
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", columnGap: t.space.md, rowGap: t.space.sm }}>
+      <Text style={[t.text.body, { flexShrink: 1, flexBasis: 320, flexGrow: 1 }]}>{children}</Text>
+      {action}
+    </View>
+  );
+}
+
+/** The top of a page that sits under a tab (Import & Export, Add a skill): a way back, its title and one sentence. */
+export function SubPageTop({ back, onBack, title, children }: { back: string; onBack: () => void; title: string; children?: string }) {
+  const t = useTokens();
+  return (
+    <View style={{ gap: t.space.sm }}>
+      <View style={{ flexDirection: "row" }}>
+        <Button label={back} icon="ArrowLeft" variant="ghost" onPress={onBack} />
+      </View>
+      <Text accessibilityRole="header" style={t.text.display}>
+        {title}
+      </Text>
+      {children ? <Text style={t.text.body}>{children}</Text> : null}
+    </View>
+  );
+}
+
 /** A heading inside a card, for one part of a longer explanation. */
 export function SectionTitle({ icon, children }: { icon?: string; children: React.ReactNode }) {
   const t = useTokens();

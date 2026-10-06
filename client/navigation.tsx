@@ -3,11 +3,11 @@ import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from "react
 import { PLAIN } from "../shared/plain";
 import { usePlain } from "./mode";
 import { TABS, type SectionId } from "./tabs";
-import { Bullets, Disclosure, HostIcon, IconBadge, TYPE, useTokens } from "./ui";
+import { HostIcon, TYPE, useTokens } from "./ui";
 
 export { TABS, type SectionId };
 
-/** About what one tab needs with its label (icon, name, padding); five need ~620 px. */
+/** About what one tab needs with its label (icon, name, padding); four need ~500 px. */
 const LABELLED_TAB_WIDTH = 124;
 
 export type TabDef<Id extends string> = { id: Id; icon: string; label: string };
@@ -83,37 +83,4 @@ export function TabBar({ active, onSelect }: { active: SectionId; onSelect: (id:
   const plain = usePlain();
   const tabs = TABS.map((tab) => ({ id: tab.id, icon: tab.icon, label: plain ? PLAIN.tabLabels[tab.id] : tab.label }));
   return <TabBarOf tabs={tabs} active={active} onSelect={onSelect} name="Memories sections" />;
-}
-
-/**
- * The top of a tab (never the Overview, whose status card is its
- * introduction): its icon, a clear title and one or two plain sentences.
- * "What you can do here" folds behind a small muted link at every width.
- */
-export function IntroBlock({ icon, title, summary, canDo, actions }: { icon: string; title: string; summary: string; canDo: readonly string[]; actions?: React.ReactNode }) {
-  const t = useTokens();
-  return (
-    <View style={{ gap: t.space.sm }}>
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: t.space.row }}>
-        <IconBadge name={icon} size={40} />
-        <View style={{ flex: 1, minWidth: 0, gap: t.space.xs }}>
-          <Text accessibilityRole="header" style={t.text.display}>
-            {title}
-          </Text>
-          <Text style={t.text.lead}>{summary}</Text>
-          <Disclosure quiet key={title} title={PLAIN.whatYouCanDo}>
-            <Bullets items={canDo} />
-          </Disclosure>
-        </View>
-      </View>
-      {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>{actions}</View> : null}
-    </View>
-  );
-}
-
-export function TabIntro({ section, actions }: { section: SectionId; actions?: React.ReactNode }) {
-  const plain = usePlain();
-  const tab = TABS.find((entry) => entry.id === section)!;
-  const intro = PLAIN.intros[section];
-  return <IntroBlock icon={tab.icon} title={plain ? intro.title : tab.title} summary={plain ? intro.summary : tab.heading} canDo={!plain && "canDo" in tab ? tab.canDo : intro.canDo} {...(actions ? { actions } : {})} />;
 }

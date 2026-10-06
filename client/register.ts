@@ -6,7 +6,8 @@ import type {
   PluginSurfaceProps,
 } from "@getpaseo/plugin/client";
 import type { SidebarRowProps } from "@getpaseo/plugin/client/ui";
-import React, { type ComponentType } from "react";
+import React, { type ComponentType, type ReactNode } from "react";
+import { useSidebarStatus, type SidebarTone } from "./sidebar-status";
 
 /**
  * The Memories page and its sidebar entry, on whatever app is running it.
@@ -63,9 +64,24 @@ export type Registration = {
   open: (id: string, params?: PluginScreenParams) => void;
 };
 
-/** A sidebar item drawn with the app's own row: the page's icon, highlighted while it is open, and a "+" for Add a note. */
-export function sidebarItem(screen: MainScreen, SidebarRow: SidebarRowComponent): ComponentType<ItemProps> {
-  function PluginSidebarRowItem({ currentScreen, openScreen, openPopover, theme }: ItemProps) {
+/** What the sidebar dot says, for screen readers too. */
+export const SIDEBAR_DOT_LABEL: Record<SidebarTone, string> = { attention: "Something is worth a look", error: "Something needs your attention" };
+
+export type SidebarDotProps = { color: string; label: string };
+
+/** The row's status dot and the box that holds it beside the "+" (client/popover.tsx draws them; this file stays free of react-native). */
+export type SidebarParts = { Dot: ComponentType<SidebarDotProps>; Group: ComponentType<{ children?: ReactNode }> };
+
+function dotColor(tone: SidebarTone, theme: ItemProps["theme"] | undefined): string {
+  const colors = (theme?.colors ?? {}) as Partial<Record<"statusWarning" | "statusDanger", string>>;
+  return tone === "error" ? (colors.statusDanger ?? "#d1242f") : (colors.statusWarning ?? "#bf8700");
+}
+
+/** A sidebar item drawn with the app's own row: the page's icon, highlighted while it is open, a status dot when something is worth a look, and a "+" for Add a note. */
+export function sidebarItem(screen: MainScreen, SidebarRow: SidebarRowComponent, parts?: SidebarParts): ComponentType<ItemProps> {
+  function PluginSidebarRowItem({ currentScreen, openScreen, openPopover, theme, host }: ItemProps) {
+    // `parts` is fixed for this component, so the hook is called on every render or on none.
+    const tone = parts ? useSidebarStatus(screen.id, host?.id ?? "") : null;
     const quick = screen.quickAdd;
     const add = quick
       ? () => {
@@ -73,24 +89,27 @@ export function sidebarItem(screen: MainScreen, SidebarRow: SidebarRowComponent)
           else openScreen({ screenId: screen.id, params: quick.params });
         }
       : null;
+    const plus = quick && add ? React.createElement(quick.Button, { label: quick.label, color: theme?.colors?.foregroundMuted ?? "#888888", onPress: add, testID: `${screen.id}-sidebar-add` }) : null;
+    // The dot only where the app draws it (client/popover.tsx); the "+" alone is as before 0.5.0.
+    const trailing = () => (tone && parts ? React.createElement(parts.Group, null, React.createElement(parts.Dot, { color: dotColor(tone, theme), label: SIDEBAR_DOT_LABEL[tone] }), plus) : plus);
     return React.createElement(SidebarRow, {
       icon: screen.icon,
       label: screen.title,
       active: currentScreen?.screenId === screen.id,
       onPress: () => openScreen({ screenId: screen.id }),
-      ...(quick && add ? { trailing: React.createElement(quick.Button, { label: quick.label, color: theme?.colors?.foregroundMuted ?? "#888888", onPress: add, testID: `${screen.id}-sidebar-add` }) } : {}),
+      ...(quick || (tone && parts) ? { trailing: trailing() } : {}),
     });
   }
   return PluginSidebarRowItem;
 }
 
-export function registerMainScreen(client: RegisterClient, screen: MainScreen, SidebarRow: SidebarRowComponent | undefined): Registration {
+export function registerMainScreen(client: RegisterClient, screen: MainScreen, SidebarRow: SidebarRowComponent | undefined, parts?: SidebarParts): Registration {
   const native = typeof client.addScreen === "function" && typeof client.openScreen === "function";
   if (native) client.addScreen!({ id: screen.id, title: screen.screenTitle ?? screen.title, Component: screen.Component });
   else client.addSurface(screen.id, screen.Component);
   // The new sidebar item needs the new screen and the app's row; otherwise the old item, which 0.11 also maps onto screens.
   const nativeSidebar = native && typeof client.addSidebarHeaderItem === "function" && typeof SidebarRow === "function";
-  if (nativeSidebar) client.addSidebarHeaderItem!({ id: screen.id, title: screen.title, Component: sidebarItem(screen, SidebarRow!) as ComponentType<PluginSidebarItemProps> });
+  if (nativeSidebar) client.addSidebarHeaderItem!({ id: screen.id, title: screen.title, Component: sidebarItem(screen, SidebarRow!, parts) as ComponentType<PluginSidebarItemProps> });
   else client.addSidebarItem({ id: screen.id, title: screen.title, icon: screen.icon, surface: screen.id });
   return {
     screen: native ? "native" : "surface",

@@ -14,7 +14,7 @@ import { APP, H, appMemory, codexIndex, importText } from "./plugin";
  * sidebar row with "+", popovers), or Paseo 0.10 with ?legacy (surface and
  * old sidebar item, no params). ?chrome shows the app's sidebar and header.
  *
- * Params: ?tab=overview|user|projects|transfer|guide, ?memory (a memory open
+ * Params: ?tab=overview|user|projects|transfer|help, ?memory (a memory open
  * in the editor), ?codex (Codex memory with the pending warning), ?import
  * (preview diff), ?export, ?workspace, ?agent (&provider=), ?settings, ?dark,
  * ?empty, ?error, ?stale. Plain view by default (?plain); ?technical shows
@@ -87,7 +87,7 @@ const fakeClient: any = {
 };
 contribute(fakeClient);
 
-const tab = params.get("tab") as "overview" | "user" | "projects" | "transfer" | "guide" | null;
+const tab = params.get("tab") as "overview" | "user" | "projects" | "transfer" | "help" | null;
 if (params.has("add")) openMemories({ tab: "overview", addNote: params.get("add") ? { workspaceId: params.get("add")! } : {} });
 else if (params.has("notes")) openMemories({ tab: "user", sourceId: `${H}/.claude/CLAUDE.md` });
 else if (params.has("memory")) openMemories({ tab: "projects", sourceId: appMemory, entryKey: "payments_retry_limit.md" });

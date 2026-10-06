@@ -73,7 +73,7 @@ test("review 2: going to Projects or User closes a note left open, and the param
   const params = toScreenParams({ tab: moved.tab, sourceId: moved.sourceId!, ...(moved.entryKey ? { entryKey: moved.entryKey } : {}) });
   assert.deepEqual(Object.keys(params), ["tab", "source"]);
   assert.equal(moveToTab(state, "user").entryKey, null);
-  assert.equal(moveToTab(state, "guide").entryKey, "deploy_notes.md", "other tabs don't show it, and keep it");
+  assert.equal(moveToTab(state, "help").entryKey, "deploy_notes.md", "other tabs don't show it, and keep it");
 });
 
 // ------------------------------------------------------------------ 5. technical titles

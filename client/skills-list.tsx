@@ -13,14 +13,15 @@ import { Markdown } from "./markdown";
 import { usePlain } from "./mode";
 import { useSkillDetail, useSkillsInventory, useSkillsRefresh } from "./skills-data";
 import type { SkillsPlace } from "./skills-nav";
-import { Button, Card, CodeBlock, ConfirmLink, Disclosure, EmptyState, Field, Link, Meta, Notice, PathText, Row, Segmented, Tag, useTokens } from "./ui";
+import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmLink, EmptyState, Field, Link, Meta, Notice, PathText, Row, Segmented, Tag, useTokens } from "./ui";
 
 /**
  * Your skills: every skill, grouped by where it lives, with a filter by
  * agent and a search box; one opens to what it does, who uses it, and the
- * two things to do with it (turn off for an agent, remove). Skills looked
- * after elsewhere (Paseo's, plugins', claude.ai's, built-in) fold away at
- * the end, still one tap from their reason.
+ * two things to do with it (turn off for an agent, remove), then its
+ * instructions and files as fold-out rows. Skills looked after elsewhere
+ * (Paseo's, plugins', claude.ai's, built-in) and what was checked fold away
+ * at the end, still one tap from their reason.
  */
 
 type Filter = "all" | "claude" | "codex";
@@ -86,6 +87,7 @@ export function SkillsList({ hostId, skillId, onOpen, onGo }: { hostId: string; 
     .filter((skill) => !words || skill.name.toLowerCase().includes(words) || skill.description.toLowerCase().includes(words))
     .sort((a, b) => a.name.localeCompare(b.name));
   const groups = ["shared", "claude", "codex", "project", "other"].map((id) => ({ id, skills: shown.filter((skill) => groupOf(skill) === id) })).filter((group) => group.skills.length);
+  const other = groups.find((group) => group.id === "other");
   const list = (skills: Skill[]) => (
     <Card padded={false}>
       {skills.map((skill, index) => (
@@ -109,19 +111,30 @@ export function SkillsList({ hostId, skillId, onOpen, onGo }: { hostId: string; 
         <Field value={query} onChangeText={setQuery} placeholder={S.list.search} />
       </View>
       {groups.length === 0 ? <Meta>{S.list.none}</Meta> : null}
-      {groups.map((group) =>
-        group.id === "other" ? (
-          <Disclosure key={group.id} quiet title={`${S.list.groups.other} (${group.skills.length})`}>
-            {list(group.skills)}
-          </Disclosure>
-        ) : (
+      {groups
+        .filter((group) => group.id !== "other")
+        .map((group) => (
           <View key={group.id} style={{ gap: t.space.sm }}>
             <Text style={t.text.section}>{`${S.list.groups[group.id]} (${group.skills.length})`}</Text>
             {list(group.skills)}
           </View>
-        ),
-      )}
-      <Meta>{inv.checked[0] ?? ""}</Meta>
+        ))}
+      <Accordion>
+        {other ? (
+          <AccordionItem key={`other-${words}-${filter}`} icon="Lock" title={`${S.list.groups.other} (${other.skills.length})`} summary={S.more.otherSummary}>
+            {list(other.skills)}
+          </AccordionItem>
+        ) : null}
+        {inv.checked.length || inv.notes.length ? (
+          <AccordionItem icon="ListChecks" title={S.more.checkedTitle} summary={S.more.checkedSummary}>
+            {[...inv.checked, ...inv.notes].map((line) => (
+              <Text key={line} style={t.text.caption}>
+                {line}
+              </Text>
+            ))}
+          </AccordionItem>
+        ) : null}
+      </Accordion>
     </>
   );
 }
@@ -142,6 +155,7 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
   const t = useTokens();
   const plain = usePlain();
   const [reveal, setReveal] = useState(false);
+  const [asText, setAsText] = useState(false);
   const detail = useSkillDetail(hostId, skill.id, reveal);
   const toggle = useRpc(skillsToggle);
   const remove = useRpc(skillsRemove);
@@ -194,47 +208,45 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
           {skill.can.link ? <Button label={S.add.linkForClaude} icon="Link" loading={busy === "link"} onPress={() => void run("link", () => link({ skillId: skill.id }))} /> : null}
           {skill.can.remove ? <ConfirmLink label={D.remove} question={D.removeQuestion} yes={D.removeYes} no={D.keep} onConfirm={() => void run("remove", () => remove({ skillId: skill.id, confirm: true }), true)} /> : null}
         </View>
+      </Card>
+      <Accordion>
+        <AccordionItem icon="BookOpenText" title={D.showInstructions} summary={D.instructionsSummary}>
+          <QueryState query={detail} what="its instructions" />
+          {detail.data ? (asText ? <CodeBlock copy>{detail.data.body}</CodeBlock> : <Markdown text={detail.data.body} />) : null}
+          {detail.data ? (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: t.space.md, rowGap: t.space.xs }}>
+              <Link label={asText ? D.formatted : MD_EDITOR.readAsText} onPress={() => setAsText(!asText)} />
+              {detail.data.body.includes("••••") ? <Link label="Show hidden values" onPress={() => setReveal(true)} /> : null}
+            </View>
+          ) : null}
+        </AccordionItem>
+        <AccordionItem icon="Files" title={`${D.showFiles} (${skill.files})`}>
+          <Card padded={false} level={2}>
+            {files.map((file, index) => (
+              <Row key={file.path} first={index === 0} title={<PathText path={file.path} style={t.text.body} />} meta={<Meta>{formatBytes(file.bytes)}</Meta>} trailing={file.kind === "script" ? <Tag label={plain ? D.code : file.executable ? "executable" : "not markdown"} tone="attention" /> : null} />
+            ))}
+          </Card>
+        </AccordionItem>
         {!skill.can.turnOff.length || !skill.can.remove ? (
-          <Disclosure quiet title={!skill.can.turnOff.length ? D.whyNotOff : D.whyNotRemove}>
+          <AccordionItem icon="Lock" title={!skill.can.turnOff.length ? D.whyNotOff : D.whyNotRemove}>
             {skill.can.turnOffReason ? <Text style={t.text.body}>{say(skill.can.turnOffReason)}</Text> : null}
             {!skill.can.remove && skill.can.removeReason && skill.can.removeReason !== skill.can.turnOffReason ? <Text style={t.text.body}>{say(skill.can.removeReason)}</Text> : null}
-          </Disclosure>
+          </AccordionItem>
         ) : null}
-      </Card>
-      <Disclosure quiet title={D.showInstructions}>
-        <QueryState query={detail} what="its instructions" />
-        {detail.data ? (
-          <Card>
-            <Markdown text={detail.data.body} />
-          </Card>
+        {!plain ? (
+          <AccordionItem icon="FolderOpen" title={`Where it lives (${skill.locations.length})`}>
+            {skill.locations.map((location) => (
+              <View key={location.path} style={{ gap: t.space.hair }}>
+                <PathText path={location.path} style={t.text.mono} />
+                <Meta>{`${location.root}${location.link ? " · link" : ""}`}</Meta>
+              </View>
+            ))}
+            {skill.problems.slice(1).map((problem) => (
+              <Meta key={problem.code}>{problem.message}</Meta>
+            ))}
+          </AccordionItem>
         ) : null}
-        {detail.data ? (
-          <Disclosure quiet title={MD_EDITOR.readAsText}>
-            <CodeBlock copy>{detail.data.body}</CodeBlock>
-          </Disclosure>
-        ) : null}
-        {detail.data && detail.data.body.includes("••••") ? <Link label="Show hidden values" onPress={() => setReveal(true)} /> : null}
-      </Disclosure>
-      <Disclosure quiet title={`${D.showFiles} (${skill.files})`}>
-        <Card padded={false}>
-          {files.map((file, index) => (
-            <Row key={file.path} first={index === 0} title={<PathText path={file.path} style={t.text.body} />} meta={<Meta>{formatBytes(file.bytes)}</Meta>} trailing={file.kind === "script" ? <Tag label={plain ? D.code : file.executable ? "executable" : "not markdown"} tone="attention" /> : null} />
-          ))}
-        </Card>
-      </Disclosure>
-      {!plain ? (
-        <Disclosure quiet title={`Where it lives (${skill.locations.length})`}>
-          {skill.locations.map((location) => (
-            <View key={location.path} style={{ gap: t.space.hair }}>
-              <PathText path={location.path} style={t.text.mono} />
-              <Meta>{`${location.root}${location.link ? " · link" : ""}`}</Meta>
-            </View>
-          ))}
-          {skill.problems.slice(1).map((problem) => (
-            <Meta key={problem.code}>{problem.message}</Meta>
-          ))}
-        </Disclosure>
-      ) : null}
+      </Accordion>
     </>
   );
 }

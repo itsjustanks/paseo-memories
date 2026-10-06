@@ -11,11 +11,32 @@ export const SKILL_TABS = [
   { id: "overview", icon: "LayoutDashboard", label: "Overview", technical: "Overview" },
   { id: "skills", icon: "Sparkles", label: "Your skills", technical: "Skills" },
   { id: "usage", icon: "ChartColumn", label: "Usage", technical: "Usage" },
-  { id: "add", icon: "Plus", label: "Add a skill", technical: "Add" },
-  { id: "guide", icon: "BookOpen", label: "Guide", technical: "Guide" },
+  { id: "help", icon: "CircleHelp", label: "Help", technical: "Help" },
 ] as const;
 
+/** The four tabs (0.5.0). */
 export type SkillTabId = (typeof SKILL_TABS)[number]["id"];
+
+/** Add a skill: a page under Your skills, not a tab of its own (as Add connector in paseo-mcp 0.19.0). */
+export const SKILL_ADD_PAGE = { id: "add", icon: "Plus", label: "Add a skill", technical: "Add" } as const;
+
+/** Every place the Skills page can show. */
+export type SkillPageId = SkillTabId | "add";
+
+/** Tab ids from before 0.5.0 that still arrive in links, and where they land now. */
+export const LEGACY_SKILL_TABS: Readonly<Record<string, SkillPageId>> = { guide: "help" };
+
+/** A page id from a link, old ids included; undefined when it means nothing here. */
+export function skillPageFor(raw: unknown): SkillPageId | undefined {
+  if (typeof raw !== "string") return undefined;
+  if (raw === SKILL_ADD_PAGE.id || SKILL_TABS.some((tab) => tab.id === raw)) return raw as SkillPageId;
+  return LEGACY_SKILL_TABS[raw];
+}
+
+/** The tab that stays lit: Add a skill sits under Your skills. */
+export function skillLitTab(page: SkillPageId): SkillTabId {
+  return page === "add" ? "skills" : page;
+}
 
 /** Where a skill came from, as a person would say it. */
 export function plainProvenance(provenance: string, detail?: string): string {
@@ -150,27 +171,31 @@ export const SKILLS_PLAIN = {
     cantRead: (host: string) => `Couldn't read the skills on ${host}`,
     on: (host: string) => `Your agents' skills on ${host}`,
   },
-  intros: {
-    skills: {
-      title: "Your skills",
-      summary: "Every skill your agents can use on this computer, grouped by where it lives. Open one to see what it does, turn it off for an agent, or remove it.",
-      canDo: ["See which agents can use each skill", "Turn a skill off for Claude or Codex without deleting it", "Remove a skill you added (a copy is kept)", "Read a skill's instructions and files"],
-    },
-    usage: {
-      title: "Usage",
-      summary: "Which skills your agents actually used, and how often, from their chat history on this computer.",
-      canDo: ["See the busiest skills and when each was last used", "Spot skills nobody uses that still take up room in every chat", "Pick 7, 30 or 90 days"],
-    },
-    add: {
-      title: "Add a skill",
-      summary: "Pick one from our list, bring one from GitHub, or write your own. You always see exactly what will be added first.",
-      canDo: ["Add a well-known skill in one go", "Bring a skill from a GitHub link", "Write a skill in plain words", "See every file before anything is added"],
-    },
-    guide: {
-      title: "Guide",
-      summary: "What skills are, how agents use them, and how to keep the list short and useful.",
-      canDo: ["Learn how agents decide to use a skill", "See why a short list works better", "Learn what can't be changed here, and why"],
-    },
+  /** Each tab's one plain sentence (0.5.0: no intro block). What you can do on each tab is a question in Help. */
+  lines: {
+    skills: "Every skill your agents can use on this computer. Open one to see what it does, turn it off for an agent, or remove it.",
+    usage: "Which skills your agents actually used, and how often, from their chat history on this computer.",
+    add: "Pick one from our list, bring one from GitHub, or write your own. You always see exactly what will be added first.",
+  },
+  help: {
+    questions: "Common questions",
+    tabsQuestion: "What can I do on each tab?",
+    tabs: [
+      { tab: "Overview", canDo: ["See how many skills each agent can use, and how much room they take", "Go straight to the next thing worth a look", "Add a skill"] },
+      { tab: "Your skills", canDo: ["See which agents can use each skill", "Turn a skill off for Claude or Codex without deleting it", "Remove a skill you added (a copy is kept)", "Read a skill's instructions and files", "Add a skill: from our list, from GitHub, or your own"] },
+      { tab: "Usage", canDo: ["See the busiest skills and when each was last used", "Spot skills nobody uses that still take up room in every chat", "Pick 7, 30 or 90 days"] },
+      { tab: "Help", canDo: ["Learn how agents decide to use a skill", "See why a short list works better", "Learn what can't be changed here, and why"] },
+    ],
+    detailsTitle: "Technical details",
+    detailsSummary: "Where each agent finds skills, and what this page changes",
+  },
+  /** The fold-outs on Your skills and Usage. */
+  more: {
+    otherSummary: "From Paseo, plugins, claude.ai or the agents themselves; they can't be changed here",
+    checkedTitle: "What was checked",
+    checkedSummary: "Where Skills looked on this computer",
+    neverSummary: "Still in every chat's list: turn off the ones you don't need",
+    back: "Back to your skills",
   },
   hero: {
     loading: { title: "Checking your agents' skills", lead: "Reading every agent's skills on this computer. This takes a moment." },
@@ -259,6 +284,8 @@ export const SKILLS_PLAIN = {
     files: (count: number) => `${count} ${count === 1 ? "file" : "files"}`,
     filesWithCode: (count: number, code: number) => `${count} ${count === 1 ? "file" : "files"}, ${code} with code`,
     showInstructions: "Read its instructions",
+    instructionsSummary: "What the agent follows when this job comes up",
+    formatted: "Show formatted",
     showFiles: "See its files",
     code: "may run",
     turnOff: (agent: string) => `Turn off for ${agent}`,
@@ -413,3 +440,11 @@ export function reportSummary(lines: ReadonlyArray<{ ok: boolean }>): string {
   const places = (n: number) => `${n} ${n === 1 ? "place" : "places"}`;
   return not ? `Done in ${places(done)}; ${not === 1 ? "1 wasn't" : `${not} weren't`}.` : `Done in ${places(done)}.`;
 }
+
+/** Help's common questions for skills (0.5.0), each with one button where it helps. Pure text; the jargon test reads it. */
+export const SKILL_HOW_TOS: ReadonlyArray<{ title: string; icon: string; steps: readonly string[]; action?: { label: string; place: { tab: "add" | "usage"; add?: "catalog" | "github" | "write" } } }> = [
+  { title: "How do I add a well-known skill?", icon: "PackagePlus", steps: ["Press Add a skill (on the Overview or Your skills) and stay on From our list.", "Press Preview on the one you want and read what it adds.", "If it includes code, read its files and tick the box. Then press Add it."], action: { label: "Add a skill", place: { tab: "add", add: "catalog" } } },
+  { title: "How do I keep the list short?", icon: "ListMinus", steps: ["Open Usage and pick 30 days.", "Open \"not used in this time\" at the bottom.", "Press Turn off on the ones you don't need. Nothing is deleted."], action: { label: "Open Usage", place: { tab: "usage" } } },
+  { title: "How do I write my own?", icon: "PenLine", steps: ["Press Add a skill, then Write your own.", "Give it a short name, say when agents should use it, and write the steps.", "Press Check it, read the preview, then Add it."], action: { label: "Write your own", place: { tab: "add", add: "write" } } },
+  { title: "How do I put a removed skill back?", icon: "Undo2", steps: ["Removed skills go to this plugin's backups, never straight to the bin.", "Ask an agent to move the folder back from the backups into the shared skills place, or do it in Finder."] },
+];

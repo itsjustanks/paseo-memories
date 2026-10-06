@@ -58,3 +58,16 @@ export function headerStatus(input: {
   const status = shown.some((finding) => finding.severity === "error") ? "error" : shown.length ? "attention" : "ok";
   return { status, caption: `${S.on(hostLabel)} · ${shown.length ? S.worth(shown.length) : S.tidy}` };
 }
+
+/**
+ * What the sidebar row's dot should say from the header's status (0.5.0):
+ * "error" for something urgent in the notes (a password), "attention" for
+ * things worth a look, null once tidy; undefined while checking or when the
+ * notes couldn't be read, so the dot keeps what it last knew.
+ */
+export function sidebarToneFrom(header: HeaderStatus, notesRead: boolean): "attention" | "error" | null | undefined {
+  if (header.status === "ok") return null;
+  if (header.status === "error") return notesRead ? "error" : undefined;
+  if (header.status === "attention") return header.retry ? undefined : "attention";
+  return undefined;
+}

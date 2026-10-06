@@ -2,7 +2,7 @@ import type { PluginScreenParams } from "@getpaseo/plugin/client";
 import type { LoadPlan } from "../shared/contracts";
 import { sha256Hex } from "../shared/hash";
 import { PLAIN } from "../shared/plain";
-import { TABS } from "./tabs";
+import { TABS, TRANSFER_PAGE, pageFor, type PageId } from "./tabs";
 
 /**
  * Panels get no `openSurface`; the client entry lends its opener here. A
@@ -20,7 +20,8 @@ import { TABS } from "./tabs";
  */
 
 export type Destination = {
-  tab?: "overview" | "user" | "projects" | "transfer" | "guide";
+  /** A tab, or Import & Export. Old ids from links ("guide") are mapped by `fromScreenParams`. */
+  tab?: PageId;
   sourceId?: string;
   entryKey?: string;
   /** From a link: a source and note not yet matched against the list (`sourceRef`, `entryRef`). */
@@ -33,8 +34,10 @@ export type Destination = {
   target?: { kind: string; sourceId?: string; path?: string };
   preview?: boolean;
   exportView?: boolean;
-  /** Open "Add a note", optionally in one project's workspace. */
-  addNote?: { workspaceId?: string };
+  /** Open "Add a note", optionally in one project's workspace, optionally with its text started (in memory only, never in params). */
+  addNote?: { workspaceId?: string; text?: string };
+  /** Open the Overview's list of things worth a look ("Tidy memories" in the command center). */
+  worth?: boolean;
 };
 
 export type ScreenOpener = (id: string, params?: PluginScreenParams) => void;
@@ -98,9 +101,7 @@ export function onDestination(listener: (destination: Destination) => void): () 
   return () => listeners.delete(listener);
 }
 
-const TAB_IDS = ["overview", "user", "projects", "transfer", "guide"] as const;
-type TabId = (typeof TAB_IDS)[number];
-const isTab = (value: unknown): value is TabId => typeof value === "string" && (TAB_IDS as readonly string[]).includes(value);
+type TabId = PageId;
 const listsSources = (tab: TabId | undefined) => tab === "user" || tab === "projects";
 
 /** Moving to a tab: User and Projects open on their list, so a note left open earlier closes (and `entry` leaves the params). */
@@ -127,7 +128,7 @@ export function resolveEntry(sourceId: string, ref: string | undefined, keys: re
 /** The tab, source and note as screen params (opaque ids). Text, entries to copy and targets stay out. */
 export function toScreenParams(destination: Destination): PluginScreenParams {
   const params: PluginScreenParams = {};
-  const tab = destination.tab ?? (destination.from || destination.text || destination.exportView ? "transfer" : undefined);
+  const tab = pageFor(destination.tab) ?? (destination.from || destination.text || destination.exportView ? "transfer" : undefined);
   if (tab && tab !== "overview") params.tab = tab;
   const source = destination.sourceId ? sourceRef(destination.sourceId) : destination.sourceRef;
   if (listsSources(tab) && source) {
@@ -149,8 +150,8 @@ export function toScreenParams(destination: Destination): PluginScreenParams {
 export function fromScreenParams(params: PluginScreenParams | undefined): Destination {
   if (!params || typeof params !== "object") return {};
   const value = (key: string) => (typeof params[key] === "string" && params[key]!.length > 0 ? params[key]! : undefined);
-  const raw = value("tab");
-  const tab = isTab(raw) ? raw : undefined;
+  // Old ids still land: a link to the Guide opens Help (client/tabs.ts LEGACY_TABS).
+  const tab = pageFor(value("tab"));
   const destination: Destination = {};
   if (tab) destination.tab = tab;
   const source = value("source");
@@ -174,7 +175,19 @@ export function fromScreenParams(params: PluginScreenParams | undefined): Destin
 export function landing(params: PluginScreenParams | undefined): Destination {
   const fromLink = fromScreenParams(params);
   const handed = takeDestination();
-  return handed ? { ...fromLink, ...handed } : fromLink;
+  return handed ? normalised({ ...fromLink, ...handed }) : fromLink;
+}
+
+/**
+ * A destination with its tab as this version names it: an old id ("guide",
+ * from a caller or a plugin built against 0.4) becomes its new tab, and an
+ * unknown one is dropped, so the page never lands on a tab it can't show.
+ */
+export function normalised(destination: Destination): Destination {
+  if (destination.tab === undefined) return destination;
+  const tab = pageFor(destination.tab);
+  const { tab: _old, ...rest } = destination;
+  return tab ? { ...rest, tab } : rest;
 }
 
 export const opensTransfer = (destination: Destination) => destination.tab === "transfer" || Boolean(destination.from || destination.text);
@@ -208,7 +221,7 @@ export function screenTitle(params: PluginScreenParams): string {
   const destination = fromScreenParams(params);
   if (destination.addNote) return `Memories · ${PLAIN.addNote.title}`;
   if (!destination.tab || destination.tab === "overview") return "Memories";
-  const label = technicalTitles ? TABS.find((tab) => tab.id === destination.tab)!.label : PLAIN.tabLabels[destination.tab];
+  const label = technicalTitles ? (TABS.find((tab) => tab.id === destination.tab) ?? TRANSFER_PAGE).label : PLAIN.tabLabels[destination.tab];
   return `Memories · ${label}`;
 }
 

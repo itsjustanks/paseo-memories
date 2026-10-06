@@ -31,7 +31,7 @@ import { removeSection, replaceSection, splitSections } from "../shared/markdown
 import { MD_EDITOR } from "../shared/plain";
 import { Markdown } from "./markdown";
 import { MarkdownEditor } from "./markdown-editor";
-import { Button, Card, CodeBlock, ConfirmButton, ConfirmLink, Disclosure, Facts, Field, IconBadge, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
+import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmButton, ConfirmLink, Disclosure, Facts, Field, IconBadge, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
 
 /**
  * One source: what it is, who reads it, and a viewer or editor. Read-only
@@ -534,11 +534,6 @@ function PlainHeader({ source, name }: { source: Source; name: string }) {
           source.readBy.length ? { value: `Followed by ${plainAgents(source.readBy)}` } : null,
         ]}
       />
-      {source.path.startsWith("paseo:") || source.path.startsWith("copilot:") ? null : (
-        <Disclosure title={PLAIN.whereSaved}>
-          <PathText path={source.path} full />
-        </Disclosure>
-      )}
     </HeaderCard>
   );
 }
@@ -797,6 +792,8 @@ export function SourceDetail({ hostId, sourceId, workspaceId, entryKey, onOpenEn
   const detail = useSourceDetail(hostId, sourceId, workspaceId);
   if (!detail.data) return <QueryState query={detail} what={plain ? "these notes" : "this source"} />;
   const { source, entries, index, warnings, codex, stamp } = detail.data;
+  // Plain notes cards can also open the whole file (as before 0.5.0, now a fold-out row).
+  const wholeFile = source.exists && source.kind !== "claude-auto-memory" && source.kind !== "paseo-prompt" && !source.isDirectory && source.access !== "online";
   const fileEditor = <FileEditor hostId={hostId} source={source} {...(workspaceId ? { workspaceId } : {})} {...(stamp ? { stamp } : {})} {...(codex ? { codexLock: codex } : {})} />;
   return (
     <View style={{ gap: t.space.row }}>
@@ -818,7 +815,6 @@ export function SourceDetail({ hostId, sourceId, workspaceId, entryKey, onOpenEn
       ) : source.access === "online" ? null : plain ? (
         <>
           <NoteCards hostId={hostId} source={source} {...(workspaceId ? { workspaceId } : {})} onCopy={onCopy} />
-          {source.exists ? <Disclosure title={PLAIN.wholeFile}>{fileEditor}</Disclosure> : null}
         </>
       ) : (
         <>
@@ -830,6 +826,21 @@ export function SourceDetail({ hostId, sourceId, workspaceId, entryKey, onOpenEn
           ) : null}
         </>
       )}
+      {plain ? (
+        // The technical parts of a set of notes, one press away: the whole file, and where it lives.
+        <Accordion>
+          {wholeFile ? (
+            <AccordionItem icon="FileText" title={PLAIN.wholeFile} summary={PLAIN.wholeFileSummary}>
+              {fileEditor}
+            </AccordionItem>
+          ) : null}
+          {!source.path.startsWith("paseo:") && !source.path.startsWith("copilot:") ? (
+            <AccordionItem icon="FolderOpen" title={PLAIN.whereSaved} summary={PLAIN.whereSavedSummary}>
+              <PathText path={source.path} full />
+            </AccordionItem>
+          ) : null}
+        </Accordion>
+      ) : null}
       {!source.exists && source.kind === "claude-auto-memory" ? <Text style={t.text.caption}>{plain ? PLAIN.memory.firstNote : "This project has no Claude memory yet; the first memory you save creates the folder."}</Text> : null}
     </View>
   );

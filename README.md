@@ -11,14 +11,17 @@ Memories shows what your AI agents remember and follow, in plain words, and lets
 - **Add a note** (on the Overview) teaches your agents something once: write it, choose who follows it and where, check it, save it. New agents follow it straight away.
 - **Everywhere** holds the notes that go with you into every project; **Projects** holds the notes for one project. Open one to change or remove a note.
 - **Worth a look** on the Overview points out notes with passwords in them, notes that say the same thing twice, and notes that mention things that are gone.
-- **Guide** has short how-tos, including moving your notes to another Paseo computer.
+- **Help** answers common questions, each folded, including how to move your notes to another Paseo computer. **Bring notes in** and **Take a copy out** sit at the bottom of Everywhere and Projects.
 
 **Skills** is the second item in the sidebar:
 
 - **Overview** says in one card how many skills Claude and Codex can use, what that list costs at the start of every chat, and which skills were used lately, with one next step.
 - **Your skills** lists every skill by where it lives. Open one to read it, turn it off for Claude or Codex (nothing is deleted), or remove one you added (a copy is kept).
 - **Usage** shows which skills ran in the last 7, 30 or 90 days. Claude's counts are exact; Codex's are estimates.
-- **Add a skill** (also the "+" beside Skills in the sidebar): pick one from a short checked list, bring one from a GitHub link, or write your own. You see every file first; a skill that includes code your agents may run needs an extra confirm.
+- **Add a skill** (the button on Your skills or the Overview, or the "+" beside Skills in the sidebar): pick one from a short checked list, bring one from a GitHub link, or write your own. You see every file first; a skill that includes code your agents may run needs an extra confirm.
+- **Help** answers common questions, each folded, with the technical details folded at the end.
+
+Common jobs are commands too (Paseo's command center): "Add a note for your agents", "Tidy memories", "Add a skill", "Open Skills". In a chat, `/remember <text>` starts Add a note for that project, and `/memories` opens what that agent remembers. When something is worth a look, a small dot shows beside Memories or Skills in the sidebar; nothing is added to the chat composer.
 
 Nothing technical shows unless you ask for it: turn on **Show technical details** in Settings → Memories & Skills for file names, paths, sizes and whole-file editing. The rest of this page is the technical side.
 
@@ -34,12 +37,12 @@ Update with `paseo plugin update paseo-memories`. Memories are per daemon: to mo
 
 ## What it does
 
-- **Memories** in the sidebar (a native screen and sidebar row on Paseo 0.11+), with five tabs. Each opens with a plain intro and "What you can do here":
+- **Memories** in the sidebar (a native screen and sidebar row on Paseo 0.11+), with four tabs (0.5.0). Each starts with its own content, at most one plain sentence; the less-used and technical parts fold into rows at the bottom:
   - **Overview**: a status card with what each agent and account remembers (files, size, ≈tokens loaded at launch) and exactly one next step, then the top things to tidy, a search across every memory and instruction file, and a short guide (what Memories is, how it works, how to use it, the words it uses).
-  - **User**: files every agent of yours reads, grouped by agent and account (default folders, AgentLink slots, Paseo providers with their own `CLAUDE_CONFIG_DIR` / `CODEX_HOME`).
+  - **User** ("Everywhere"): files every agent of yours reads, grouped by agent and account (default folders, AgentLink slots, Paseo providers with their own `CLAUDE_CONFIG_DIR` / `CODEX_HOME`).
   - **Projects**: Paseo's workspaces first, then other known folders, then Claude memory for projects whose path is unknown. Each source opens a viewer or editor; Claude memories can be created, edited, renamed, deleted, copied and moved.
-  - **Import & Export**: paste or pick files (a bundle, markdown split at its headings, Claude memory files, claude.ai `[date] - text` lines, Cursor `.mdc` rules), preview the diff and duplicates, then save the items you tick. Export a bundle or markdown, secrets hidden unless you include them.
-  - **Guide**: how each agent loads memory, with the real numbers, and links to each agent's own docs on Paseo 0.10+.
+  - **Import & Export** (a page under Everywhere or Projects, opened from their "Bring notes in" / "Take a copy out" rows, a note's "Copy to another agent", or Help): paste or pick files (a bundle, markdown split at its headings, Claude memory files, claude.ai `[date] - text` lines, Cursor `.mdc` rules), preview the diff and duplicates, then save the items you tick. Export a bundle or markdown, secrets hidden unless you include them.
+  - **Help** (the Guide before 0.5.0; old `tab=guide` links open it): common questions, each folded, then how each agent loads memory, with the real numbers, and links to each agent's own docs on Paseo 0.10+, folded too.
 - **Workspace panel**: what an agent started in this workspace loads, per provider, in order, with sizes and ≈tokens. **Agent panel**: the same for one agent's provider and account.
 - **Tidy checks** (plain code, no LLM): exact and near duplicates, possible conflicts (labelled a guess), paths and code names that no longer exist, `MEMORY.md` lines that point nowhere or files missing from it, over-limit files, values that look like secrets, and a pending Codex clean-up. Each comes with one suggested action.
 
@@ -94,7 +97,7 @@ npm run smoke       # read-only inventory, findings and export of your real HOME
 npm run preview:ui  # fixture preview at 127.0.0.1:43299 (PREVIEW_PORT to change)
 ```
 
-Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|guide`, `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`, `?nolinks` (an app without `openExternalUrl`). The preview runs the real client entry against a fake Paseo 0.11 app (screen params in the URL as `param.*`); `?legacy` stands in for Paseo 0.10, `?chrome` adds the app sidebar and header, `?popover` opens Add a note from the sidebar "+". Skills: `?skills` (`=skills|usage|add|guide` for a tab), `?skill` (a skill open), `?addskill=catalog|github|write`, `?skillpopover` (Add a skill from the Skills row's "+").
+Preview parameters: plain view by default (`?plain`), `?technical` for the technical view, `?add` (Add a note; `?add=ws-1` in a project), `?notes` (instructions as note cards), `?tab=user|projects|transfer|help` (`guide` still works), `?memory`, `?codex`, `?import`, `?export`, `?workspace`, `?agent&provider=claude`, `?settings`, `?dark`, `?empty`, `?error`, `?stale`, `?nolinks` (an app without `openExternalUrl`). The preview runs the real client entry against a fake Paseo 0.11 app (screen params in the URL as `param.*`); `?legacy` stands in for Paseo 0.10, `?chrome` adds the app sidebar and header, `?popover` opens Add a note from the sidebar "+". Skills: `?skills` (`=skills|usage|add|help` for a tab), `?skill` (a skill open), `?addskill=catalog|github|write`, `?skillpopover` (Add a skill from the Skills row's "+").
 
 Client bundle check (Paseo's esbuild; no `node:` import may be reachable from `client/`):
 
