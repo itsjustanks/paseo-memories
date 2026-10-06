@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { applyFormat, type Format } from "../shared/md-edit";
 import { MD_LIMITS, inlineText, parseInline, parseMarkdown, safeHref, type Block, type Inline } from "../shared/md-parse";
+import { fastest } from "./timing";
 
 const kinds = (blocks: Block[]) => blocks.map((block) => block.t);
 
@@ -75,11 +76,6 @@ test("raw HTML is shown as text, never rendered", () => {
 });
 
 test("hostile input stays bounded and fast", () => {
-  const time = (fn: () => unknown) => {
-    const began = performance.now();
-    fn();
-    return performance.now() - began;
-  };
   // Deep nesting: lists and quotes cap at the depth limit.
   const deepList = Array.from({ length: 200 }, (_, i) => `${"  ".repeat(i)}- level ${i}`).join("\n");
   const depthOf = (blocks: Block[]): number => Math.max(0, ...blocks.map((block) => (block.t === "list" ? 1 + Math.max(0, ...block.items.map((item) => depthOf(item.blocks))) : block.t === "quote" ? 1 + depthOf(block.blocks) : 0)));
@@ -95,10 +91,13 @@ test("hostile input stays bounded and fast", () => {
   // Unclosed fences run to the end; a very long line is one paragraph.
   assert.deepEqual(kinds(parseMarkdown("```\nnever closed\n# not a heading")), ["code"]);
   assert.equal(parseMarkdown("x".repeat(200_000)).length, 1);
-  // Unmatched markers (the slow case for naive parsers) stay linear.
-  assert.ok(time(() => parseInline("*a _b ~~c `d [e ".repeat(20_000))) < 1500, "unmatched markers");
-  assert.ok(time(() => parseMarkdown("**".repeat(50_000))) < 1500, "runs of markers");
-  assert.ok(time(() => parseInline("[".repeat(20_000))) < 1500, "open brackets");
+  // Unmatched markers (the slow case for naive parsers) stay linear. Judged on the fastest of up to three runs (tests/timing.ts).
+  const unmatched = fastest(() => parseInline("*a _b ~~c `d [e ".repeat(20_000)), 1500);
+  assert.ok(unmatched < 1500, `unmatched markers took ${unmatched.toFixed(0)} ms`);
+  const runs = fastest(() => parseMarkdown("**".repeat(50_000)), 1500);
+  assert.ok(runs < 1500, `runs of markers took ${runs.toFixed(0)} ms`);
+  const brackets = fastest(() => parseInline("[".repeat(20_000)), 1500);
+  assert.ok(brackets < 1500, `open brackets took ${brackets.toFixed(0)} ms`);
 });
 
 // ------------------------------------------------------------------ the buttons

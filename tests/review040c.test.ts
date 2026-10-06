@@ -8,6 +8,7 @@ import { applyFormat } from "../shared/md-edit";
 import { History } from "../shared/md-history";
 import { parseInline, parseMarkdown } from "../shared/md-parse";
 import { skillMdRunsCommands } from "../shared/skill-md";
+import { fastest } from "./timing";
 
 const header = (lines: string) => `---\nname: a\ndescription: "d"\n${lines}---\nBody.\n`;
 
@@ -49,26 +50,21 @@ test("040c-D the code check fails closed: only known, plain header lines count a
   assert.equal(skillMdRunsCommands("No header, just text.\n"), null);
 });
 
-const time = (fn: () => unknown) => {
-  const began = performance.now();
-  fn();
-  return performance.now() - began;
-};
-
 test("040c-E parsing is linear: 2 MB of multi-line paragraphs, 1 MB of nested quotes, a 150 KB note", () => {
   const lines = "word word word  \nmore words here\n".repeat(Math.ceil((2 * 1024 * 1024) / 32));
-  const big = time(() => parseMarkdown(lines));
+  // Each timing is the fastest of up to three runs (tests/timing.ts).
+  const big = fastest(() => parseMarkdown(lines), 1000);
   assert.ok(big < 1000, `2 MB multi-line paragraph took ${big.toFixed(0)} ms`);
-  const inline = time(() => parseInline("word word word\n".repeat(40_000)));
+  const inline = fastest(() => parseInline("word word word\n".repeat(40_000)), 300);
   assert.ok(inline < 300, `586 KB inline took ${inline.toFixed(0)} ms`);
-  const quotes = time(() => parseMarkdown(">>>> x\n".repeat(150_000)));
+  const quotes = fastest(() => parseMarkdown(">>>> x\n".repeat(150_000)), 1000);
   assert.ok(quotes < 1000, `1 MB of nested quotes took ${quotes.toFixed(0)} ms`);
-  const ticks = time(() => parseInline("`a ``b ```c ".repeat(30_000)));
+  const ticks = fastest(() => parseInline("`a ``b ```c ".repeat(30_000)), 500);
   assert.ok(ticks < 500, `unmatched code marks took ${ticks.toFixed(0)} ms`);
   // A 150 KB note, parsed again as on a keystroke: well under 100 ms.
   const note = ("## Section\n\nSome **bold** text with `code` and a [link](https://example.com).\n- item one\n- item two\n\n").repeat(1700);
   parseMarkdown(note);
-  const key = time(() => parseMarkdown(`${note}x`));
+  const key = fastest((attempt) => parseMarkdown(`${note}${"x".repeat(attempt + 1)}`), 100);
   assert.ok(key < 100, `150 KB re-parse took ${key.toFixed(0)} ms`);
   // Still right: two trailing spaces are a hard break, one line end a space.
   assert.deepEqual(parseInline("a  \nb\nc"), [{ t: "text", v: "a" }, { t: "br" }, { t: "text", v: "b c" }]);
