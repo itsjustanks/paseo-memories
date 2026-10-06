@@ -7,7 +7,7 @@ import { Pacer } from "./pace";
 import { clientSeenWithin, pageOpen } from "./presence";
 import { readMemoriesSettings } from "./settings";
 import { sha256, statSafe } from "./files";
-import { readState, StateSaver, STATE_MAX_BYTES } from "./state-file";
+import { fitEntries, readStateJson, StateSaver, sweepStateTemps, yieldNow } from "./state-file";
 
 /**
  * Does a code name a memory mentions still exist in its project? Answered
@@ -76,47 +76,61 @@ let loading: Promise<void> | null = null;
 let forgets = 0;
 
 const STATE_NAME = "code-names";
-const SavedScan = z.object({
-  version: z.literal(1),
-  projects: z
-    .array(
-      z.object({
-        root: z.string().min(1).max(4096),
-        key: z.string().regex(/^[0-9a-f]{64}$/),
-        files: z.array(z.tuple([z.string().min(1).max(4096), z.string().max(128), z.array(z.string().max(512)).max(5000)])).max(PASS_LIMITS.cachedFiles),
-      }),
-    )
-    .max(1000),
-});
+const SavedProject = z.object({ root: z.string().min(1).max(4096), key: z.string().regex(/^[0-9a-f]{64}$/) });
+/** One file: its project (an index into `projects`), path, stamp, and which asked-for names it holds. */
+const SavedFile = z.tuple([z.number().int().nonnegative(), z.string().min(1).max(4096), z.string().max(128), z.array(z.string().max(512)).max(5000)]);
+/** The file as a whole; each project and file is checked on its own, so one bad entry costs only that entry. */
+const SavedScan = z.object({ version: z.literal(1), projects: z.array(z.unknown()).max(1000), files: z.array(z.unknown()).max(PASS_LIMITS.cachedFiles) });
 
-/** Per-file findings, up to the size cap; files left out are read again after the next load. */
-function snapshot(): z.infer<typeof SavedScan> {
-  let bytes = 1024;
-  const out: z.infer<typeof SavedScan>["projects"] = [];
+/** Per-file findings, checked one by one, up to the byte cap; files left out are read again after the next load. Built in slices. */
+async function snapshotText(): Promise<string> {
+  const projectList: Array<z.infer<typeof SavedProject>> = [];
+  const parts: string[] = [];
+  let invalid = 0;
   for (const [root, cache] of caches) {
-    const files: Array<[string, string, string[]]> = [];
-    bytes += root.length + 200;
-    for (const [path, hit] of cache.files) {
-      bytes += path.length + hit.stamp.length + 16 + hit.hits.reduce((sum, name) => sum + name.length + 3, 0);
-      if (bytes > STATE_MAX_BYTES) break;
-      files.push([path, hit.stamp, [...hit.hits]]);
+    const project = SavedProject.safeParse({ root, key: cache.key });
+    if (!project.success) {
+      invalid += cache.files.size;
+      continue;
     }
-    out.push({ root, key: cache.key, files });
-    if (bytes > STATE_MAX_BYTES) break;
+    const index = projectList.push(project.data) - 1;
+    for (const [path, hit] of cache.files) {
+      const file = SavedFile.safeParse([index, path, hit.stamp, [...hit.hits]]);
+      if (file.success) parts.push(JSON.stringify(file.data));
+      else invalid += 1;
+      if (parts.length % 512 === 511) await yieldNow();
+    }
   }
-  return { version: 1, projects: out };
+  const { text, dropped } = fitEntries({ version: 1, projects: projectList }, "files", parts);
+  if (dropped + invalid) console.warn(`[paseo-memories] code-name state: ${dropped + invalid} of ${parts.length + invalid} files not saved (${dropped} over the size cap, ${invalid} invalid); they are read again after a restart`);
+  return text;
 }
 
-const saver = new StateSaver(STATE_NAME, snapshot);
+const saver = new StateSaver(STATE_NAME, snapshotText, 60_000);
 
-/** Once per plugin load, before the first pass. A bad or unknown file means starting fresh. */
+/** Once per plugin load, before the first pass. A bad or unknown file means starting fresh; a bad entry, only that entry. */
 function loadSaved(): Promise<void> {
   if (!loading) {
     const before = forgets;
-    loading = readState(STATE_NAME, SavedScan)
-      .then((saved) => {
-        if (!saved || before !== forgets || caches.size) return;
-        for (const project of saved.projects) caches.set(project.root, { key: project.key, files: new Map(project.files.map(([path, stamp, hits]) => [path, { stamp, hits: hits.length ? hits : NONE }])) });
+    loading = readStateJson(STATE_NAME)
+      .then(async (raw) => {
+        const saved = SavedScan.safeParse(raw);
+        if (!saved.success || before !== forgets || caches.size) return;
+        const roots = saved.data.projects.map((project) => SavedProject.safeParse(project));
+        const restored = new Map<string, ProjectCache>();
+        for (const [index, entry] of saved.data.files.entries()) {
+          const file = SavedFile.safeParse(entry);
+          if (index % 512 === 511) await yieldNow();
+          if (!file.success) continue;
+          const [at, path, stamp, hits] = file.data;
+          const project = roots[at];
+          if (!project?.success) continue;
+          let cache = restored.get(project.data.root);
+          if (!cache) restored.set(project.data.root, (cache = { key: project.data.key, files: new Map() }));
+          cache.files.set(path, { stamp, hits: hits.length ? hits : NONE });
+        }
+        if (before !== forgets || caches.size) return;
+        for (const [root, cache] of restored) caches.set(root, cache);
       })
       .catch(() => undefined);
   }
@@ -225,13 +239,14 @@ async function runPass(): Promise<void> {
     if (projects.size) version += 1;
     forgets += 1;
     loading = Promise.resolve();
-    void saver.cancel();
+    void saver.close();
     caches.clear();
     projects.clear();
     missing.clear();
     unfinished = false;
     return;
   }
+  saver.open();
   await loadSaved();
   const request = wanted;
   const before = version;
@@ -383,13 +398,14 @@ export async function reloadScans(): Promise<void> {
   lastFinished = null;
   failures = 0;
   loading = null;
+  saver.reset();
   version += 1;
 }
 
 export function forgetScans(): void {
   forgets += 1;
   loading = Promise.resolve();
-  void saver.cancel();
+  void saver.close();
   caches.clear();
   projects.clear();
   missing.clear();
@@ -417,9 +433,12 @@ export function timerScanDue(): boolean {
   return unfinished ? clientSeenWithin() : pageOpen();
 }
 
-onStart(schedule);
+onStart(() => {
+  void sweepStateTemps();
+  schedule();
+});
 onShutdown(() => {
   if (timer) clearTimeout(timer);
   timer = null;
-  void saver.flush();
+  void saver.stop();
 });

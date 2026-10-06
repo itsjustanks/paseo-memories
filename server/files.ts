@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Dirent } from "node:fs";
+import { stat as statCallback, type Dirent } from "node:fs";
 import fs from "node:fs/promises";
 
 /**
@@ -74,13 +74,21 @@ export function sha256(text: string | Buffer): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-export async function statSafe(path: string): Promise<Stat | null> {
-  try {
-    const stat = await fs.stat(path);
-    return { size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino, mode: stat.mode, isFile: stat.isFile(), isDirectory: stat.isDirectory() };
-  } catch {
-    return null;
-  }
+/**
+ * One stat, null when the path isn't there (or can't be looked at). The
+ * callback form, still async: a missing path is the common answer here
+ * (thousands per check), and the promise form builds and rethrows an error
+ * with a stack for each, about twice the CPU.
+ */
+export function statSafe(path: string): Promise<Stat | null> {
+  return new Promise((resolve) => {
+    try {
+      statCallback(path, (error, stat) => resolve(error ? null : { size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino, mode: stat.mode, isFile: stat.isFile(), isDirectory: stat.isDirectory() }));
+    } catch {
+      // An invalid path (a NUL byte): nothing there.
+      resolve(null);
+    }
+  });
 }
 
 function stampOf(stat: Stat | null): string {

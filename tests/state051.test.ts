@@ -216,9 +216,9 @@ test("routine checks stop a minute after the last request and resume with the ne
   await usage.usageSettled();
   assert.equal(usage.usageStats().complete, true);
   markClientSeen(Date.now() - PAGE_OPEN_MS - 1_000);
-  assert.equal(usage.timerPassDue(), false, "caught up and no page open: idle");
+  assert.equal(await usage.timerPassDue(), false, "caught up and no page open: idle");
   markClientSeen();
-  assert.equal(usage.timerPassDue(), true);
+  assert.equal(await usage.timerPassDue(), true);
   const budget = usage.PASS_LIMITS.readBytes;
   usage.PASS_LIMITS.readBytes = 1_000;
   try {
@@ -226,9 +226,9 @@ test("routine checks stop a minute after the last request and resume with the ne
     await pass();
     assert.equal(usage.usageStats().complete, false);
     markClientSeen(Date.now() - PAGE_OPEN_MS - 1_000);
-    assert.equal(usage.timerPassDue(), true, "catching up carries on for a while after the page closes");
+    assert.equal(await usage.timerPassDue(), true, "catching up carries on for a while after the page closes");
     markClientSeen(Date.now() - WATCH_WINDOW_MS - 1_000);
-    assert.equal(usage.timerPassDue(), false, "and stops when no app has asked for 15 minutes");
+    assert.equal(await usage.timerPassDue(), false, "and stops when no app has asked for 15 minutes");
   } finally {
     usage.PASS_LIMITS.readBytes = budget;
   }

@@ -7,13 +7,18 @@
 export const BACKGROUND_PACE = { busyMs: 20, share: 0.04 };
 
 /**
- * Background work that never hogs the host: after each `busyMs` of work it
- * rests long enough that the work takes at most `share` of one core
- * (BACKGROUND_PACE by default), and in between it lets the RPCs in. A pass
+ * Background work that never hogs the host: every `busyMs` it checks the
+ * whole process's CPU since the pacer was made (every thread: file reads,
+ * the collector, other work running meanwhile, and what they did while it
+ * rested) against `share` of one core over the same time
+ * (BACKGROUND_PACE by default), and rests until it is back under. In
+ * between it lets the RPCs in. Waiting on the disk costs no rest; a pass
  * over a big backlog takes longer; nothing else slows down.
  */
 export class Pacer {
-  private since = performance.now();
+  private readonly began = performance.now();
+  private readonly cpu = process.cpuUsage();
+  private since = this.began;
 
   constructor(
     private readonly busyMs = BACKGROUND_PACE.busyMs,
@@ -22,10 +27,15 @@ export class Pacer {
 
   /** Call between pieces of work. */
   async step(): Promise<void> {
-    const busy = performance.now() - this.since;
-    if (busy >= this.busyMs) await new Promise((resolve) => setTimeout(resolve, Math.ceil(busy * (1 / this.share - 1))));
-    else await new Promise((resolve) => setImmediate(resolve));
-    if (busy >= this.busyMs) this.since = performance.now();
+    const now = performance.now();
+    if (now - this.since < this.busyMs) {
+      await new Promise((resolve) => setImmediate(resolve));
+      return;
+    }
+    const used = process.cpuUsage(this.cpu);
+    const rest = (used.user + used.system) / 1000 / this.share - (now - this.began);
+    await new Promise((resolve) => (rest > 0 ? setTimeout(resolve, Math.ceil(rest)) : setImmediate(resolve)));
+    this.since = performance.now();
   }
 }
 

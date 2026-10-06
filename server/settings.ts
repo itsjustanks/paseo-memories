@@ -55,6 +55,13 @@ type HandleState = { status: string; values?: unknown };
 type SettingsHandle = { read(): Promise<HandleState>; subscribe(listener: (state: HandleState) => void | Promise<void>): () => void };
 
 let handle: SettingsHandle | null = null;
+/** Told when Paseo says the settings changed (0.9+), e.g. so turning counting off forgets at once. */
+const changeListeners = new Set<() => void>();
+
+export function onSettingsChanged(listener: () => void): () => void {
+  changeListeners.add(listener);
+  return () => changeListeners.delete(listener);
+}
 /** The values in force until the handle says they changed; null means ask again. */
 let current: MemoriesSettings | null = null;
 /** Bumped on every change (and handle swap): a read that started before one is older than what it would overwrite. */
@@ -90,6 +97,13 @@ export function adoptSettingsHandle(registered: unknown): () => void {
       // A change: take the new values, or ask again on the next read.
       generation += 1;
       current = fromState(state);
+      for (const listener of changeListeners) {
+        try {
+          listener();
+        } catch {
+          // One listener's failure never stops the others.
+        }
+      }
     });
   } catch {
     // Reads still work without updates; each one asks the handle while nothing is cached.

@@ -203,7 +203,17 @@ test("the usage count streams large chat logs: never a whole log in memory", asy
     const m = process.memoryUsage();
     peak = Math.max(peak, m.arrayBuffers - base.arrayBuffers, m.external - base.external);
   }, 5);
+  // What this test's own timers (the stall ticker, the memory sampler) cost with nothing else running: subtracted below.
+  await symbols.scanSettled();
+  await tidy.findingsSettled();
+  await settle();
+  const idleCpu = process.cpuUsage();
+  const idleBegan = performance.now();
+  await new Promise((resolve) => setTimeout(resolve, 2_000));
+  const idleUsed = process.cpuUsage(idleCpu);
+  const idle = (idleUsed.user + idleUsed.system) / 1000 / (performance.now() - idleBegan);
   const began = performance.now();
+  const cpuBefore = process.cpuUsage();
   let passes = 0;
   let mostRead = 0;
   try {
@@ -216,7 +226,23 @@ test("the usage count streams large chat logs: never a whole log in memory", asy
   } finally {
     clearInterval(sampler);
   }
+  const wall = performance.now() - began;
+  const cpu = process.cpuUsage(cpuBefore);
+  // The whole process (every thread), less the test's own timers; passes back to back (on a host they are also 30 s apart).
+  const share = (cpu.user + cpu.system) / 1000 / wall - idle;
   await settle();
+  // The busiest host's saved copy: every log fits under the cap.
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  const saved = await usage.usageSnapshotText().finally(() => (console.warn = warn));
+  const savedBytes = Buffer.byteLength(saved ?? "");
+  const savedLogs = (JSON.parse(saved ?? "{}") as { logs?: unknown[] }).logs?.length ?? 0;
+  t.diagnostic(`usage catch-up CPU: ${(share * 100).toFixed(1)}% of one core over ${(wall / 1000).toFixed(1)} s (test timers' ${(idle * 100).toFixed(1)}% taken off); saved copy ${savedLogs} logs in ${(savedBytes / MB).toFixed(2)} MB`);
+  assert.ok(idle < 0.05, `the test's own timers used ${(idle * 100).toFixed(1)}% with nothing running: something else was`);
+  assert.ok(share <= 0.05, `catching up used ${(share * 100).toFixed(1)}% of a core`);
+  assert.equal(savedLogs, usage.usageStats().files, "every log fits in the saved copy");
+  assert.deepEqual(warnings, []);
   t.diagnostic(`usage: ${(big.logBytes / MB).toFixed(0)} MB of logs in ${big.logFiles} files counted in ${passes} passes (at most ${(mostRead / MB).toFixed(1)} MB each), ${((performance.now() - began) / 1000).toFixed(1)} s; peak buffers +${(peak / MB).toFixed(1)} MB`);
   assert.ok(usage.usageStats().complete, "every log counted");
   assert.ok(usage.usageStats().skills > 0);

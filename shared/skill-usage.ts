@@ -226,10 +226,10 @@ export function addUse(skills: Map<string, SkillTally>, skill: string, at: numbe
   if (at > tally.last) tally.last = at;
 }
 
-/** Drop days before `firstDay`; skills left with none go. */
-export function pruneDays(skills: Map<string, SkillTally>, firstDay: number): void {
+/** Drop days before `firstDay` and after `lastDay` (a clock set wrong); skills left with none go. */
+export function pruneDays(skills: Map<string, SkillTally>, firstDay: number, lastDay = Number.POSITIVE_INFINITY): void {
   for (const [name, tally] of skills) {
-    for (const day of tally.days.keys()) if (day < firstDay) tally.days.delete(day);
+    for (const day of tally.days.keys()) if (day < firstDay || day > lastDay) tally.days.delete(day);
     if (tally.days.size === 0) skills.delete(name);
   }
 }

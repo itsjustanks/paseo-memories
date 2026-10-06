@@ -21,8 +21,8 @@ import {
 import { onShutdown, onStart } from "./lifecycle";
 import { Pacer } from "./pace";
 import { clientSeenWithin, pageOpen } from "./presence";
-import { readMemoriesSettings } from "./settings";
-import { readState, removeState, StateSaver, STATE_MAX_BYTES } from "./state-file";
+import { onSettingsChanged, readMemoriesSettings } from "./settings";
+import { fitEntries, readStateJson, removeState, StateSaver, sweepStateTemps, yieldNow } from "./state-file";
 
 /**
  * Which skills ran, counted from the chat logs on this host in the
@@ -46,8 +46,12 @@ import { readState, removeState, StateSaver, STATE_MAX_BYTES } from "./state-fil
  *    once caught up, the check for new lines runs only while a page is open
  *    (server/presence.ts), backing off after failures;
  *  - a pass works at most 4% of one core (server/pace.ts) and yields after
- *    every chunk, so a backlog of gigabytes is read over many passes (64 MB
- *    each) without anyone noticing;
+ *    every chunk and every 64 stats, so a backlog of gigabytes is read over
+ *    many passes (64 MB each, 30 s apart) without anyone noticing; while
+ *    catching up, the list of logs is reused for up to 10 minutes instead of
+ *    being made again for every pass;
+ *  - counting turned off (Settings) stops everything at once: nothing in
+ *    memory, the saved copy removed, and no pass or save until it is back on;
  *  - every log's cursor and tallies are saved (state/skill-usage.json, names
  *    and counts only, never a line's text), so a reload or an update carries
  *    on where it left off and reads only what is new.
@@ -57,8 +61,14 @@ export const PASS_LIMITS = { readBytes: 64 * 1024 * 1024, files: 20_000 };
 export const MAX_LINE = 4 * 1024 * 1024;
 const CHUNK = 256 * 1024;
 const INTERVAL_MS = 10 * 60_000;
-/** Catching up: the next pass soon after the last (each one is paced). */
-const CARRY_ON_MS = 5_000;
+/** Catching up: the next pass this long after the last (each one is paced too). */
+const CARRY_ON_MS = 30_000;
+/** Catching up: the list of logs is made again at most this often (logs that grow are still read to their end). */
+const LIST_REUSE_MS = 10 * 60_000;
+/** The saved copy is written at most this often. */
+const SAVE_EVERY_MS = 60_000;
+/** Stats between rests while listing logs. */
+const LIST_STEP = 64;
 const MIN_GAP_MS = 60_000;
 const STATE_NAME = "skill-usage";
 const STATE_VERSION = 1;
@@ -91,8 +101,13 @@ let wanted: Array<Pick<Account, "agent" | "dir" | "exists">> = [];
 /** Bytes read from logs by the last pass (tests and diagnostics). */
 let lastPassBytes = 0;
 let loading: Promise<void> | null = null;
-/** Bumped by forgetUsage: a load still under way must not bring the old counts back. */
+/** Bumped by forgetUsage: a load or pass still under way must not bring the old counts back. */
 let forgets = 0;
+/** The last list of logs, reused while catching up. */
+let carried: { logs: LogFile[]; at: number; key: string } | null = null;
+/** Fresh listings since the last forget (tests and diagnostics). */
+let listings = 0;
+let stopListening: (() => void) | null = null;
 
 /** A copy that shares no memory with the line it came from. */
 function own(text: string): string {
@@ -103,10 +118,15 @@ function own(text: string): string {
 
 type LogFile = { path: string; kind: LogKind; mtimeMs: number; size: number; ino: number; session: string };
 
-async function statLog(path: string, kind: LogKind, since: number, session: string): Promise<LogFile | null> {
+/** One listing: what it found, from when, and a rest every LIST_STEP stats. */
+type Listing = { since: number; out: LogFile[]; pacer: Pacer; stats: number };
+
+async function statLog(listing: Listing, path: string, kind: LogKind, session: string): Promise<void> {
+  listing.stats += 1;
+  if (listing.stats % LIST_STEP === 0) await listing.pacer.step();
   const stat = await fs.stat(path).catch(() => null);
-  if (!stat || !stat.isFile() || stat.mtimeMs < since) return null;
-  return { path, kind, mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, session };
+  if (!stat || !stat.isFile() || stat.mtimeMs < listing.since) return;
+  listing.out.push({ path, kind, mtimeMs: stat.mtimeMs, size: stat.size, ino: stat.ino, session });
 }
 
 async function names(folder: string): Promise<Array<{ name: string; dir: boolean }>> {
@@ -118,22 +138,20 @@ async function names(folder: string): Promise<Array<{ name: string; dir: boolean
 }
 
 /** Claude: `<cfg>/projects/<project>/<session>.jsonl` and `<project>/<session>/subagents/agent-*.jsonl`. */
-async function claudeLogs(dir: string, since: number, out: LogFile[]): Promise<void> {
+async function claudeLogs(dir: string, listing: Listing): Promise<void> {
   const root = join(dir, "projects");
   for (const project of await names(root)) {
     if (!project.dir) continue;
     const folder = join(root, project.name);
     for (const entry of await names(folder)) {
-      if (out.length >= PASS_LIMITS.files) return;
+      if (listing.out.length >= PASS_LIMITS.files) return;
       if (!entry.dir && entry.name.endsWith(".jsonl")) {
-        const file = await statLog(join(folder, entry.name), "claude", since, entry.name.slice(0, -".jsonl".length));
-        if (file) out.push(file);
+        await statLog(listing, join(folder, entry.name), "claude", entry.name.slice(0, -".jsonl".length));
       } else if (entry.dir && entry.name !== "memory") {
         const helpers = join(folder, entry.name, "subagents");
         for (const helper of await names(helpers)) {
           if (helper.dir || !helper.name.endsWith(".jsonl")) continue;
-          const file = await statLog(join(helpers, helper.name), "claude-helper", since, entry.name);
-          if (file) out.push(file);
+          await statLog(listing, join(helpers, helper.name), "claude-helper", entry.name);
         }
       }
     }
@@ -141,8 +159,8 @@ async function claudeLogs(dir: string, since: number, out: LogFile[]): Promise<v
 }
 
 /** Codex: `<home>/sessions/YYYY/MM/DD/*.jsonl` (day folders in the window only) and `archived_sessions/*.jsonl`. */
-async function codexLogs(home: string, since: number, out: LogFile[]): Promise<void> {
-  const firstDay = new Date(since - DAY_MS).toISOString().slice(0, 10);
+async function codexLogs(home: string, listing: Listing): Promise<void> {
+  const firstDay = new Date(listing.since - DAY_MS).toISOString().slice(0, 10);
   const sessions = join(home, "sessions");
   for (const year of await names(sessions)) {
     if (!year.dir || !/^\d{4}$/.test(year.name) || year.name < firstDay.slice(0, 4)) continue;
@@ -152,20 +170,29 @@ async function codexLogs(home: string, since: number, out: LogFile[]): Promise<v
         if (!day.dir || `${year.name}-${month.name}-${day.name}` < firstDay) continue;
         const folder = join(sessions, year.name, month.name, day.name);
         for (const entry of await names(folder)) {
-          if (out.length >= PASS_LIMITS.files) return;
+          if (listing.out.length >= PASS_LIMITS.files) return;
           if (entry.dir || !entry.name.endsWith(".jsonl")) continue;
-          const file = await statLog(join(folder, entry.name), "codex", since, "");
-          if (file) out.push(file);
+          await statLog(listing, join(folder, entry.name), "codex", "");
         }
       }
     }
   }
   for (const entry of await names(join(home, "archived_sessions"))) {
-    if (out.length >= PASS_LIMITS.files) return;
+    if (listing.out.length >= PASS_LIMITS.files) return;
     if (entry.dir || !entry.name.endsWith(".jsonl")) continue;
-    const file = await statLog(join(home, "archived_sessions", entry.name), "codex", since, "");
-    if (file) out.push(file);
+    await statLog(listing, join(home, "archived_sessions", entry.name), "codex", "");
   }
+}
+
+/** Every log in the window, sorted by path. Paced like the reading. */
+async function listLogs(since: number, pacer: Pacer): Promise<LogFile[]> {
+  const listing: Listing = { since, out: [], pacer, stats: 0 };
+  for (const account of wanted) {
+    if (!account.exists) continue;
+    if (account.agent === "claude") await claudeLogs(account.dir, listing);
+    else if (account.agent === "codex") await codexLogs(account.dir, listing);
+  }
+  return listing.out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 // ------------------------------------------------------------------ reading
@@ -174,7 +201,19 @@ const NEWLINE = 10;
 const CLAUDE_BYTES = CLAUDE_MARKERS.map((marker) => Buffer.from(marker));
 const CODEX_BYTES = CODEX_MARKERS.map((marker) => Buffer.from(marker));
 
-function handleLine(entry: Entry, line: string, firstDay: number): void {
+/** The days counted: KEEP_DAYS back, and no later than tomorrow (a line dated further ahead has a clock set wrong). */
+type DayWindow = { first: number; last: number };
+
+function dayWindow(now: number): DayWindow {
+  return { first: dayOf(now - KEEP_DAYS * DAY_MS), last: dayOf(now) + 1 };
+}
+
+const inWindow = (at: number, days: DayWindow) => {
+  const day = dayOf(at);
+  return day >= days.first && day <= days.last;
+};
+
+function handleLine(entry: Entry, line: string, days: DayWindow): void {
   if (entry.kind === "codex") {
     const parsed = codexLine(line);
     if (!parsed) return;
@@ -188,7 +227,7 @@ function handleLine(entry: Entry, line: string, firstDay: number): void {
       if (parsed.cwd) entry.tally.cwd = own(parsed.cwd);
       return;
     }
-    if (dayOf(parsed.at) < firstDay) return;
+    if (!inWindow(parsed.at, days)) return;
     for (const skill of parsed.skills) {
       if (entry.turnSkills.has(skill)) continue;
       const name = own(skill);
@@ -201,7 +240,7 @@ function handleLine(entry: Entry, line: string, firstDay: number): void {
   if (!parsed) return;
   if (parsed.cwd && parsed.cwd !== entry.tally.cwd) entry.tally.cwd = own(parsed.cwd);
   for (const use of parsed.uses) {
-    if (dayOf(use.at) < firstDay) continue;
+    if (!inWindow(use.at, days)) continue;
     const known = entry.tally.skills.has(use.skill) ? use.skill : own(use.skill);
     addUse(entry.tally.skills, known, use.at, use.typed, entry.kind === "claude-helper");
   }
@@ -210,11 +249,13 @@ function handleLine(entry: Entry, line: string, firstDay: number): void {
 // ------------------------------------------------------------------ saved state
 
 const LOG_KINDS = ["claude", "claude-helper", "codex"] as const;
+const count = z.number().int().nonnegative();
 const SavedSkill = z.object({
-  days: z.array(z.tuple([z.number().int(), z.number().int().nonnegative()])).max(KEEP_DAYS + 2),
-  typed: z.number().int().nonnegative(),
-  model: z.number().int().nonnegative(),
-  helper: z.number().int().nonnegative(),
+  // Days outside the window are dropped on load (a clock set wrong must not make the log unreadable).
+  days: z.array(z.tuple([z.number().int(), count])).max(1000),
+  typed: count,
+  model: count,
+  helper: count,
   last: z.number(),
 });
 const SavedLog = z.object({
@@ -223,7 +264,7 @@ const SavedLog = z.object({
   ino: z.number(),
   size: z.number().nonnegative(),
   mtimeMs: z.number(),
-  offset: z.number().int().nonnegative(),
+  offset: count,
   skipping: z.boolean(),
   agent: z.enum(["claude", "codex"]),
   cwd: z.string().max(4096),
@@ -231,16 +272,22 @@ const SavedLog = z.object({
   turn: z.array(z.string().max(512)).max(1000),
   skills: z.array(z.tuple([z.string().min(1).max(512), SavedSkill])).max(5000),
 });
+/** The file as a whole; each log is checked on its own, so one bad log costs only that log. */
 const SavedUsage = z.object({
   version: z.literal(STATE_VERSION),
   complete: z.boolean(),
-  cursor: z.number().int().nonnegative(),
+  cursor: count,
   finishedAt: z.string().nullable(),
-  logs: z.array(SavedLog).max(PASS_LIMITS.files),
+  logs: z.array(z.unknown()).max(PASS_LIMITS.files),
 });
 type SavedLogEntry = z.infer<typeof SavedLog>;
 
-function saveLog(path: string, entry: Entry): SavedLogEntry {
+function saveLog(path: string, entry: Entry, days: DayWindow): SavedLogEntry {
+  const skills: SavedLogEntry["skills"] = [];
+  for (const [name, skill] of entry.tally.skills) {
+    const kept = [...skill.days].filter(([day]) => day >= days.first && day <= days.last);
+    if (kept.length) skills.push([name, { days: kept, typed: skill.typed, model: skill.model, helper: skill.helper, last: skill.last }]);
+  }
   return {
     path,
     kind: entry.kind,
@@ -253,49 +300,80 @@ function saveLog(path: string, entry: Entry): SavedLogEntry {
     cwd: entry.tally.cwd,
     session: entry.tally.session,
     turn: [...entry.turnSkills],
-    skills: [...entry.tally.skills].map(([name, skill]) => [name, { days: [...skill.days], typed: skill.typed, model: skill.model, helper: skill.helper, last: skill.last }]),
+    skills,
   };
 }
 
 /**
- * Cursors and tallies, newest logs first, up to the size cap. A log left out
- * is read again from the start after the next load, and the count is marked
- * unfinished until then.
+ * The text to save: cursors and tallies, newest logs first, each checked
+ * against the schema it is loaded with, up to the byte cap. Logs left out
+ * (over the cap, or failing the check) are read again from the start after
+ * the next load, and the count is marked unfinished until then. Built a few
+ * hundred logs at a time, letting other work in between.
  */
-function snapshot(): z.infer<typeof SavedUsage> {
+async function snapshotText(now = Date.now()): Promise<string | null> {
+  const days = dayWindow(now);
   const ordered = [...cache].sort(([, a], [, b]) => b.mtimeMs - a.mtimeMs);
-  const logs: SavedLogEntry[] = [];
-  let bytes = 1024;
-  for (const [path, entry] of ordered) {
-    const saved = saveLog(path, entry);
-    bytes += JSON.stringify(saved).length + 1;
-    if (bytes > STATE_MAX_BYTES) break;
-    logs.push(saved);
+  const parts: string[] = [];
+  let invalid = 0;
+  for (const [index, [path, entry]] of ordered.entries()) {
+    const saved = SavedLog.safeParse(saveLog(path, entry, days));
+    if (saved.success) parts.push(JSON.stringify(saved.data));
+    else invalid += 1;
+    if (index % 256 === 255) await yieldNow();
   }
-  const all = logs.length === cache.size;
-  return { version: STATE_VERSION, complete: complete && all, cursor: all ? cursor : 0, finishedAt: lastFinishedAt, logs };
+  const head = (whole: boolean) => ({ version: STATE_VERSION, complete: whole && complete, cursor: whole ? cursor : 0, finishedAt: lastFinishedAt });
+  let fitted = fitEntries(head(invalid === 0), "logs", parts);
+  // Some left out: the count is unfinished after a load, and the cursor starts over.
+  if (fitted.dropped && invalid === 0) fitted = fitEntries(head(false), "logs", parts);
+  const left = fitted.dropped + invalid;
+  if (left) console.warn(`[paseo-memories] skill-use state: ${left} of ${ordered.length} logs not saved (${fitted.dropped} over the size cap, ${invalid} invalid); they are read again after a restart`);
+  return fitted.text;
 }
 
-const saver = new StateSaver(STATE_NAME, snapshot);
+const saver = new StateSaver(STATE_NAME, () => snapshotText(), SAVE_EVERY_MS);
 
-function restore(saved: z.infer<typeof SavedUsage>): void {
-  for (const log of saved.logs) {
-    const skills = new Map<string, SkillTally>();
-    for (const [name, skill] of log.skills) skills.set(name, { days: new Map(skill.days), typed: skill.typed, model: skill.model, helper: skill.helper, last: skill.last });
-    cache.set(log.path, {
-      kind: log.kind,
-      ino: log.ino,
-      size: log.size,
-      mtimeMs: log.mtimeMs,
-      offset: log.offset,
-      skipping: log.skipping,
-      tally: { agent: log.agent, cwd: log.cwd, session: log.session, skills },
-      turnSkills: new Set(log.turn),
-    });
+/** One saved log, or null when it doesn't check out (only it is read again). Days outside the window are dropped. */
+function restoreLog(raw: unknown, days: DayWindow): [string, Entry] | null {
+  const parsed = SavedLog.safeParse(raw);
+  if (!parsed.success) return null;
+  const log = parsed.data;
+  const skills = new Map<string, SkillTally>();
+  for (const [name, skill] of log.skills) {
+    const kept = skill.days.filter(([day]) => day >= days.first && day <= days.last);
+    if (kept.length) skills.set(name, { days: new Map(kept), typed: skill.typed, model: skill.model, helper: skill.helper, last: skill.last });
   }
-  complete = saved.complete;
-  cursor = saved.cursor;
+  return [
+    log.path,
+    { kind: log.kind, ino: log.ino, size: log.size, mtimeMs: log.mtimeMs, offset: log.offset, skipping: log.skipping, tally: { agent: log.agent, cwd: log.cwd, session: log.session, skills }, turnSkills: new Set(log.turn) },
+  ];
+}
+
+async function restore(saved: z.infer<typeof SavedUsage>, before: number): Promise<void> {
+  const days = dayWindow(Date.now());
+  const restored: Array<[string, Entry]> = [];
+  for (const [index, raw] of saved.logs.entries()) {
+    const one = restoreLog(raw, days);
+    if (one) restored.push(one);
+    if (index % 256 === 255) await yieldNow();
+  }
+  if (before !== forgets || cache.size) return;
+  for (const [path, entry] of restored) cache.set(path, entry);
+  const all = restored.length === saved.logs.length;
+  complete = saved.complete && all;
+  cursor = all ? saved.cursor : 0;
   lastFinishedAt = saved.finishedAt;
+}
+
+/**
+ * Whether counting is on. When it is off, everything is forgotten (the
+ * saved copy too) and stays so: this is checked before every pass, on every
+ * timer tick and whenever Paseo says the settings changed.
+ */
+async function countingOn(): Promise<boolean> {
+  if ((await readMemoriesSettings()).skillsUsage) return true;
+  if (!saver.isClosed || cache.size || wanted.length || running) forgetUsage();
+  return false;
 }
 
 /**
@@ -307,16 +385,16 @@ function loadSaved(): Promise<void> {
   if (!loading) {
     const before = forgets;
     loading = (async () => {
-      if (!(await readMemoriesSettings()).skillsUsage) return removeState(STATE_NAME);
-      const saved = await readState(STATE_NAME, SavedUsage);
-      if (saved && before === forgets && cache.size === 0) restore(saved);
+      if (!(await countingOn())) return removeState(STATE_NAME);
+      const parsed = SavedUsage.safeParse(await readStateJson(STATE_NAME));
+      if (parsed.success && before === forgets && cache.size === 0) await restore(parsed.data, before);
     })().catch(() => undefined);
   }
   return loading;
 }
 
 /** Read from `entry.offset`, at most `budget` bytes, line by line; `entry.offset` ends just past the last whole line. */
-async function readFrom(path: string, entry: Entry, budget: number, firstDay: number, pacer: Pacer, buffer: Buffer): Promise<{ read: number; atEnd: boolean }> {
+async function readFrom(path: string, entry: Entry, budget: number, days: DayWindow, pacer: Pacer, buffer: Buffer): Promise<{ read: number; atEnd: boolean }> {
   if (entry.offset === 0) entry.skipping = false;
   const handle = await fs.open(path, "r");
   const markers = entry.kind === "codex" ? CODEX_BYTES : CLAUDE_BYTES;
@@ -345,7 +423,7 @@ async function readFrom(path: string, entry: Entry, budget: number, firstDay: nu
         if (!entry.skipping) {
           const piece = buffer.subarray(start, end);
           const line = pendingBytes ? Buffer.concat([...pending, piece]) : piece;
-          if (markers.some((marker) => line.includes(marker))) handleLine(entry, line.toString("utf8"), firstDay);
+          if (markers.some((marker) => line.includes(marker))) handleLine(entry, line.toString("utf8"), days);
         }
         pending = [];
         pendingBytes = 0;
@@ -384,35 +462,42 @@ async function readFrom(path: string, entry: Entry, budget: number, firstDay: nu
 // ------------------------------------------------------------------ passes
 
 async function runPass(now = Date.now()): Promise<void> {
+  if (!(await countingOn())) return;
+  saver.open();
   await loadSaved();
+  const started = forgets;
   const since = now - KEEP_DAYS * DAY_MS;
-  const firstDay = dayOf(since);
-  const logs: LogFile[] = [];
-  for (const account of wanted) {
-    if (!account.exists) continue;
-    if (account.agent === "claude") await claudeLogs(account.dir, since, logs);
-    else if (account.agent === "codex") await codexLogs(account.dir, since, logs);
+  const days = dayWindow(now);
+  const firstDay = days.first;
+  const pacer = new Pacer();
+  // Catching up: the last list again (each log is still read to its real end); otherwise a fresh one.
+  const key = JSON.stringify(wanted);
+  const reuse = !complete && carried !== null && carried.key === key && now - carried.at < LIST_REUSE_MS;
+  const logs = reuse ? carried!.logs : await listLogs(since, pacer);
+  if (!reuse) {
+    carried = { logs, at: now, key };
+    listings += 1;
   }
-  logs.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   // Sweep: logs gone or aged out are forgotten, and old days dropped from the rest.
   const live = new Set(logs.map((log) => log.path));
   let changed = false;
   for (const path of [...cache.keys()]) if (!live.has(path)) changed = cache.delete(path) || changed;
   for (const entry of cache.values()) {
     const before = entry.tally.skills.size;
-    let days = 0;
-    for (const tally of entry.tally.skills.values()) days += tally.days.size;
-    pruneDays(entry.tally.skills, firstDay);
-    for (const tally of entry.tally.skills.values()) days -= tally.days.size;
-    if (days || entry.tally.skills.size !== before) changed = true;
+    let kept = 0;
+    for (const tally of entry.tally.skills.values()) kept += tally.days.size;
+    pruneDays(entry.tally.skills, firstDay, days.last);
+    for (const tally of entry.tally.skills.values()) kept -= tally.days.size;
+    if (kept || entry.tally.skills.size !== before) changed = true;
   }
   let budget = PASS_LIMITS.readBytes;
   let cut = -1;
-  const pacer = new Pacer();
   // One read buffer for the whole pass: thousands of logs, one allocation.
   const buffer = Buffer.alloc(CHUNK);
   const start = logs.length ? cursor % logs.length : 0;
   for (let i = 0; i < logs.length; i += 1) {
+    // Turned off mid-pass: stop, and keep nothing.
+    if (forgets !== started) return;
     const index = (start + i) % logs.length;
     const log = logs[index]!;
     let entry = cache.get(log.path);
@@ -432,7 +517,7 @@ async function runPass(now = Date.now()): Promise<void> {
         continue;
       }
       try {
-        const { read, atEnd } = await readFrom(log.path, entry, budget, firstDay, pacer, buffer);
+        const { read, atEnd } = await readFrom(log.path, entry, budget, days, pacer, buffer);
         budget -= read;
         if (read) changed = true;
         if (!atEnd) {
@@ -450,8 +535,10 @@ async function runPass(now = Date.now()): Promise<void> {
     entry.size = log.size;
     entry.mtimeMs = log.mtimeMs;
   }
+  if (forgets !== started) return;
   const wasComplete = complete;
   complete = cut < 0;
+  if (complete) carried = null;
   cursor = complete ? 0 : cut;
   lastPassAt = Date.now();
   lastFinishedAt = new Date().toISOString();
@@ -477,11 +564,15 @@ export function requestUsagePass(accounts: Array<Pick<Account, "agent" | "dir" |
     });
 }
 
-/** Counting was turned off: forget everything, the saved copy too. */
+/** Counting was turned off: forget everything, the saved copy too, and save nothing until a pass runs with it on again. */
 export function forgetUsage(): void {
   forgets += 1;
   loading = Promise.resolve();
-  void saver.cancel();
+  void saver.close();
+  wanted = [];
+  carried = null;
+  listings = 0;
+  lastPassBytes = 0;
   cache.clear();
   complete = false;
   lastFinishedAt = null;
@@ -551,19 +642,24 @@ export function folderUsage(cwd: string, sinceMs: number, keep: KeepName, agent?
 }
 
 /** For tests and diagnostics: how much the scan keeps, and how much the last pass read. */
-export function usageStats(): { files: number; skills: number; days: number; complete: boolean; readBytes: number } {
+export function usageStats(): { files: number; skills: number; days: number; complete: boolean; readBytes: number; listings: number } {
   let skills = 0;
   let days = 0;
   for (const entry of cache.values()) {
     skills += entry.tally.skills.size;
     for (const tally of entry.tally.skills.values()) days += tally.days.size;
   }
-  return { files: cache.size, skills, days, complete, readBytes: lastPassBytes };
+  return { files: cache.size, skills, days, complete, readBytes: lastPassBytes, listings };
 }
 
 /** For tests: write the saved copy now. */
 export function saveUsageNow(): Promise<void> {
   return saver.now();
+}
+
+/** For tests: the text a save would write. */
+export function usageSnapshotText(): Promise<string | null> {
+  return snapshotText();
 }
 
 /** For tests: what a new plugin load starts with (nothing in memory; the saved copy is read before the next pass). */
@@ -578,6 +674,8 @@ export async function reloadUsage(): Promise<void> {
   cursor = 0;
   failures = 0;
   loading = null;
+  carried = null;
+  saver.reset();
 }
 
 /** For tests: wait for the pass in flight. */
@@ -590,26 +688,36 @@ export async function usageSettled(): Promise<void> {
  * counted, while an app is connected; once caught up, checking for new
  * lines only while a page is open. Otherwise the plugin stays idle.
  */
-export function timerPassDue(): boolean {
+export async function timerPassDue(): Promise<boolean> {
+  if (!(await countingOn())) return false;
   return wanted.length > 0 && (complete ? pageOpen() : clientSeenWithin());
 }
 
 function schedule(): void {
   const delay = !complete && lastFinishedAt && failures === 0 ? CARRY_ON_MS : backoffMs(failures, INTERVAL_MS, 60 * 60_000);
   timer = setTimeout(() => {
-    if (timerPassDue()) requestUsagePass(wanted, { minGapMs: 0 });
-    schedule();
+    timerPassDue()
+      .then((due) => {
+        if (due) requestUsagePass(wanted, { minGapMs: 0 });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (timer) schedule();
+      });
   }, delay);
   timer.unref?.();
 }
 
 onStart(() => {
-  // Read the saved place off the startup path, so the first page shows the last counts straight away.
-  void loadSaved();
+  // Off the startup path: temp files a crash left, then the saved place, so the first page shows the last counts straight away.
+  void sweepStateTemps().then(() => loadSaved());
+  stopListening = onSettingsChanged(() => void countingOn().catch(() => undefined));
   schedule();
 });
 onShutdown(() => {
   if (timer) clearTimeout(timer);
   timer = null;
-  void saver.flush();
+  stopListening?.();
+  stopListening = null;
+  void saver.stop();
 });
