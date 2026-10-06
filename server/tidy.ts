@@ -10,7 +10,7 @@ import { parseIndex } from "../shared/memory-index";
 import { quickSummary } from "../shared/finding-groups";
 import { plainFindings, scanProgressNote } from "../shared/plain";
 import { findSecrets } from "../shared/secrets";
-import { duplicateSteps, findConflicts, nextStep, pathRefs, rankFindings, symbolRefs, type Unit } from "../shared/tidy";
+import { conflictSteps, duplicateSteps, nextStep, pathRefs, rankFindings, symbolRefs, type Unit } from "../shared/tidy";
 import { pendingDiff } from "./codex-pending";
 import { buildCorpus, featuresOf } from "./corpus";
 import type { Paseo } from "./daemon";
@@ -81,38 +81,54 @@ function loadContext(unit: Unit): string {
 }
 
 async function duplicateFindings(units: Unit[], slicer: Slicer): Promise<Finding[]> {
-  return (await runSliced(duplicateSteps(units, featuresOf), slicer)).map((group) => {
-    // A Claude memory copy is the easiest to delete safely (its index line follows), so suggest that one.
-    const copy = group.units.find((unit) => unit.kind === "claude-auto-memory") ?? group.units[group.units.length - 1]!;
-    const keep = group.units.find((unit) => unit !== copy)!;
-    // Deleting a copy only helps when another copy is loaded in the same place (the same project, or everywhere).
-    const sameContext = group.units.some((unit) => unit !== copy && (loadContext(unit) === "user" || loadContext(unit) === loadContext(copy)));
-    const acrossProjects = !sameContext && new Set(group.units.map(loadContext)).size === group.units.length;
-    const action: FindingAction = acrossProjects
-      ? group.exact
-        ? { label: "Move to your user CLAUDE.md", kind: "review", sourceId: copy.sourceId, key: copy.key }
-        : { label: "Keep both (each project loads only its own)", kind: "review", sourceId: copy.sourceId, key: copy.key }
-      : sameContext && copy.kind === "claude-auto-memory"
-        ? { label: `Delete the copy "${copy.title}"`, kind: "delete", sourceId: copy.sourceId, key: copy.key }
-        : editAction(`Keep one copy of "${copy.title}"`, copy);
-    const where2 = acrossProjects ? " Each project loads only its own copy." : "";
-    return {
-      id: id("duplicate", ...group.units.map((unit) => unit.id)),
-      kind: "duplicate",
-      severity: "info",
-      sourceIds: [...new Set(group.units.map((unit) => unit.sourceId))],
-      entryKeys: group.units.map((unit) => unit.key),
-      subject: subjectOf(copy),
-      message: group.exact
-        ? `The same text is in ${group.units.length} places: ${group.units.slice(0, 3).map(where).join("; ")}.${where2}`
-        : `Two places say nearly the same thing (${Math.round(group.score * 100)}% alike): ${where(keep)}; ${where(copy)}.${where2}`,
-      action,
-    };
-  });
+  const out: Finding[] = [];
+  for (const group of await runSliced(duplicateSteps(units, featuresOf), slicer)) {
+    await slicer.step();
+    out.push(duplicateFinding(group));
+  }
+  return out;
 }
 
-function conflictFindings(units: Unit[]): Finding[] {
-  return findConflicts(units, featuresOf).map((group) => ({
+function duplicateFinding(group: { units: Unit[]; score: number; exact: boolean }): Finding {
+  // A Claude memory copy is the easiest to delete safely (its index line follows), so suggest that one.
+  const copy = group.units.find((unit) => unit.kind === "claude-auto-memory") ?? group.units[group.units.length - 1]!;
+  const keep = group.units.find((unit) => unit !== copy)!;
+  // Deleting a copy only helps when another copy is loaded in the same place (the same project, or everywhere).
+  const sameContext = group.units.some((unit) => unit !== copy && (loadContext(unit) === "user" || loadContext(unit) === loadContext(copy)));
+  const acrossProjects = !sameContext && new Set(group.units.map(loadContext)).size === group.units.length;
+  const action: FindingAction = acrossProjects
+    ? group.exact
+      ? { label: "Move to your user CLAUDE.md", kind: "review", sourceId: copy.sourceId, key: copy.key }
+      : { label: "Keep both (each project loads only its own)", kind: "review", sourceId: copy.sourceId, key: copy.key }
+    : sameContext && copy.kind === "claude-auto-memory"
+      ? { label: `Delete the copy "${copy.title}"`, kind: "delete", sourceId: copy.sourceId, key: copy.key }
+      : editAction(`Keep one copy of "${copy.title}"`, copy);
+  const where2 = acrossProjects ? " Each project loads only its own copy." : "";
+  return {
+    id: id("duplicate", ...group.units.map((unit) => unit.id)),
+    kind: "duplicate",
+    severity: "info",
+    sourceIds: [...new Set(group.units.map((unit) => unit.sourceId))],
+    entryKeys: group.units.map((unit) => unit.key),
+    subject: subjectOf(copy),
+    message: group.exact
+      ? `The same text is in ${group.units.length} places: ${group.units.slice(0, 3).map(where).join("; ")}.${where2}`
+      : `Two places say nearly the same thing (${Math.round(group.score * 100)}% alike): ${where(keep)}; ${where(copy)}.${where2}`,
+    action,
+  };
+}
+
+async function conflictFindings(units: Unit[], slicer: Slicer): Promise<Finding[]> {
+  const out: Finding[] = [];
+  for (const group of await runSliced(conflictSteps(units, featuresOf), slicer)) {
+    await slicer.step();
+    out.push(conflictFinding(group));
+  }
+  return out;
+}
+
+function conflictFinding(group: { title: string; units: Unit[] }): Finding {
+  return {
     id: id("conflict", ...group.units.map((unit) => unit.id)),
     kind: "conflict",
     severity: "info",
@@ -122,7 +138,7 @@ function conflictFindings(units: Unit[]): Finding[] {
     subject: group.title,
     message: `Possible conflict (a guess): "${group.title}" appears in ${group.units.length} places with different text: ${group.units.slice(0, 3).map(where).join("; ")}.`,
     action: { label: `Compare the "${group.title}" entries and keep one`, kind: "review", sourceId: group.units[0]!.sourceId, key: group.units[0]!.key },
-  }));
+  };
 }
 
 function resolveRef(ref: string, unit: Unit): string | null {
@@ -220,10 +236,11 @@ async function stalePathFindings(units: Unit[], probe: Probe, slicer: Slicer): P
 /** The units that name code, with the names, per project root: what the background scan is asked about. */
 type SymbolMentions = { queries: Map<string, Set<string>>; mentions: Array<{ unit: Unit; names: string[] }> };
 
-function symbolMentions(units: Unit[]): SymbolMentions {
+async function symbolMentions(units: Unit[], slicer: Slicer): Promise<SymbolMentions> {
   const queries = new Map<string, Set<string>>();
   const mentions: SymbolMentions["mentions"] = [];
   for (const unit of units) {
+    await slicer.step();
     if (!unit.projectPath) continue;
     const names = refsOf(unit).symbols;
     if (!names.length) continue;
@@ -308,9 +325,10 @@ async function folderFindings(discovery: Discovery, probe: Probe, titles: Readon
   return out;
 }
 
-function secretFindings(units: Unit[]): Finding[] {
+async function secretFindings(units: Unit[], slicer: Slicer): Promise<Finding[]> {
   const out: Finding[] = [];
   for (const unit of units) {
+    await slicer.step();
     const found = refsOf(unit).secrets;
     if (!found.length) continue;
     const kinds = [...new Set(found.map((match) => match.kind))];
@@ -361,12 +379,15 @@ async function computeFindings(paseo: Paseo | null, refresh: boolean): Promise<{
   }
   const stale = discovery.settings.staleChecks;
   const paths = stale ? await stalePathFindings(units, probe, slicer) : { findings: [], checked: 0 };
-  const symbols = stale ? symbolMentions(units) : { queries: new Map<string, Set<string>>(), mentions: [] };
-  const unknownFolders = new Set(units.filter((unit) => unit.kind === "claude-auto-memory" && !unit.projectPath && refsOf(unit).paths.some((ref) => !ref.startsWith("~/") && !isAbsolute(ref))).map((unit) => unit.sourceId));
-  if (stale) requestScan(symbols.queries, refresh);
-  const found = [...secretFindings(units), ...(await folderFindings(discovery, probe, noteTitles(units))), ...(await duplicateFindings(units, slicer))];
+  const symbols = stale ? await symbolMentions(units, slicer) : { queries: new Map<string, Set<string>>(), mentions: [] };
   await slicer.step();
-  const conflicts = conflictFindings(units);
+  const unknownFolders = new Set(units.filter((unit) => unit.kind === "claude-auto-memory" && !unit.projectPath && refsOf(unit).paths.some((ref) => !ref.startsWith("~/") && !isAbsolute(ref))).map((unit) => unit.sourceId));
+  await slicer.step();
+  if (stale) requestScan(symbols.queries, refresh);
+  await slicer.step();
+  const found = [...(await secretFindings(units, slicer)), ...(await folderFindings(discovery, probe, noteTitles(units))), ...(await duplicateFindings(units, slicer))];
+  await slicer.step();
+  const conflicts = await conflictFindings(units, slicer);
   await slicer.step();
   const findings = rankFindings([...found, ...paths.findings, ...conflicts]);
   const sources = discovery.sources.filter((source) => source.exists).length;

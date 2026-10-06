@@ -234,3 +234,42 @@ test("a stopped saver (shutdown) makes the save that was due, then nothing more"
   assert.equal(saves, 1, "nothing after the stop");
   assert.equal(existsSync(stateFile.statePath("saver-test")), true);
 });
+
+// ------------------------------------------------------------------ re-check 13aaa42: the pacer under other load
+
+test("with the rest of the process busy, rests stay bounded and the work keeps moving", async () => {
+  const { Pacer } = await import("../server/pace");
+  // A small window and cap so the test is quick; on a host they are 60 s and 5 s.
+  const maxRestMs = 1_000;
+  const pacer = new Pacer(20, 0.04, maxRestMs, 2_000);
+  // Other work in the same process: about 30% of the core (3 ms in every 10).
+  let load = true;
+  const other = setInterval(() => {
+    const start = performance.now();
+    while (load && performance.now() - start < 3);
+  }, 10);
+  const began = performance.now();
+  const doneAt: number[] = [];
+  let longestRest = 0;
+  let own = 0;
+  try {
+    while (performance.now() - began < 6_000) {
+      if (load && performance.now() - began > 4_000) load = false;
+      const start = performance.now();
+      while (performance.now() - start < 1);
+      own += performance.now() - start;
+      doneAt.push(performance.now() - began);
+      const restFrom = performance.now();
+      await pacer.step();
+      longestRest = Math.max(longestRest, performance.now() - restFrom);
+    }
+  } finally {
+    clearInterval(other);
+  }
+  const inSecond = (from: number) => doneAt.filter((at) => at >= from && at < from + 1_000).length;
+  assert.ok(longestRest <= maxRestMs + 150, `a rest lasted ${longestRest.toFixed(0)} ms`);
+  for (const second of [0, 1_000, 2_000, 3_000]) assert.ok(inSecond(second) > 0, `no work in second ${second / 1000} under load`);
+  assert.ok(inSecond(5_000) >= inSecond(3_000), "after the load stops the work goes on at least as fast");
+  const share = own / (performance.now() - began);
+  assert.ok(share < 0.05, `own work took ${(share * 100).toFixed(1)}% of the time`);
+});

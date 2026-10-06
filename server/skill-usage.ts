@@ -394,7 +394,7 @@ function loadSaved(): Promise<void> {
 }
 
 /** Read from `entry.offset`, at most `budget` bytes, line by line; `entry.offset` ends just past the last whole line. */
-async function readFrom(path: string, entry: Entry, budget: number, days: DayWindow, pacer: Pacer, buffer: Buffer): Promise<{ read: number; atEnd: boolean }> {
+async function readFrom(path: string, entry: Entry, budget: number, days: DayWindow, pacer: Pacer, buffer: Buffer, started: number): Promise<{ read: number; atEnd: boolean }> {
   if (entry.offset === 0) entry.skipping = false;
   const handle = await fs.open(path, "r");
   const markers = entry.kind === "codex" ? CODEX_BYTES : CLAUDE_BYTES;
@@ -452,6 +452,8 @@ async function readFrom(path: string, entry: Entry, budget: number, days: DayWin
         }
       }
       await pacer.step();
+      // Counting turned off meanwhile: stop reading (the pass then keeps nothing).
+      if (forgets !== started) break;
     }
   } finally {
     await handle.close();
@@ -517,7 +519,7 @@ async function runPass(now = Date.now()): Promise<void> {
         continue;
       }
       try {
-        const { read, atEnd } = await readFrom(log.path, entry, budget, days, pacer, buffer);
+        const { read, atEnd } = await readFrom(log.path, entry, budget, days, pacer, buffer, started);
         budget -= read;
         if (read) changed = true;
         if (!atEnd) {

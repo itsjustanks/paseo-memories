@@ -35,15 +35,16 @@ const usage = await import("../../server/skill-usage");
 const presence = await import("../../server/presence");
 const files = await import("../../server/files");
 const corpus = await import("../../server/corpus");
+const { forgetDiscovery } = await import("../../server/discover");
 const paseo = big.paseo.api;
 
 after(() => sb.cleanup());
 
 /**
  * The longest the event loop went without running a 2 ms timer, per phase.
- * A phase that can be repeated as it is (`name#1`, `name#2`) is measured
- * twice and checked on the better run: a burst of other work on the machine
- * can spoil one run, while a real regression shows in both.
+ * Every phase is run twice (`name#1`, `name#2`) and checked on the better
+ * run: a burst of other work on the machine can spoil one run, while a real
+ * regression shows in both.
  * On a busy machine the system can also leave the whole process waiting;
  * the loop cannot have been held for longer than the main thread's CPU in
  * the gap, so `held` (the smaller of the two) is what is checked, and the
@@ -96,14 +97,25 @@ function memory(): { rss: number; heap: number } {
 
 test("at a big host's size: the findings are worked out once, then read from the cache", async (t) => {
   presence.markClientSeen();
-  enter("cold findings");
+  enter("cold findings#1");
   const cold = await timed(() => tidy.findingsFor(paseo));
   await settle();
   t.diagnostic(`cold findings: ${cold.ms.toFixed(0)} ms, ${cold.value.findings.length} findings; ${cold.value.checked[0]}`);
   assert.ok(cold.value.findings.length > 0);
   assert.ok(cold.ms < 20_000, `a first read at this size should take seconds at most, took ${cold.ms.toFixed(0)} ms`);
 
-  enter("code-name scan");
+  // Cold again: discovery and the file caches forgotten, so everything is read and worked out anew.
+  enter("cold findings#2");
+  forgetDiscovery();
+  files.forgetAllFiles();
+  await tidy.findingsFor(paseo);
+  await settle();
+
+  enter("code-name scan#1");
+  await symbols.scanSettled();
+  await settle();
+  enter("code-name scan#2");
+  symbols.requestScan(undefined, true);
   await symbols.scanSettled();
   await settle();
 
@@ -154,48 +166,61 @@ test("a page left open: each poll checks in the background, works nothing out ag
     assert.ok(last.heap - first.heap < 4, `heap grew ${(last.heap - first.heap).toFixed(1)} MB over 200 polls`);
     assert.ok(last.rss - first.rss < 48, `rss grew ${(last.rss - first.rss).toFixed(0)} MB over 200 polls`);
 
-    // A memory written by an agent (not through this plugin): the next poll still answers at once, the one after shows it.
-    enter("change on disk");
-    writeFileSync(join(big.memoryDirs[3]!, "fresh-note.md"), "---\nname: fresh note\ndescription: added by an agent\ntype: project\n---\n\nThe old importer lives in `src/lib/gone-importer-xyz.ts`.\n");
-    const stale = await timed(() => tidy.findingsFor(paseo));
-    assert.ok(stale.ms < 200, `the poll after a change answered in ${stale.ms.toFixed(0)} ms`);
-    assert.equal(stale.value.checking, true, "it says a check is running");
-    await tidy.findingsSettled();
-    const fresh = await tidy.findingsFor(paseo);
-    assert.equal(tidy.findingsComputations(), computed + 1, "worked out once for the change");
-    assert.ok(fresh.findings.some((finding) => finding.message.includes("fresh-note.md") || finding.message.includes("fresh note")), "the new file shows");
-    await settle();
+    // A memory written by an agent (not through this plugin): the next poll still answers at once, the one after shows it. Twice, with a new note each time.
+    for (const run of [1, 2]) {
+      if (run === 2) {
+        // Let the first change settle everywhere (discovery reuses its answer for 2 s, then sees it too) before counting again.
+        await new Promise((resolve) => setTimeout(resolve, 2_100));
+        for (let i = 0; i < 2; i += 1) {
+          await tidy.findingsFor(paseo);
+          await tidy.findingsSettled();
+        }
+      }
+      const before = tidy.findingsComputations();
+      enter(`change on disk#${run}`);
+      writeFileSync(join(big.memoryDirs[3]!, `fresh-note-${run}.md`), `---\nname: fresh note ${run}\ndescription: added by an agent\ntype: project\n---\n\nThe old importer lives in \`src/lib/gone-importer-xyz.ts\`.\n`);
+      const stale = await timed(() => tidy.findingsFor(paseo));
+      assert.ok(stale.ms < 200, `the poll after a change answered in ${stale.ms.toFixed(0)} ms`);
+      assert.equal(stale.value.checking, true, "it says a check is running");
+      await tidy.findingsSettled();
+      const fresh = await tidy.findingsFor(paseo);
+      assert.equal(tidy.findingsComputations(), before + 1, "worked out once for the change");
+      assert.ok(fresh.findings.some((finding) => finding.message.includes(`fresh-note-${run}.md`) || finding.message.includes(`fresh note ${run}`)), "the new file shows");
+      await settle();
+    }
   } finally {
     Object.assign(tidy.FINDINGS_TIMING, timing);
   }
 });
 
 test("the caches keep to their budgets, and the findings are the same when they overflow", async (t) => {
-  enter("small caches");
-  const full = await tidy.findingsFor(paseo, true);
-  const sizes = { files: files.fileCacheSizes(), corpus: corpus.corpusCacheSize() };
-  t.diagnostic(`caches: ${sizes.files.texts} texts (${(sizes.files.textBytes / MB).toFixed(1)} MB), ${sizes.files.jsons} parsed; corpus ${sizes.corpus.files} files (${(sizes.corpus.bytes / MB).toFixed(1)} MB)`);
-  assert.ok(sizes.files.textBytes <= files.FILE_CACHE_LIMITS.textBytes && sizes.files.texts <= files.FILE_CACHE_LIMITS.files);
-  assert.ok(sizes.corpus.bytes <= corpus.CORPUS_CACHE_LIMITS.bytes && sizes.corpus.files <= corpus.CORPUS_CACHE_LIMITS.files);
-  const limits = { files: { ...files.FILE_CACHE_LIMITS }, corpus: { ...corpus.CORPUS_CACHE_LIMITS } };
-  // Room for about a tenth of the notes: most are read again on every pass.
-  files.FILE_CACHE_LIMITS.textBytes = MB;
-  corpus.CORPUS_CACHE_LIMITS.bytes = MB;
-  try {
-    const squeezed = await tidy.findingsFor(paseo, true);
-    assert.ok(files.fileCacheSizes().textBytes <= MB);
-    assert.ok(corpus.corpusCacheSize().bytes <= MB);
-    const ids = (answer: typeof full) => answer.findings.map((finding) => finding.id).sort();
-    assert.deepEqual(ids(squeezed), ids(full), "the same findings");
-  } finally {
-    Object.assign(files.FILE_CACHE_LIMITS, limits.files);
-    Object.assign(corpus.CORPUS_CACHE_LIMITS, limits.corpus);
+  for (const run of [1, 2]) {
+    enter(`small caches#${run}`);
+    const full = await tidy.findingsFor(paseo, true);
+    const sizes = { files: files.fileCacheSizes(), corpus: corpus.corpusCacheSize() };
+    t.diagnostic(`caches: ${sizes.files.texts} texts (${(sizes.files.textBytes / MB).toFixed(1)} MB), ${sizes.files.jsons} parsed; corpus ${sizes.corpus.files} files (${(sizes.corpus.bytes / MB).toFixed(1)} MB)`);
+    assert.ok(sizes.files.textBytes <= files.FILE_CACHE_LIMITS.textBytes && sizes.files.texts <= files.FILE_CACHE_LIMITS.files);
+    assert.ok(sizes.corpus.bytes <= corpus.CORPUS_CACHE_LIMITS.bytes && sizes.corpus.files <= corpus.CORPUS_CACHE_LIMITS.files);
+    const limits = { files: { ...files.FILE_CACHE_LIMITS }, corpus: { ...corpus.CORPUS_CACHE_LIMITS } };
+    // Room for about a tenth of the notes: most are read again on every pass.
+    files.FILE_CACHE_LIMITS.textBytes = MB;
+    corpus.CORPUS_CACHE_LIMITS.bytes = MB;
+    try {
+      const squeezed = await tidy.findingsFor(paseo, true);
+      assert.ok(files.fileCacheSizes().textBytes <= MB);
+      assert.ok(corpus.corpusCacheSize().bytes <= MB);
+      const ids = (answer: typeof full) => answer.findings.map((finding) => finding.id).sort();
+      assert.deepEqual(ids(squeezed), ids(full), "the same findings");
+    } finally {
+      Object.assign(files.FILE_CACHE_LIMITS, limits.files);
+      Object.assign(corpus.CORPUS_CACHE_LIMITS, limits.corpus);
+    }
+    await settle();
   }
-  await settle();
 });
 
 test("the usage count streams large chat logs: never a whole log in memory", async (t) => {
-  enter("usage count");
+  enter("usage count#1");
   const accounts = [{ agent: "claude", dir: sb.claude, exists: true }];
   const base = process.memoryUsage();
   let peak = 0;
@@ -213,23 +238,35 @@ test("the usage count streams large chat logs: never a whole log in memory", asy
   const idleUsed = process.cpuUsage(idleCpu);
   const idle = (idleUsed.user + idleUsed.system) / 1000 / (performance.now() - idleBegan);
   const began = performance.now();
-  const cpuBefore = process.cpuUsage();
   let passes = 0;
   let mostRead = 0;
+  // Counted twice from nothing (each its own phase); the CPU share is judged on the better run.
+  const shares: number[] = [];
+  let wall = 0;
   try {
-    while (!usage.usageStats().complete && passes < 20) {
-      passes += 1;
-      usage.requestUsagePass(accounts, { force: true });
-      await usage.usageSettled();
-      mostRead = Math.max(mostRead, usage.usageStats().readBytes);
+    for (const run of [1, 2]) {
+      if (run === 2) {
+        enter("usage count#2");
+        usage.forgetUsage();
+      }
+      const runBegan = performance.now();
+      const cpuBefore = process.cpuUsage();
+      passes = 0;
+      while (!usage.usageStats().complete && passes < 20) {
+        passes += 1;
+        usage.requestUsagePass(accounts, { force: true });
+        await usage.usageSettled();
+        mostRead = Math.max(mostRead, usage.usageStats().readBytes);
+      }
+      wall = performance.now() - runBegan;
+      const cpu = process.cpuUsage(cpuBefore);
+      // The whole process (every thread), less the test's own timers; passes back to back (on a host they are also 30 s apart).
+      shares.push((cpu.user + cpu.system) / 1000 / wall - idle);
     }
   } finally {
     clearInterval(sampler);
   }
-  const wall = performance.now() - began;
-  const cpu = process.cpuUsage(cpuBefore);
-  // The whole process (every thread), less the test's own timers; passes back to back (on a host they are also 30 s apart).
-  const share = (cpu.user + cpu.system) / 1000 / wall - idle;
+  const share = Math.min(...shares);
   await settle();
   // The busiest host's saved copy: every log fits under the cap.
   const warnings: string[] = [];
@@ -238,7 +275,7 @@ test("the usage count streams large chat logs: never a whole log in memory", asy
   const saved = await usage.usageSnapshotText().finally(() => (console.warn = warn));
   const savedBytes = Buffer.byteLength(saved ?? "");
   const savedLogs = (JSON.parse(saved ?? "{}") as { logs?: unknown[] }).logs?.length ?? 0;
-  t.diagnostic(`usage catch-up CPU: ${(share * 100).toFixed(1)}% of one core over ${(wall / 1000).toFixed(1)} s (test timers' ${(idle * 100).toFixed(1)}% taken off); saved copy ${savedLogs} logs in ${(savedBytes / MB).toFixed(2)} MB`);
+  t.diagnostic(`usage catch-up CPU: ${shares.map((one) => (one * 100).toFixed(1)).join("/")}% of one core (${(wall / 1000).toFixed(1)} s a count) (test timers' ${(idle * 100).toFixed(1)}% taken off); saved copy ${savedLogs} logs in ${(savedBytes / MB).toFixed(2)} MB`);
   assert.ok(idle < 0.05, `the test's own timers used ${(idle * 100).toFixed(1)}% with nothing running: something else was`);
   assert.ok(share <= 0.05, `catching up used ${(share * 100).toFixed(1)}% of a core`);
   assert.equal(savedLogs, usage.usageStats().files, "every log fits in the saved copy");

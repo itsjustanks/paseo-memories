@@ -302,11 +302,12 @@ export function symbolsVersion(): number {
 export function requestScan(queries?: Map<string, Iterable<string>>, force = false): void {
   let changed = false;
   if (queries) {
-    const next = new Map([...queries].map(([root, names]) => [own(root), [...new Set([...names].map(own))].sort()]));
-    const key = JSON.stringify([...next].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    // The key from the names as given; copies (own) are made only when they changed, the rare case.
+    const sorted = [...queries].map(([root, names]) => [root, [...new Set(names)].sort()] as const).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const key = JSON.stringify(sorted);
     changed = key !== wantedKey;
     if (changed) {
-      wanted = next;
+      wanted = new Map(sorted.map(([root, names]) => [own(root), names.map(own)]));
       wantedKey = key;
       quietPasses = 0;
     }

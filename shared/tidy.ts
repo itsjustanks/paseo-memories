@@ -225,8 +225,18 @@ export type ConflictGroup = { title: string; units: Unit[]; score: number };
  * text. A guess (the UI says so): same title is only a hint of same topic.
  */
 export function findConflicts(units: Unit[], featuresOf: FeaturesOf = plainFeatures): ConflictGroup[] {
+  const steps = conflictSteps(units, featuresOf);
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+  }
+}
+
+/** `findConflicts` as a generator that pauses every few units and titles (server/pace.ts `runSliced`). */
+export function* conflictSteps(units: Unit[], featuresOf: FeaturesOf = plainFeatures): Generator<void, ConflictGroup[]> {
   const byTitle = new Map<string, Unit[]>();
-  for (const unit of units) {
+  for (const [i, unit] of units.entries()) {
+    if (i % STEP_UNITS === STEP_UNITS - 1) yield;
     const title = normalizeText(unit.title);
     if (!title || GENERIC_TITLES.has(title) || title.split(" ").length < 2) continue;
     const members = byTitle.get(title);
@@ -234,7 +244,9 @@ export function findConflicts(units: Unit[], featuresOf: FeaturesOf = plainFeatu
     else byTitle.set(title, [unit]);
   }
   const out: ConflictGroup[] = [];
+  let seen = 0;
   for (const [title, members] of byTitle) {
+    if (++seen % STEP_UNITS === 0) yield;
     const keys = new Set<string>();
     const distinct = members.filter((unit) => {
       const key = `${unit.sourceId}\u0000${unit.key}`;
