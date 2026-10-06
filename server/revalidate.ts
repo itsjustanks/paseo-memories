@@ -97,7 +97,10 @@ export class Revalidating<T> {
     if (!held) return Promise.resolve();
     const startedAt = Date.now();
     const run = async () => {
-      const unchanged = (await work.inputs()) === held.inputs && !(await changedSince(held.seen));
+      const same = (await work.inputs()) === held.inputs;
+      // Between the inputs and the stats: let the RPCs in.
+      await new Promise((resolve) => setImmediate(resolve));
+      const unchanged = same && !(await changedSince(held.seen));
       if (unchanged && this.held === held) held.verifiedAt = startedAt;
       else if (!unchanged) await this.compute(work);
     };

@@ -194,9 +194,10 @@ function looksSame(stat: Stat | null, was: string): boolean {
 /**
  * Whether any path looks different now: one stat each, `limit` at a time,
  * stopping at the first change, and letting other work in after every
- * `batch` stats. About 25 ms for 4,500 paths.
+ * `batch` stats (a page polling must never hold the loop). About 25 ms of
+ * CPU for 4,500 paths, in many small pieces.
  */
-export async function changedSince(seen: Seen, limit = 8, batch = 64): Promise<boolean> {
+export async function changedSince(seen: Seen, limit = 4, batch = 16): Promise<boolean> {
   const paths = [...seen.keys()];
   let next = 0;
   let changed = false;
