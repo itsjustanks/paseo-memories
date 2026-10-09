@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import fsp from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test, { afterEach } from "node:test";
 import { fakePaseo, makeSandbox, violations } from "./helpers";
 
@@ -46,16 +46,17 @@ test("R2: a case-only rename whose index write fails is renamed back and reporte
   const paseo = fakePaseo(sb).api;
   const path = join(sb.appMemory, "flat.md");
   const before = readFileSync(path, "utf8");
-  const original = fsp.rename;
-  (fsp as unknown as { rename: unknown }).rename = async (from: unknown, to: unknown) => {
-    if (String(to).endsWith("MEMORY.md")) throw Object.assign(new Error("disk said no"), { code: "EIO" });
+  // 0.6.0: a new MEMORY.md is put in place by a no-replace link from a temp file; that's the step that fails here.
+  const original = fsp.link;
+  (fsp as unknown as { link: unknown }).link = async (from: unknown, to: unknown) => {
+    if (String(to).endsWith("MEMORY.md") && basename(String(from)).startsWith(".paseo-memories-tmp-")) throw Object.assign(new Error("disk said no"), { code: "EIO" });
     return (original as (a: unknown, b: unknown) => Promise<void>)(from, to);
   };
   let result;
   try {
     result = await claudeUpdate(paseo, { sourceId: sb.appMemory, key: "flat.md", rename: "Flat.md", expected: stampOf(path) });
   } finally {
-    (fsp as unknown as { rename: unknown }).rename = original;
+    (fsp as unknown as { link: unknown }).link = original;
   }
   assert.equal(result.ok, false);
   assert.match(result.message, /undone/);

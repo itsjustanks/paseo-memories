@@ -15,6 +15,7 @@ import { workspaceDirectory, type Paseo } from "./daemon";
 import { discover, discoverNow, groupSources, memoryFileCount, type Discovery } from "./discover";
 import { daemonEnv, userHome } from "./env";
 import { MAX_READ_BYTES, Probe, sha256, statSafe } from "./files";
+import { gitRoot } from "./git";
 import { planFor, toLoadPlan, type PlanCtx, type PlanItem } from "./plans";
 import { applyWritable } from "./writable";
 
@@ -317,12 +318,21 @@ export async function handleEntryBody(
   };
 }
 
+/**
+ * Where this project starts (0.6.0): its git root (a Paseo worktree is its
+ * own root), else the folder itself. Files above it are inherited from a
+ * parent folder, not the project's own.
+ */
+async function projectRootOf(directory: string): Promise<string> {
+  return (await gitRoot(new Probe(), directory)) ?? directory;
+}
+
 export async function handleWorkspacePlan({ workspaceId }: { workspaceId: string }, { paseo }: PluginHandlerContext) {
   const directory = await workspaceDirectory(paseo, workspaceId);
   const discovery = await discover(paseo);
   const plans: LoadPlan[] = [];
   for (const { raw, accountId, agent } of await workspacePlans(discovery, directory)) plans.push(toLoadPlan(raw, { providerId: agent, ...(accountId ? { accountId } : {}) }));
-  return { directory, plans, checkedAt: new Date().toISOString() };
+  return { directory, plans, checkedAt: new Date().toISOString(), home: userHome(), projectRoot: await projectRootOf(directory) };
 }
 
 export async function handleAgentPlan({ workspaceId, providerId }: { workspaceId: string; providerId: string; agentId?: string }, { paseo }: PluginHandlerContext) {
@@ -333,5 +343,5 @@ export async function handleAgentPlan({ workspaceId, providerId }: { workspaceId
   const ctx: PlanCtx = { probe: new Probe(), home: userHome(), env, prompt: discovery.prompt, codexEdits: discovery.settings.codexEdits };
   const raw = await planFor(agent, ctx, dir, directory);
   if (!account && !(DIR_AGENTS as readonly string[]).includes(agent)) raw.unsure.push(`Provider ${providerId} is not one this plugin can read.`);
-  return { directory, plan: toLoadPlan(raw, { providerId, ...(account ? { accountId: account.id } : {}) }), checkedAt: new Date().toISOString() };
+  return { directory, plan: toLoadPlan(raw, { providerId, ...(account ? { accountId: account.id } : {}) }), checkedAt: new Date().toISOString(), home: userHome(), projectRoot: await projectRootOf(directory) };
 }

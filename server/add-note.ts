@@ -209,6 +209,8 @@ export async function noteAdd(paseo: Paseo | null, input: Request & { expected: 
   const saved: string[] = [];
   const already: string[] = [];
   const notSaved: Array<{ label: string; reason: string }> = [];
+  /** Saved, but Claude's list (MEMORY.md) couldn't take its line (0.6.0: the note is kept, never rolled back). */
+  const unlisted: string[] = [];
   // Each target on its own: one that fails or won't be read never stops the others, and each is reported.
   for (const target of plan.targets) {
     try {
@@ -229,7 +231,8 @@ export async function noteAdd(paseo: Paseo | null, input: Request & { expected: 
         saved.push(target.label);
         const warning = noteTargetWarning(target);
         if (warning) warnings.push(warning);
-      } else notSaved.push({ label: target.label, reason: failureReason(result) });
+      } else if (/couldn't update the index/.test(result.message)) unlisted.push(target.label);
+      else notSaved.push({ label: target.label, reason: failureReason(result) });
     } catch (error) {
       notSaved.push({ label: target.label, reason: plainError(error) });
     }
@@ -237,11 +240,12 @@ export async function noteAdd(paseo: Paseo | null, input: Request & { expected: 
   logWrite("note-add", plan.targets.map((target) => target.path).join(", "), `${saved.length} saved, ${already.length} already there, ${notSaved.length} not saved`);
   // One plain sentence per place: what was saved, and why each other place wasn't.
   const parts: string[] = [];
-  if (saved.length && !notSaved.length) parts.push(PLAIN.saved);
+  if (saved.length && !notSaved.length && !unlisted.length) parts.push(PLAIN.saved);
   else if (saved.length) parts.push(`Saved to ${saved.join(" and ")}. New agents will follow it there.`);
+  for (const label of unlisted) parts.push(`Saved to ${label}, but Claude's list of notes couldn't be updated, so Claude may not find it until its line is added.`);
   for (const entry of notSaved) parts.push(`Couldn't save to ${entry.label}: ${sentence(entry.reason)}`);
   if (already.length) parts.push(`${already.join(" and ")} already had this note, so it wasn't added again.`);
-  return { ok: notSaved.length === 0, message: parts.join(" "), reports, warnings: [...new Set(warnings)] };
+  return { ok: notSaved.length === 0 && unlisted.length === 0, message: parts.join(" "), reports, warnings: [...new Set(warnings)] };
 }
 
 function sentence(text: string): string {
@@ -251,7 +255,6 @@ function sentence(text: string): string {
 
 /** Why one place's save failed, in plain words: the rollback when there was one, else the file's own error. */
 function failureReason(result: WriteResult): string {
-  if (result.reports.some((report) => report.action === "rolled back")) return "Claude's list of notes couldn't be updated, so this note was taken back out.";
   const failed = result.reports.find((report) => !report.ok && report.error);
   return plainMessage(failed?.error ?? result.message);
 }

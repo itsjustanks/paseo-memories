@@ -2,6 +2,7 @@ import { useSettings, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { SettingsAction, SettingsCard, SettingsSection, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import React, { useMemo } from "react";
 import { Text } from "react-native";
+import { redactText } from "../shared/redact";
 import { memoriesSettings, type MemoriesSettings } from "../shared/settings";
 
 /** The plugin's host settings (paseo-mcp `client/settings.tsx` pattern). */
@@ -16,7 +17,7 @@ export function MemoriesSettingsScreen({ theme }: PluginSurfaceProps) {
   if (settings.status !== "ready") {
     return (
       <SettingsSection title="Memories & Skills">
-        <Text style={style}>{settings.error}</Text>
+        <Text style={style}>{redactText(settings.error)}</Text>
         <SettingsAction label="Try again" actionLabel="Reload" onPress={settings.reload} />
         {settings.status === "invalid" ? <SettingsAction label="Restore default settings" actionLabel="Reset" onPress={settings.reset} /> : null}
       </SettingsSection>
@@ -32,7 +33,7 @@ export function MemoriesSettingsScreen({ theme }: PluginSurfaceProps) {
         <SettingsSwitch label="Check for stale mentions" hint="Paths and code names a memory mentions that no longer exist (code names are checked in the background while the app is open)" value={values.staleChecks} disabled={settings.saving} onValueChange={(staleChecks) => save({ staleChecks })} />
         <SettingsSwitch label="Hide secrets" hint="Token-looking values stay hidden until you reveal them" value={values.maskSecrets} disabled={settings.saving} onValueChange={(maskSecrets) => save({ maskSecrets })} />
         <SettingsSwitch label="Allow Codex memory edits" hint="Edits to Codex's MEMORY.md and memory_summary.md; Codex folds them in at its next run" value={values.codexEdits} disabled={settings.saving} onValueChange={(codexEdits) => save({ codexEdits })} />
-        <SettingsSelect label="Backups kept" hint="Old copies kept per file under Paseo's plugin-data folder" value={String(values.backupsToKeep)} options={BACKUPS} disabled={settings.saving} onValueChange={(value) => save({ backupsToKeep: Number(value) })} />
+        <SettingsSelect label="Backups kept" hint="How many earlier versions to keep in each folder's .memories-backup (beside the files; older ones are removed)" value={String(values.backupsToKeep)} options={BACKUPS} disabled={settings.saving} onValueChange={(value) => save({ backupsToKeep: Number(value) })} />
       </SettingsCard>
       <SettingsCard>
         <SettingsSwitch label="Count skill use" hint="Read your agents' chat history on this computer to see which skills ran (only counts are kept, never the chats)" value={values.skillsUsage} disabled={settings.saving} onValueChange={(skillsUsage) => save({ skillsUsage })} />

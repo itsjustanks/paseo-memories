@@ -3,7 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import type { Finding } from "../shared/contracts";
 import { plainError } from "../shared/errors";
-import { PLAIN } from "../shared/plain";
+import { PLAIN, TOASTS } from "../shared/plain";
+import { scopeLabel as whereItApplies } from "../shared/scope";
 import { clockTime } from "../shared/schedule";
 import { groupFindings, groupTitle, quickSummary, type FindingGroup } from "../shared/finding-groups";
 import { skillsFix, skillsFixAll } from "../shared/skill-contracts";
@@ -23,7 +24,7 @@ import { onSkillsPlace, skillsLanding, skillsParams, syncSkillsParams, takeSkill
 import { SkillsResult, type SkillsResultValue } from "./skills-report";
 import { reportSidebarStatus } from "./sidebar-status";
 import { SkillsUsage } from "./skills-usage";
-import { Button, Card, Disclosure, Divider, ErrorText, HeroCard, Header, Link, Meta, NumberedStep, Notice, QuietLine, Row, Screen, SectionTitle, StatusLine, SubPageTop, TabLine, TokensProvider, useTokens, useUi, type Status } from "./ui";
+import { Button, Card, Disclosure, Divider, ErrorText, HeroCard, Header, Link, Meta, NumberedStep, Notice, QuietLine, Row, Screen, SectionTitle, StatusLine, SubPageTop, TabLine, TokensProvider, useHostToast, useTokens, useUi, type Status } from "./ui";
 
 /**
  * The Skills page (0.5.0): Overview · Your skills · Usage · Help. Add a skill
@@ -108,6 +109,7 @@ function costFor(inv: Inventory, agent: string) {
 export function useFindingAction(hostId: string, onGo: (place: SkillsPlace) => void) {
   const call = useRpc(skillsFix);
   const callAll = useRpc(skillsFixAll);
+  const toast = useHostToast();
   const refresh = useSkillsRefresh(hostId);
   const [busy, setBusy] = useState<string | null>(null);
   const [busyGroup, setBusyGroup] = useState<string | null>(null);
@@ -133,9 +135,14 @@ export function useFindingAction(hostId: string, onGo: (place: SkillsPlace) => v
   const fixAll = async (group: FindingGroup<Finding>, findingIds: string[]) => {
     setBusyGroup(group.key);
     try {
-      setResult(await callAll({ kind: group.key, findingIds }));
+      const outcome = await callAll({ kind: group.key, findingIds });
+      setResult(outcome);
+      // The report lands at the top of the page; the button may be far below it.
+      if (outcome.ok) toast.show(TOASTS.fixed, { variant: "success" });
+      else toast.error(TOASTS.notFixed);
     } catch (error) {
       setResult({ ok: false, message: plainError(error) });
+      toast.error(TOASTS.notFixed);
     } finally {
       setBusyGroup(null);
       void refresh();
@@ -154,6 +161,7 @@ export function FindingsCard({ findings, hostId, onGo }: { findings: Finding[]; 
   const t = useTokens();
   const plain = usePlain();
   const { act, busy, result, clear, fixAll, busyGroup } = useFindingAction(hostId, onGo);
+  const inventory = useSkillsInventory(hostId);
   // One row per kind with its count and Fix all where safe (0.5.1); a kind with one item keeps its own row.
   const row = (finding: Finding, { grouped, first }: { grouped: boolean; first: boolean }) => {
     const words = plain ? plainSkillFinding(finding) : { title: finding.message, detail: finding.detail ?? "" };
@@ -172,7 +180,11 @@ export function FindingsCard({ findings, hostId, onGo }: { findings: Finding[]; 
   return (
     <>
       {result ? <SkillsResult hostId={hostId} result={result} onDismiss={clear} /> : null}
-      <GroupedFindings page="skills" findings={findings} renderRow={row} busyGroup={busyGroup} onFixAll={(group, ids) => void fixAll(group, ids)} itemName={(finding) => [skillSubject(finding), finding.detail].filter(Boolean).join(" · ")} />
+      <GroupedFindings page="skills" findings={findings} renderRow={row} busyGroup={busyGroup} onFixAll={(group, ids) => void fixAll(group, ids)} itemName={(finding) => {
+          // Its name and where it applies ("deploy · This project · acme-web").
+          const skill = inventory.data?.skills.find((entry) => entry.id === finding.sourceIds?.[0]);
+          return [skillSubject(finding), skill ? whereItApplies(skill) : finding.detail].filter(Boolean).join(" · ");
+        }} />
     </>
   );
 }

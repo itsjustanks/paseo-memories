@@ -52,7 +52,7 @@ export async function instructionWrite(
   paseo: Paseo | null,
   input: { path: string; workspaceId?: string; text: string; expected: FileStamp | null; sectionKey?: string; removeSection?: boolean },
   /** Imports may carry masked values on purpose; the caller warns. */
-  { allowMasked = false } = {},
+  { allowMasked = false }: { allowMasked?: boolean } = {},
 ): Promise<WriteResult> {
   const path = input.path;
   if (resolve(path) !== path || basename(path).startsWith(".paseo-memories-tmp-")) return refuse("That is not a file path this plugin writes.");

@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import fsp from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test, { afterEach } from "node:test";
 import { fakePaseo, makeSandbox, violations, type Sandbox } from "./helpers";
 
@@ -295,9 +295,10 @@ test("7: delete or edit in a folder without MEMORY.md does not create an empty o
 test("8: a rename whose index write fails is undone: no duplicate memory", async () => {
   await fresh();
   const paseo = fakePaseo(sb).api;
-  const original = fsp.rename;
-  (fsp as unknown as { rename: unknown }).rename = async (from: unknown, to: unknown) => {
-    if (String(to).endsWith("MEMORY.md")) throw Object.assign(new Error("disk said no"), { code: "EIO" });
+  // 0.6.0: a new MEMORY.md is put in place by a no-replace link from a temp file; that's the step that fails here.
+  const original = fsp.link;
+  (fsp as unknown as { link: unknown }).link = async (from: unknown, to: unknown) => {
+    if (String(to).endsWith("MEMORY.md") && basename(String(from)).startsWith(".paseo-memories-tmp-")) throw Object.assign(new Error("disk said no"), { code: "EIO" });
     return (original as (a: unknown, b: unknown) => Promise<void>)(from, to);
   };
   try {
@@ -305,7 +306,7 @@ test("8: a rename whose index write fails is undone: no duplicate memory", async
     assert.equal(result.ok, false);
     assert.ok(result.reports.some((report) => report.action === "rolled back" && report.ok));
   } finally {
-    (fsp as unknown as { rename: unknown }).rename = original;
+    (fsp as unknown as { link: unknown }).link = original;
   }
   assert.equal(existsSync(join(sb.appMemory, "flat_renamed.md")), false, "the new copy was taken back out");
   assert.ok(existsSync(join(sb.appMemory, "flat.md")), "the original stays");

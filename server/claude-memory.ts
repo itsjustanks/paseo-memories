@@ -20,7 +20,7 @@ import { listDir } from "./files";
 import { logWrite } from "./log";
 import { findSource } from "./read";
 import { readMemoriesSettings } from "./settings";
-import { fsError, newSession, readCurrent, removeFile, renameInPlace, safeDelete, safeWrite, sameFile, staleReason, type Session } from "./write";
+import { fsError, newSession, readCurrent, renameInPlace, safeDelete, safeWrite, sameFile, staleReason, type Session } from "./write";
 
 /**
  * Claude auto memory: one file per memory in `<cfg>/projects/<slug>/memory/`,
@@ -160,16 +160,10 @@ export async function claudeCreate(
     }
     if (line) reports.push(line);
     if (line && !line.ok) {
-      // Not in MEMORY.md, Claude never finds it: take the new file back out, as a failed rename does.
-      try {
-        await removeFile(path);
-        reports.push({ target: path, ok: true, action: "rolled back", readBack: "skipped" });
-      } catch (error) {
-        reports.push({ target: path, ok: false, action: "rolled back", readBack: "skipped", error: `Could not remove the new file: ${fsError(error, path)} Delete it by hand.` });
-      }
+      // 0.6.0 review: the new note is never deleted or rolled back (another editor may already have replaced it). It stays; the message says the list wasn't updated.
       forgetDiscovery();
-      logWrite("claude-create", path, "rolled back");
-      return { ok: false, message: `${fileName} was not kept: MEMORY.md could not be updated, so Claude would never find it. The new file was taken back out.`, reports, warnings: [] };
+      logWrite("claude-create", path, "saved, index failed");
+      return { ok: false, message: `Saved ${fileName} but couldn't update the index (MEMORY.md): ${line.error ?? "it read back differently"} Claude may not find the note until its line is added.`, reports, warnings: [] };
     }
   }
   forgetDiscovery();
@@ -251,16 +245,16 @@ export async function claudeUpdate(
       if (index) reports.push(index);
       if (!index || index.ok) reports.push(await safeDelete(session, path, current));
       else {
-        // The index did not take the new name: take the new file back out, so there is no unindexed duplicate.
-        try {
-          await removeFile(target);
-          reports.push({ target, ok: true, action: "rolled back", readBack: "skipped" });
-        } catch (error) {
-          reports.push({ target, ok: false, action: "rolled back", readBack: "skipped", error: `Could not remove the new copy: ${fsError(error, target)} Delete it by hand.` });
-        }
+        // The index did not take the new name. The new copy is never unlinked (0.6.0 review): only if it is still byte for
+        // byte what was just written does it move into the backup folder beside it; if anyone changed it since, it stays.
+        const written = await readCurrent(target);
+        const back = written.exists && written.stamp?.hash === created.stamp?.hash ? await safeDelete(session, target, written) : null;
+        reports.push(back ? { ...back, action: "rolled back" } : { target, ok: false, action: "kept", readBack: "skipped", error: `${input.rename} changed since it was written, so it was kept.` });
         forgetDiscovery();
-        logWrite("claude-update", path, "rename rolled back");
-        return { ok: false, message: `The rename to ${input.rename} was undone: MEMORY.md could not be updated, so ${input.key} stays as it was.`, reports, warnings: [] };
+        logWrite("claude-update", path, back?.ok ? "rename rolled back" : "rename kept");
+        return back?.ok
+          ? { ok: false, message: `The rename to ${input.rename} was undone: MEMORY.md could not be updated, so ${input.key} stays as it was. The new copy is in the backup folder beside it.`, reports, warnings: [] }
+          : { ok: false, message: `MEMORY.md could not be updated for the rename to ${input.rename}. ${input.key} stays as it was, and ${input.rename} was kept because it changed since it was written.`, reports, warnings: [] };
       }
     }
     forgetDiscovery();

@@ -206,6 +206,10 @@ export const WriteReportSchema = z.object({
   error: z.string().optional(),
   versionControlled: z.boolean().optional(),
   stamp: FileStampSchema.optional(),
+  /** A version that was moved aside but couldn't go back (its name was taken): where it is kept (0.6.0). */
+  keptAt: z.string().optional(),
+  /** Every version kept aside that exists after the change (the one found, this change), each to copy (0.6.0). */
+  kept: z.array(z.string()).optional(),
 });
 export type WriteReport = z.infer<typeof WriteReportSchema>;
 
@@ -320,13 +324,14 @@ export const entryBody = defineRpc({
 export const workspacePlan = defineRpc({
   name: "paseo-memories.workspace-plan",
   input: z.object({ workspaceId: z.string() }),
-  output: z.object({ directory: z.string(), plans: z.array(LoadPlanSchema), checkedAt: z.string() }),
+  /** `home`: so the app can point at files as "~/…"; `projectRoot`: where the project starts (its git root), so files above it count as inherited (0.6.0). */
+  output: z.object({ directory: z.string(), plans: z.array(LoadPlanSchema), checkedAt: z.string(), home: z.string().optional(), projectRoot: z.string().optional() }),
 });
 
 export const agentPlan = defineRpc({
   name: "paseo-memories.agent-plan",
   input: z.object({ workspaceId: z.string(), providerId: z.string(), agentId: z.string().optional() }),
-  output: z.object({ directory: z.string(), plan: LoadPlanSchema, checkedAt: z.string() }),
+  output: z.object({ directory: z.string(), plan: LoadPlanSchema, checkedAt: z.string(), home: z.string().optional(), projectRoot: z.string().optional() }),
 });
 
 // ------------------------------------------------------------------ write RPCs
@@ -552,6 +557,8 @@ export const importPreview = defineRpc({
         identical: z.boolean().optional(),
         masked: z.boolean().default(false),
         warnings: z.array(z.string()).default([]),
+        /** Copies and moves: what this preview showed, as a hash; hand it back to Apply in `seen` (0.6.0). */
+        fingerprint: z.string().optional(),
       }),
     ),
     checked: z.string().default(""),
@@ -569,6 +576,12 @@ export const importApply = defineRpc({
     expected: FileStampSchema.nullable().optional(),
     /** For `from`: delete the originals once the copies are saved. */
     move: z.boolean().optional(),
+    /** For `from`: each chosen item's `fingerprint` from the preview; an item that changed since is refused (0.6.0). */
+    seen: z.record(z.string(), z.string()).optional(),
+    /** One per Save press: the same id again gets the first answer and writes nothing (0.6.0). */
+    requestId: z.string().min(8).max(100).optional(),
+    /** The app session that sent it (one per app start); answers are kept per session (0.6.0). */
+    clientId: z.string().min(8).max(100).optional(),
   }),
   output: WriteResultSchema,
 });

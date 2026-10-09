@@ -145,7 +145,7 @@ test("Fix all adds the missing notes to Claude's list (one write, a backup), the
     assert.equal(line.hook, hook);
   }
   assert.ok(added.reports.length === 1 && added.reports[0]!.backupPath && existsSync(added.reports[0]!.backupPath), "one write to the list, the old one kept");
-  assert.ok(added.reports[0]!.backupPath!.startsWith(backupsRoot()));
+  assert.ok(added.reports[0]!.backupPath!.endsWith("/MEMORY.md.bak") && added.reports[0]!.backupPath!.includes("/.memories-backup/"));
 
   // Fix all sends the items the person confirmed (0.5.1 review): here, every line for a gone note in the list.
   const goneIds = (await findingsFor(fake.api as never, true)).findings.filter((finding) => memoryGroupKey(finding) === "index-gone").map((finding) => finding.id);

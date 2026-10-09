@@ -55,7 +55,8 @@ beforeEach(() => {
 });
 
 const lockJson = () => JSON.parse(readFileSync(sb.lock, "utf8")) as { version: number; skills: Record<string, Record<string, unknown>>; dismissed: unknown; lastSelectedAgents: unknown };
-const backups = () => (existsSync(backupsRoot()) ? readdirSync(backupsRoot(), { recursive: true }).map(String) : []);
+/** Every backup this plugin made, in the `.memories-backup` folders beside what it backed up (0.6.0). */
+const backups = () => readdirSync(sb.home, { recursive: true }).map(String).filter((path) => path.includes(".memories-backup/") && !path.endsWith(".gitignore"));
 async function skillNamed(name: string) {
   forgetSkillCaches();
   return (await discoverSkills(fake.api, { refresh: true })).skills.find((skill) => skill.name === name);
@@ -288,45 +289,34 @@ test("remove: the folder goes to the backups with its links and lock entry, and 
   assert.equal(lockJson().skills["weekly-report"], undefined);
   assert.ok(lockJson().skills.alpha, "other entries kept");
   const folderBackup = removed.reports.find((report) => report.target === join(sb.shared, "weekly-report"))!.backupPath!;
-  assert.ok(existsSync(join(folderBackup, "SKILL.md")));
-  assert.ok(removed.reports.filter((report) => report.backupPath?.endsWith(".link.json")).length === 2, "each link written down");
+  assert.ok(folderBackup.endsWith("/weekly-report.bak") && existsSync(join(folderBackup, "SKILL.md")), "kept whole, nothing inside renamed");
+  assert.ok(removed.reports.filter((report) => report.backupPath?.endsWith("/weekly-report.bak") && lstatSync(report.backupPath).isSymbolicLink()).length === 2, "each link kept as itself");
   // Put it back by hand: it is a skill again.
+  // Putting it back: move the folder back without its .bak (Help says so).
   renameSync(folderBackup, join(sb.shared, "weekly-report"));
   assert.ok(await skillNamed("weekly-report"));
 });
 
-test("across disks: copied, checked file for file, then deleted; a bad copy leaves the original", async () => {
+test("(0.6.0) removal never copies across disks: the backup is beside it; a failed rename removes nothing", async () => {
   const fsp = (await import("node:fs/promises")).default as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
   const { syncBuiltinESMExports } = await import("node:module");
   const realRename = fsp.rename!;
-  const realCp = fsp.cp!;
-  const exdev = (...args: unknown[]) => (String(args[1]).startsWith(backupsRoot()) ? Promise.reject(Object.assign(new Error("cross-device"), { code: "EXDEV" })) : realRename(...args));
-  writeSkill(join(sb.shared, "far-away"), skillMd("far-away", "On another disk."), { "scripts/x.sh": { text: "#!/bin/sh\n", mode: 0o755 } });
-  fsp.rename = exdev;
+  writeSkill(join(sb.shared, "far-away"), skillMd("far-away", "Stays put."), { "scripts/x.sh": { text: "#!/bin/sh\n", mode: 0o755 } });
+  fsp.rename = (...args: unknown[]) => (String(args[1]).includes("/.memories-backup/") ? Promise.reject(Object.assign(new Error("cross-device"), { code: "EXDEV" })) : realRename(...args));
   syncBuiltinESMExports();
   try {
     const report = await moveToBackup(newSession(5), join(sb.shared, "far-away"));
-    assert.equal(report.ok, true, report.error ?? "");
-    assert.equal(report.action, "copied-and-deleted");
-    assert.equal(existsSync(join(sb.shared, "far-away")), false);
-    assert.equal(readFileSync(join(report.backupPath!, "scripts", "x.sh"), "utf8"), "#!/bin/sh\n");
-    assert.equal(readdirSync(sb.shared).some((name) => name.startsWith(".paseo-memories-tmp-")), false, "nothing left aside");
-    // A copy that comes out different: the original stays, the bad copy is taken back out.
-    writeSkill(join(sb.shared, "far-two"), skillMd("far-two", "Copy goes wrong."));
-    fsp.cp = async (...args: unknown[]) => {
-      await realCp(...args);
-      writeFileSync(join(String(args[1]), "SKILL.md"), "changed in transit");
-    };
-    syncBuiltinESMExports();
-    const bad = await moveToBackup(newSession(5), join(sb.shared, "far-two"));
-    assert.equal(bad.ok, false);
-    assert.ok(existsSync(join(sb.shared, "far-two", "SKILL.md")));
-    assert.match(readFileSync(join(sb.shared, "far-two", "SKILL.md"), "utf8"), /Copy goes wrong/);
+    assert.equal(report.ok, false);
+    assert.ok(existsSync(join(sb.shared, "far-away", "SKILL.md")), "nothing removed");
+    assert.equal(readFileSync(join(sb.shared, "far-away", "scripts", "x.sh"), "utf8"), "#!/bin/sh\n");
   } finally {
     fsp.rename = realRename;
-    fsp.cp = realCp;
     syncBuiltinESMExports();
   }
+  const report = await moveToBackup(newSession(5), join(sb.shared, "far-away"));
+  assert.equal(report.ok, true, String(report.error));
+  assert.ok(report.backupPath!.startsWith(join(sb.shared, ".memories-backup") + "/"), String(report.backupPath));
+  assert.equal(readFileSync(join(report.backupPath!, "scripts", "x.sh"), "utf8"), "#!/bin/sh\n");
 });
 
 test("a link to a folder elsewhere: only the link goes", async () => {

@@ -282,25 +282,35 @@ test("040a-9 a pinned commit not on the project's main line gets a plain warning
 
 // 10 ------------------------------------------------------------------------------------------------
 
-test("040a-10 across disks, a file changed after the copy keeps the original", async () => {
+test("040a-10 (0.6.0) a skill being edited as it's removed: the one rename captures it, edit included; a failed rename removes nothing", async () => {
   writeSkill(join(sb.shared, "busy-one"), skillMd("busy-one", "Being edited."));
-  let calls = 0;
-  const undo = patch("rename", (original) => async (from: string, to: string) => {
-    calls += 1;
-    if (String(to).startsWith(backupsRoot())) throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
-    // Someone edits the skill just as it is set aside.
+  // Someone edits the skill right before it is set aside: the rename captures the edit, in the backup beside it.
+  const undoEdit = patch("rename", (original) => async (from: string, to: string) => {
     if (String(from) === join(sb.shared, "busy-one")) writeFileSync(join(String(from), "SKILL.md"), "edited meanwhile\n");
     return original(from, to);
   });
   try {
     const report = await moveToBackup(newSession(5), join(sb.shared, "busy-one"));
+    assert.equal(report.ok, true, String(report.error));
+    assert.ok(report.backupPath!.includes("/.memories-backup/"), String(report.backupPath));
+    assert.equal(readFileSync(join(report.backupPath!, "SKILL.md"), "utf8"), "edited meanwhile\n", "the edit is in the backup; nothing lost (nothing inside is renamed)");
+  } finally {
+    undoEdit();
+  }
+  // A rename that fails (EXDEV forced): nothing is removed, nothing copied.
+  writeSkill(join(sb.shared, "busy-two"), skillMd("busy-two", "Stays."));
+  const undo = patch("rename", (original) => async (from: string, to: string) => {
+    if (String(to).includes("/.memories-backup/")) throw Object.assign(new Error("cross-device"), { code: "EXDEV" });
+    return original(from, to);
+  });
+  try {
+    const report = await moveToBackup(newSession(5), join(sb.shared, "busy-two"));
     assert.equal(report.ok, false);
-    assert.equal(readFileSync(join(sb.shared, "busy-one", "SKILL.md"), "utf8"), "edited meanwhile\n", "the original, with the edit, stays");
+    assert.match(readFileSync(join(sb.shared, "busy-two", "SKILL.md"), "utf8"), /Stays/);
     assert.equal(readdirSync(sb.shared).some((name) => name.startsWith(".paseo-memories-tmp-")), false);
-    assert.ok(calls > 0);
   } finally {
     undo();
-    rmSync(join(sb.shared, "busy-one"), { recursive: true, force: true });
+    rmSync(join(sb.shared, "busy-two"), { recursive: true, force: true });
   }
 });
 

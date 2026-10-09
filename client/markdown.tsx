@@ -1,9 +1,9 @@
 import React, { useMemo } from "react";
 import { Text, View, type TextStyle } from "react-native";
 import { parseInline, parseMarkdown, type Block, type Inline } from "../shared/md-parse";
-import { MD_EDITOR } from "../shared/plain";
+import { MD_EDITOR, TOASTS } from "../shared/plain";
 import { openLink } from "./links";
-import { HostIcon, TYPE, useTokens, wrapAnywhere } from "./ui";
+import { HostIcon, TYPE, useHostToast, useTokens, wrapAnywhere } from "./ui";
 
 /**
  * Notes shown the way they are meant to read: headings, emphasis, lists,
@@ -17,6 +17,13 @@ type Style = TextStyle;
 
 function Runs({ nodes, style }: { nodes: readonly Inline[]; style: Style }) {
   const t = useTokens();
+  const toast = useHostToast();
+  // A link that can't open used to fail silently. The toast never repeats the link: a note's links can hold keys.
+  const open = (href: string) =>
+    void openLink(href).then((outcome) => {
+      if (outcome === "copied") toast.show(TOASTS.linkCopied);
+      else if (outcome === "failed") toast.error(TOASTS.linkFailed);
+    });
   return (
     <>
       {nodes.map((node, index) => {
@@ -51,7 +58,7 @@ function Runs({ nodes, style }: { nodes: readonly Inline[]; style: Style }) {
             );
           case "link":
             return (
-              <Text key={index} accessibilityRole="link" onPress={() => void openLink(node.href)} style={{ color: t.color.accent, textDecorationLine: "underline" }}>
+              <Text key={index} accessibilityRole="link" onPress={() => open(node.href)} style={{ color: t.color.accent, textDecorationLine: "underline" }}>
                 <Runs nodes={node.c} style={style} />
               </Text>
             );

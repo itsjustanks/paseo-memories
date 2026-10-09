@@ -15,6 +15,9 @@ const { parseMemoryFile, readFields } = await import("../shared/frontmatter");
 const { parseIndex } = await import("../shared/memory-index");
 const { MASK_FILL } = await import("../shared/secrets");
 
+/** What the app hands back on Save: each previewed item's fingerprint (0.6.0). */
+const seenOf = (preview: { items: Array<{ id: string; fingerprint?: string }> }) => Object.fromEntries(preview.items.flatMap((item) => (item.fingerprint ? [[item.id, item.fingerprint]] : [])));
+
 async function fresh(): Promise<Sandbox> {
   sb.cleanup();
   sb = await makeSandbox();
@@ -200,7 +203,7 @@ test("copy and move between agents, scopes and projects", async () => {
   const target = { kind: "claude-memory", sourceId: folder, workspaceId: "ws-plain" };
   const from = [{ sourceId: sb.appMemory, key: "flat.md" }];
   const preview = await importPreview(paseo, { from, target });
-  const moved = await importApply(paseo, { from, target, selected: preview.items.map((item) => item.id), move: true });
+  const moved = await importApply(paseo, { from, target, selected: preview.items.map((item) => item.id), move: true, seen: seenOf(preview) });
   assert.equal(moved.ok, true, moved.message);
   assert.equal(existsSync(join(sb.appMemory, "flat.md")), false, "the original is gone");
   assert.ok(!parseIndex(readFileSync(join(sb.appMemory, "MEMORY.md"), "utf8")).some((line) => line.file === "flat.md"), "and its index line");
@@ -210,7 +213,7 @@ test("copy and move between agents, scopes and projects", async () => {
   const sectionFrom = [{ sourceId: claudeMd, key: "1:testing" }];
   const agents = join(sb.codex, "AGENTS.md");
   const sectionPreview = await importPreview(paseo, { from: sectionFrom, target: { kind: "append", path: agents } });
-  const sectionMoved = await importApply(paseo, { from: sectionFrom, target: { kind: "append", path: agents }, selected: sectionPreview.items.map((item) => item.id), expected: sectionPreview.target.stamp, move: true });
+  const sectionMoved = await importApply(paseo, { from: sectionFrom, target: { kind: "append", path: agents }, selected: sectionPreview.items.map((item) => item.id), expected: sectionPreview.target.stamp, move: true, seen: seenOf(sectionPreview) });
   assert.equal(sectionMoved.ok, true, sectionMoved.message);
   assert.ok(readFileSync(agents, "utf8").endsWith("## Testing\n\nRun pnpm test.\n"));
   assert.ok(!readFileSync(claudeMd, "utf8").includes("## Testing"));

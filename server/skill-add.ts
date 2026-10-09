@@ -1,3 +1,4 @@
+import { tilde } from "../shared/agents";
 import fs from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { repoId, parseGithubLink, type GithubLink } from "../shared/github-link";
@@ -12,12 +13,12 @@ import { sha256Hex } from "../shared/hash";
 import type { Paseo } from "./daemon";
 import { sha256 } from "./files";
 import { startWrite } from "./daemon";
-import { sharedSkillsDir, skillLockPath } from "./env";
+import { sharedSkillsDir, skillLockPath, userHome } from "./env";
 import { fetchFile, fetchTree, GithubError, onMainLine, resolveCommit, skillFolders, type Tree } from "./github";
 import { logWrite } from "./log";
 import { recordAdded } from "./skill-records";
 import { discoverSkills, forgetSkills, type SkillsDiscovery } from "./skills";
-import { createSkillLink, installSkillFolder, newSession, readCurrent, safeWrite } from "./write";
+import { createSkillLink, installSkillFolder, newSession, readCurrent, removeOwned, safeWrite, type Owned } from "./write";
 
 /**
  * "Add a skill" (docs/SKILLS-SPEC.md "Manage"): a preview that downloads and
@@ -354,7 +355,9 @@ export async function addSkill(paseo: Paseo | null, input: { source: AddSource; 
   const reports: WriteReport[] = [];
   const warnings: string[] = [];
   const canonical = preview.targets.find((target) => target.kind === "canonical")!;
-  const installed = await installSkillFolder(dirname(canonical.path), value.name, value.files.map((file) => ({ path: file.path, bytes: file.data, executable: file.executable })));
+  // What this add makes, by identity, so a roll-back takes back only that (0.6.0): never anything someone else put there.
+  const madeHere: Owned[] = [];
+  const installed = await installSkillFolder(dirname(canonical.path), value.name, value.files.map((file) => ({ path: file.path, bytes: file.data, executable: file.executable })), madeHere);
   reports.push(installed);
   logWrite("skills-add", canonical.path, installed.ok ? "ok" : installed.action);
   if (!installed.ok) {
@@ -366,19 +369,19 @@ export async function addSkill(paseo: Paseo | null, input: { source: AddSource; 
   let linkRetry = false;
   /** Everything this add wrote, taken back: links, the copy, the lock as it was (review-040 #3). */
   const rollBack = async (lockBefore: string | null, why: string): Promise<AddResult> => {
-    for (const link of made) await fs.unlink(link).catch(() => undefined);
-    await fs.rm(canonical.path, { recursive: true, force: true }).catch(() => undefined);
+    const left = await removeOwned(madeHere);
     if (lockBefore !== null && lockTarget) {
       const now = await readCurrent(lockTarget.path);
       await safeWrite(session, lockTarget.path, lockBefore, { newMode: 0o644, current: now, check: lockLooksValid });
     }
     logWrite("skills-add", canonical.path, "rolled back");
     forgetSkills();
-    return { ok: false, message: `${why} Nothing was added.`, reports, warnings: [] };
+    const kept = left.length ? ` Something else was put there meanwhile, so it was left as it is: ${left.map((path) => tilde(path, userHome())).join(", ")}.` : "";
+    return { ok: false, message: `${why} Nothing was added.${kept}`, reports, warnings: [] };
   };
   const lockTarget = preview.targets.find((target) => target.kind === "lock");
   for (const target of preview.targets.filter((entry) => entry.kind === "link")) {
-    const report = await createSkillLink(dirname(target.path), value.name, canonical.path);
+    const report = await createSkillLink(dirname(target.path), value.name, canonical.path, madeHere);
     reports.push(report);
     logWrite("skills-add", target.path, report.ok ? "linked" : report.action);
     if (report.ok) made.push(target.path);

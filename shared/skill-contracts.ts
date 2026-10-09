@@ -67,6 +67,8 @@ export const SkillSchema = z.object({
   /** Why its SKILL.md can run commands on this computer, when it can. */
   runsCommands: z.string().optional(),
   problems: z.array(SkillProblemSchema).default([]),
+  /** False when its SKILL.md says `user-invocable: false`: Claude then keeps it out of the "/" menu. */
+  userInvocable: z.boolean().optional(),
   /** Characters this skill adds to each agent's skill list, at the start of every chat. */
   listing: z.object({ claude: z.number(), codex: z.number() }),
   /** Per agent: on | off | name-only | user-invocable-only | model-off | mixed (some accounts off). */
@@ -178,7 +180,24 @@ export const skillsUsage = defineRpc({
 /** How "used in this chat" was decided: exact (the agent's own chat id) | folder-time (same folder, since it started) | unknown. */
 export const ChatUsageSchema = z.object({ match: z.string(), skills: z.array(z.object({ name: z.string(), count: z.number(), skillId: z.string().optional() })), note: z.string().default("") });
 
-export const PanelSkillSchema = z.object({ skillId: z.string(), name: z.string(), description: z.string().default(""), provenance: z.string(), scope: z.string(), listingChars: z.number(), state: z.string().default("on") });
+/** What one agent does with a skill whose name is at both levels (shared/scope.ts). */
+export const ShadowSchema = z.object({ agent: z.string(), state: z.enum(["used", "skipped", "both"]), projects: z.array(z.string()).default([]), by: z.enum(["managed", "personal", "project"]).optional(), over: z.enum(["managed", "personal", "project"]).optional() });
+
+export const PanelSkillSchema = z.object({
+  skillId: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  provenance: z.string(),
+  scope: z.string(),
+  listingChars: z.number(),
+  state: z.string().default("on"),
+  /** 0.6.0: the project it belongs to (project skills), its folder as a person would point at it, and the full path for the expanded detail. */
+  projectPath: z.string().optional(),
+  where: z.string().optional(),
+  path: z.string().optional(),
+  /** Its name is also at the other level: which copy this agent uses. */
+  shadows: z.array(ShadowSchema).default([]),
+});
 
 export const skillsAgent = defineRpc({
   name: "paseo-memories.skills-agent",

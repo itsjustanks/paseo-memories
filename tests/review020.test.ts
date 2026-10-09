@@ -120,7 +120,7 @@ test("review 2: a note that differs only in punctuation is a near match, still s
 
 // ------------------------------------------------------------------ 3. per-target saves and rollback
 
-test("review 3: a failed list update rolls the Claude note back, and the Codex target is still tried", async () => {
+test("review 3: a failed list update keeps the Claude note (0.6.0: never rolled back), and the Codex target is still tried", async () => {
   await fresh();
   const paseo = fakePaseo(sb).api;
   const index = join(sb.appMemory, "MEMORY.md");
@@ -133,8 +133,8 @@ test("review 3: a failed list update rolls the Claude note back, and the Codex t
   const saved = await noteAdd(paseo, { text: "Invoices go out on the 1st.", who: "all", workspaceId: "ws-app", expected: expectedOf(preview) });
   assert.equal(saved.ok, false);
   assert.match(saved.message, /Saved to Project instructions · app/);
-  assert.match(saved.message, /Couldn't save to Claude's notes for app/);
-  assert.deepEqual(readdirSync(sb.appMemory).sort(), names, "the unlisted note file was removed");
+  assert.match(saved.message, /Saved to Claude's notes for app, but Claude's list of notes couldn't be updated/);
+  assert.equal(readdirSync(sb.appMemory).filter((name) => !names.includes(name)).length, 1, "the note was kept");
   assert.match(readFileSync(override, "utf8"), /Invoices go out on the 1st\./);
 });
 

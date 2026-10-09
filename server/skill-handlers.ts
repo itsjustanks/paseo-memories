@@ -6,6 +6,7 @@ import { codexSkillEnabled, setSkillEnabled } from "../shared/codex-skills-toml"
 import { canFixAll, quickSummary } from "../shared/finding-groups";
 import { maskSecrets } from "../shared/secrets";
 import { lockLooksValid, readLock, serializeLock, withoutEntry } from "../shared/skill-lock";
+import { friendlyRef, shadowsFor, type Shadow } from "../shared/scope";
 import { nameKey } from "../shared/skill-md";
 import type { AddSource, ListingCost } from "../shared/skill-contracts";
 import { CATALOG, catalogName } from "../shared/skills-catalog";
@@ -19,6 +20,7 @@ import { readMemoriesSettings } from "./settings";
 import { recordSkills } from "./sidebar-cache";
 import { addSkill, previewSkill } from "./skill-add";
 import { forgetAdded } from "./skill-records";
+import { gitRoot } from "./git";
 import { projectRoots } from "./skill-roots";
 import { chatUsage, folderUsage, requestUsagePass, usageState, usageSummary } from "./skill-usage";
 import { agentWindow, claudeWindows, type AccountWindow } from "./skill-models";
@@ -154,9 +156,36 @@ export async function handleSkillsCatalog(_input: Record<string, never>, { paseo
 
 // ------------------------------------------------------------------ panels
 
-type PanelSkill = { skillId: string; name: string; description: string; provenance: string; scope: string; listingChars: number; state: string };
+type PanelSkill = { skillId: string; name: string; description: string; provenance: string; scope: string; listingChars: number; state: string; projectPath?: string; where?: string; path?: string; shadows: Shadow[] };
 
-function panelSkill(skill: InternalSkill, agent: string): PanelSkill {
+/** This workspace's own skill folders, and where its project starts (its git root). */
+type Here = { roots: string[]; projectRoot: string };
+
+async function hereFor(directory: string): Promise<Here> {
+  const probe = new Probe();
+  return { roots: (await projectRoots(probe, directory)).map((root) => resolve(root.path)), projectRoot: (await gitRoot(probe, directory)) ?? resolve(directory) };
+}
+
+/**
+ * Where an agent HERE finds a skill (0.6.0 review): for a project skill, the
+ * place in this workspace's own skill folders (a skill another project links
+ * to is this project's at this project's path, not at the folder it really
+ * lives in), with this project as its project. Your own skills keep their
+ * first place.
+ */
+function localView(skill: InternalSkill, here: Here): { path: string; projectPath?: string } {
+  if (skill.scope !== "project") return { path: skill.locations[0]?.path ?? skill.path };
+  const mine = skill.locations.find((location) => here.roots.includes(resolve(dirname(location.path))));
+  return mine ? { path: mine.path, projectPath: here.projectRoot } : { path: skill.locations[0]?.path ?? skill.path, ...(skill.projectPath ? { projectPath: skill.projectPath } : {}) };
+}
+
+/** Shadows worked out from what an agent here sees: each skill at its place in this workspace. */
+function shadowsHere(skills: InternalSkill[], here: Here): Map<string, Shadow[]> {
+  return shadowsFor(skills.map((skill) => ({ id: skill.id, name: skill.name, scope: skill.scope, readBy: skill.readBy, state: skill.state, ...(localView(skill, here).projectPath ? { projectPath: localView(skill, here).projectPath } : {}) })));
+}
+
+function panelSkill(skill: InternalSkill, agent: string, shadows: Map<string, Shadow[]>, here: Here): PanelSkill {
+  const { path, projectPath } = localView(skill, here);
   return {
     skillId: skill.id,
     name: skill.name,
@@ -165,6 +194,10 @@ function panelSkill(skill: InternalSkill, agent: string): PanelSkill {
     scope: skill.scope,
     listingChars: agent === "codex" ? skill.listing.codex : agent === "claude" ? skill.listing.claude : 0,
     state: skill.state[agent] ?? "on",
+    ...(projectPath ? { projectPath } : {}),
+    where: friendlyRef(path, { home: userHome(), projectPath }),
+    path,
+    shadows: shadows.get(skill.id) ?? [],
   };
 }
 
@@ -256,10 +289,12 @@ export async function handleSkillsAgent({ workspaceId, providerId, agentId }: { 
   // This agent's own model decides Claude's budget, when Paseo says which it is.
   const window = agent === "claude" && account ? agentWindow(facts?.model, (await claudeWindows(paseo, discovery.accounts, new Probe())).get(account.id)) : undefined;
   const listCost = costOf(discovery, agent, account?.id, skills, window);
+  const here = await hereFor(directory);
+  const shadows = shadowsHere(skills, here);
   return {
     agent,
     directory,
-    skills: skills.map((skill) => panelSkill(skill, agent)),
+    skills: skills.map((skill) => panelSkill(skill, agent, shadows, here)),
     ...(listCost ? { cost: listCost } : {}),
     chat,
     notes,
@@ -270,12 +305,17 @@ export async function handleSkillsWorkspace({ workspaceId }: { workspaceId: stri
   const directory = await workspaceDirectory(paseo, workspaceId);
   const discovery = await discoverSkills(paseo);
   const agents = [];
+  const found: Array<{ agent: string; skills: InternalSkill[]; cost?: ListingCost }> = [];
   for (const agent of ["claude", "codex"]) {
     const account = discovery.accounts.accounts.find((entry) => entry.agent === agent && entry.origin === "default" && entry.exists);
     const skills = await skillsFor(discovery, agent, account?.id, directory);
     const cost = costOf(discovery, agent, account?.id, skills);
-    agents.push({ agent, skills: skills.map((skill) => panelSkill(skill, agent)), ...(cost ? { cost } : {}) });
+    found.push({ agent, skills, ...(cost ? { cost } : {}) });
   }
+  // Which copy each agent uses when a name is at both levels here (0.6.0).
+  const here = await hereFor(directory);
+  const shadows = shadowsHere([...new Map(found.flatMap((entry) => entry.skills).map((skill) => [skill.id, skill])).values()], here);
+  for (const { agent, skills, cost } of found) agents.push({ agent, skills: skills.map((skill) => panelSkill(skill, agent, shadows, here)), ...(cost ? { cost } : {}) });
   const notes: string[] = [];
   let used: Array<{ name: string; count: number; skillId?: string }> = [];
   if (!discovery.settings.skillsUsage) notes.push("Counting skill use is turned off in the settings.");

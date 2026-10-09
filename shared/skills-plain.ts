@@ -5,6 +5,7 @@
  * the jargon test (tests/plain.test.ts) reads every string here. Pure.
  */
 
+import { redactText } from "./redact";
 import { plainAgent } from "./plain";
 
 export const SKILL_TABS = [
@@ -85,6 +86,19 @@ export function plainReaders(agents: readonly string[]): string {
   const names = [...new Set(sorted.map((agent) => (agent === "gemini" ? "Gemini" : agent === "cursor" ? "Cursor" : plainAgent(agent))))];
   if (names.length <= 3) return names.length <= 1 ? names[0] ?? "" : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
   return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+}
+
+/**
+ * What a person types to start a skill by name (0.6.0): "/name" in Claude
+ * (not when its SKILL.md says `user-invocable: false`) and "$name" in Codex.
+ * Agents it's off for are left out.
+ */
+export function skillCommands(skill: { name: string; readBy: readonly string[]; state: Record<string, string>; userInvocable?: boolean | undefined }): Array<{ agent: "claude" | "codex"; text: string }> {
+  const out: Array<{ agent: "claude" | "codex"; text: string }> = [];
+  const on = (agent: string) => skill.readBy.includes(agent) && skill.state[agent] !== "off";
+  if (on("claude") && skill.userInvocable !== false) out.push({ agent: "claude", text: `/${skill.name}` });
+  if (on("codex")) out.push({ agent: "codex", text: `$${skill.name}` });
+  return out;
 }
 
 /** About N words, from characters (≈4 characters a token, ≈0.75 words a token). */
@@ -306,6 +320,10 @@ export const SKILLS_PLAIN = {
     neverUsed: "Not used lately on this computer",
     estimated: "Codex's count is an estimate.",
     runs: "Can run commands",
+    applies: "Where it applies",
+    whereSaved: "Where it's saved",
+    whereSavedSummary: "The full place on this computer, to copy",
+    start: "Start it by typing",
     shared: "Everyone who works on this project shares it.",
   },
   usage: {
@@ -357,6 +375,7 @@ export const SKILLS_PLAIN = {
   },
   panel: {
     title: "Skills",
+    useTitle: "Skill use",
     count: (count: number, words: string) => `${count} ${count === 1 ? "skill" : "skills"} · ${words} at the start of every chat`,
     usedHere: "Used here lately",
     usedChat: "Used in this chat",
@@ -433,10 +452,11 @@ function plainOutcome(report: ReportLike): string {
  * technical: the path and the host's own words.
  */
 export function reportLines(reports: readonly ReportLike[], plain: boolean, home: string): Array<{ place: string; state: string; ok: boolean }> {
+  // Every word shown goes through the redactor (0.6.0): a failed write's error can quote a file name or a value.
   return reports.map((report) =>
     plain
-      ? { place: plainPlace(report.target, home), state: plainOutcome(report), ok: report.ok }
-      : { place: report.target, state: [report.action, report.error ?? "", report.backupPath ? `backup: ${report.backupPath}` : ""].filter(Boolean).join(" · "), ok: report.ok },
+      ? { place: redactText(plainPlace(report.target, home)), state: redactText(plainOutcome(report)), ok: report.ok }
+      : { place: redactText(report.target), state: redactText([report.action, report.error ?? "", report.backupPath ? `backup: ${report.backupPath}` : ""].filter(Boolean).join(" · ")), ok: report.ok },
   );
 }
 
@@ -453,5 +473,5 @@ export const SKILL_HOW_TOS: ReadonlyArray<{ title: string; icon: string; steps: 
   { title: "How do I add a well-known skill?", icon: "PackagePlus", steps: ["Press Add a skill (on the Overview or Your skills) and stay on From our list.", "Press Preview on the one you want and read what it adds.", "If it includes code, read its files and tick the box. Then press Add it."], action: { label: "Add a skill", place: { tab: "add", add: "catalog" } } },
   { title: "How do I keep the list short?", icon: "ListMinus", steps: ["Open Usage and pick 30 days.", "Open \"not used in this time\" at the bottom.", "Press Turn off on the ones you don't need. Nothing is deleted."], action: { label: "Open Usage", place: { tab: "usage" } } },
   { title: "How do I write my own?", icon: "PenLine", steps: ["Press Add a skill, then Write your own.", "Give it a short name, say when agents should use it, and write the steps.", "Press Check it, read the preview, then Add it."], action: { label: "Write your own", place: { tab: "add", add: "write" } } },
-  { title: "How do I put a removed skill back?", icon: "Undo2", steps: ["Removed skills go to this plugin's backups, never straight to the bin.", "Ask an agent to move the folder back from the backups into the shared skills place, or do it in Finder."] },
+  { title: "How do I put a removed skill back?", icon: "Undo2", steps: ["Removed skills go into a .memories-backup folder beside where they were, never straight to the bin.", "Move the folder back out of it and drop the .bak from its name, so agents see it again. An agent can do this for you."] },
 ];

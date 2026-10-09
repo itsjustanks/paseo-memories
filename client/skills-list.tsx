@@ -5,15 +5,18 @@ import { plainError } from "../shared/errors";
 import { formatBytes } from "../shared/format";
 import { plainAgent } from "../shared/plain";
 import { skillsLink, skillsRemove, skillsToggle, type Skill } from "../shared/skill-contracts";
-import { SKILLS_PLAIN as S, sinceText, plainProvenance, plainReaders, plainSkillMessage, plainState, plainWordsFromChars, technicalProvenance } from "../shared/skills-plain";
-import { MD_EDITOR } from "../shared/plain";
+import { SKILLS_PLAIN as S, sinceText, plainProvenance, plainReaders, plainSkillMessage, plainState, plainWordsFromChars, skillCommands, technicalProvenance } from "../shared/skills-plain";
+import { MD_EDITOR, TOASTS } from "../shared/plain";
+import { folderName } from "../shared/labels";
+import { SCOPE_WORDS, friendlyRef, scopeKind, scopeLabel, shadowLine, shadowsFor, type Shadow } from "../shared/scope";
+import { groupOf } from "./scope-view";
 import { QueryState } from "./data";
 import { SkillsResult, type SkillsResultValue } from "./skills-report";
 import { Markdown } from "./markdown";
 import { usePlain } from "./mode";
 import { useSkillDetail, useSkillsInventory, useSkillsRefresh } from "./skills-data";
 import type { SkillsPlace } from "./skills-nav";
-import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmLink, EmptyState, Field, Link, Meta, Notice, PathText, Row, Pills, Tag, useTokens } from "./ui";
+import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmLink, CopyLink, EmptyState, Field, Link, Meta, Notice, PathText, Row, Pills, Tag, useHostToast, useTokens } from "./ui";
 
 /**
  * Your skills: every skill, grouped by where it lives, with a filter by
@@ -26,14 +29,11 @@ import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmLink, EmptySt
 
 type Filter = "all" | "claude" | "codex";
 
-/** Which group a skill lists under. */
-export function groupOf(skill: Skill): string {
-  if (skill.access === "read-only") return "other";
-  if (skill.scope === "project") return "project";
-  if (skill.locations.some((location) => location.root === "shared")) return "shared";
-  if (skill.readBy.includes("claude") && !skill.readBy.includes("codex")) return "claude";
-  if (skill.readBy.includes("codex") && !skill.readBy.includes("claude")) return "codex";
-  return "shared";
+/** Who reads it, when that isn't everyone: "Claude only", "Codex only". */
+function readerNote(skill: Skill): string {
+  if (skill.readBy.includes("claude") && !skill.readBy.includes("codex")) return S.list.groups.claude!;
+  if (skill.readBy.includes("codex") && !skill.readBy.includes("claude")) return S.list.groups.codex!;
+  return "";
 }
 
 /** One chip per row: what most needs saying. */
@@ -45,10 +45,12 @@ function chipFor(skill: Skill): { label: string; tone?: "attention" | "ok" | "ne
   return null;
 }
 
-function SkillRow({ skill, first, onOpen }: { skill: Skill; first: boolean; onOpen: () => void }) {
+function SkillRow({ skill, first, onOpen, shadows }: { skill: Skill; first: boolean; onOpen: () => void; shadows?: Shadow[] | undefined }) {
   const t = useTokens();
   const plain = usePlain();
   const chip = chipFor(skill);
+  const who = readerNote(skill);
+  const shadow = shadowLine(shadows, plainAgent, scopeKind(skill));
   return (
     <Row
       first={first}
@@ -61,6 +63,8 @@ function SkillRow({ skill, first, onOpen }: { skill: Skill; first: boolean; onOp
               {skill.description}
             </Text>
           ) : null}
+          {who ? <Text style={t.text.caption}>{who}</Text> : null}
+          {shadow ? <Text style={[t.text.caption, { color: t.color.warning }]}>{shadow}</Text> : null}
           {!plain ? <PathText path={skill.path} style={t.text.caption} /> : null}
         </>
       }
@@ -78,7 +82,7 @@ export function SkillsList({ hostId, skillId, onOpen, onGo }: { hostId: string; 
   if (!inv) return <QueryState query={inventory} what="your agents' skills" />;
   if (skillId) {
     const skill = inv.skills.find((entry) => entry.id === skillId);
-    if (skill) return <SkillDetail hostId={hostId} skill={skill} onBack={() => onOpen(null)} />;
+    if (skill) return <SkillDetail hostId={hostId} skill={skill} home={inv.home} shadows={shadowsFor(inv.skills).get(skill.id)} onBack={() => onOpen(null)} />;
   }
   if (inv.skills.length === 0) return <EmptyState icon="Sparkles" title={S.hero.none.title} body={S.list.empty} action={<Button label={S.addButton} icon="Plus" variant="primary" onPress={() => onGo({ tab: "add" })} />} />;
   const words = query.trim().toLowerCase();
@@ -86,12 +90,16 @@ export function SkillsList({ hostId, skillId, onOpen, onGo }: { hostId: string; 
     .filter((skill) => filter === "all" || skill.readBy.includes(filter))
     .filter((skill) => !words || skill.name.toLowerCase().includes(words) || skill.description.toLowerCase().includes(words))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const groups = ["shared", "claude", "codex", "project", "other"].map((id) => ({ id, skills: shown.filter((skill) => groupOf(skill) === id) })).filter((group) => group.skills.length);
+  // By where they apply: yours (every project), then each project's own, then those looked after elsewhere.
+  const projects = [...new Set(shown.map(groupOf).filter((id) => id.startsWith("project:")))].sort((a, b) => folderName(a).localeCompare(folderName(b)));
+  const groups = ["everywhere", ...projects, "other"].map((id) => ({ id, skills: shown.filter((skill) => groupOf(skill) === id) })).filter((group) => group.skills.length);
   const other = groups.find((group) => group.id === "other");
+  const shadows = shadowsFor(inv.skills);
+  const heading = (id: string) => (id === "everywhere" ? SCOPE_WORDS.everywhere : SCOPE_WORDS.project(folderName(id.slice("project:".length))));
   const list = (skills: Skill[]) => (
     <Card padded={false}>
       {skills.map((skill, index) => (
-        <SkillRow key={skill.id} skill={skill} first={index === 0} onOpen={() => onOpen(skill.id)} />
+        <SkillRow key={skill.id} skill={skill} first={index === 0} shadows={shadows.get(skill.id)} onOpen={() => onOpen(skill.id)} />
       ))}
     </Card>
   );
@@ -116,7 +124,8 @@ export function SkillsList({ hostId, skillId, onOpen, onGo }: { hostId: string; 
         .filter((group) => group.id !== "other")
         .map((group) => (
           <View key={group.id} style={{ gap: t.space.sm }}>
-            <Text style={t.text.section}>{`${S.list.groups[group.id]} (${group.skills.length})`}</Text>
+            <Text style={t.text.section}>{`${heading(group.id)} (${group.skills.length})`}</Text>
+            <Meta>{group.id === "everywhere" ? SCOPE_WORDS.everywhereLead : SCOPE_WORDS.projectLead}</Meta>
             {list(group.skills)}
           </View>
         ))}
@@ -152,7 +161,38 @@ function Fact({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; onBack: () => void }) {
+/**
+ * "/name in Claude · $name in Codex", each with its own Copy, and where it
+ * works (0.6.0): everywhere, or only in its project. When Claude runs your
+ * Everywhere copy of the same name instead, the row says so.
+ */
+function Commands({ commands, scope, shadows }: { commands: ReturnType<typeof skillCommands>; scope: string; shadows?: Shadow[] | undefined }) {
+  const t = useTokens();
+  return (
+    <View style={{ gap: t.space.xs }}>
+      {commands.map((command) => {
+        const skipped = shadows?.some((shadow) => shadow.agent === command.agent && shadow.state === "skipped");
+        return (
+          <View key={command.agent} style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: t.space.sm, rowGap: t.space.hair }}>
+            <Text selectable style={t.text.mono}>
+              {command.text}
+            </Text>
+            <Text style={[t.text.caption, skipped ? { color: t.color.warning } : null]}>{skipped ? `in ${plainAgent(command.agent)} runs your Everywhere copy` : `in ${plainAgent(command.agent)} · ${scope}`}</Text>
+            <CopyLink text={command.text} accessibilityLabel={`Copy ${command.text}`} />
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+/** Its place on disk as a person would point at it: inside its project, or under your home folder. */
+function placeOf(skill: Skill): string {
+  const inProject = skill.projectPath ? skill.locations.find((location) => location.path.startsWith(`${skill.projectPath}/`)) : undefined;
+  return (inProject ?? skill.locations[0])?.path ?? skill.path;
+}
+
+function SkillDetail({ hostId, skill, home, shadows, onBack }: { hostId: string; skill: Skill; home: string; shadows?: Shadow[] | undefined; onBack: () => void }) {
   const t = useTokens();
   const plain = usePlain();
   const [reveal, setReveal] = useState(false);
@@ -164,13 +204,18 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
   const refresh = useSkillsRefresh(hostId);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<SkillsResultValue | null>(null);
+  const toast = useHostToast();
   const D = S.detail;
-  const run = async (key: string, call: () => Promise<SkillsResultValue>, leave = false) => {
+  const run = async (key: string, call: () => Promise<SkillsResultValue>, leave?: string) => {
     setBusy(key);
     try {
       const done = await call();
       setResult(done);
-      if (done.ok && leave) onBack();
+      // Leaving drops the report with the page, so the app's toast says it happened.
+      if (done.ok && leave) {
+        toast.show(leave, { variant: "success" });
+        onBack();
+      }
     } catch (error) {
       setResult({ ok: false, message: plainError(error) });
     } finally {
@@ -184,6 +229,9 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
   const files = detail.data?.fileList ?? [];
   const usage = skill.usage;
   const say = (text: string) => (plain ? plainSkillMessage(text) : text);
+  const commands = skillCommands(skill);
+  const scope = scopeLabel(skill);
+  const shadow = shadowLine(shadows, plainAgent, scopeKind(skill));
   return (
     <>
       <Link label={S.list.back} onPress={onBack} />
@@ -192,9 +240,20 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
         {skill.description ? <Text style={t.text.body}>{skill.description}</Text> : null}
         <View style={{ gap: t.space.sm }}>
           <Fact label={D.from} value={plain ? plainProvenance(skill.provenance, skill.provenanceDetail) : technicalProvenance(skill.provenance, skill.provenanceDetail)} />
+          <Fact
+            label={D.applies}
+            value={
+              <View style={{ gap: t.space.hair }}>
+                <Text style={t.text.bodyStrong}>{scope}</Text>
+                <Text style={t.text.caption}>{friendlyRef(placeOf(skill), { home, projectPath: skill.projectPath })}</Text>
+                {shadow ? <Text style={[t.text.caption, { color: t.color.warning }]}>{shadow}</Text> : null}
+              </View>
+            }
+          />
           <Fact label={D.who} value={plainReaders(skill.readBy)} />
           {listCost ? <Fact label={D.listCost} value={words(listCost)} /> : null}
           <Fact label={plain ? "Files" : "Folder"} value={plain ? (skill.scripts ? D.filesWithCode(skill.files, skill.scripts) : D.files(skill.files)) : `${skill.files} files · ${formatBytes(skill.bytes)}${skill.scripts ? ` · ${skill.scripts} non-markdown` : ""}`} />
+          {commands.length ? <Fact label={D.start} value={<Commands commands={commands} scope={scope} shadows={shadows} />} /> : null}
           {skill.runsCommands ? <Fact label={D.runs} value={say(skill.runsCommands)} /> : null}
           <Fact label="Use" value={usage ? (usage.total ? `${D.used(usage.total, sinceText(usage.lastUsed))}${usage.estimated ? ` ${D.estimated}` : ""}` : D.neverUsed) : S.rows.countingOff} />
         </View>
@@ -207,7 +266,7 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
             return <Button key={agent} label={off ? D.turnOn(name) : D.turnOff(name)} icon="Power" loading={busy === agent} onPress={() => void run(agent, () => toggle({ skillId: skill.id, agent, on: off }))} />;
           })}
           {skill.can.link ? <Button label={S.add.linkForClaude} icon="Link" loading={busy === "link"} onPress={() => void run("link", () => link({ skillId: skill.id }))} /> : null}
-          {skill.can.remove ? <ConfirmLink label={D.remove} question={D.removeQuestion} yes={D.removeYes} no={D.keep} onConfirm={() => void run("remove", () => remove({ skillId: skill.id, confirm: true }), true)} /> : null}
+          {skill.can.remove ? <ConfirmLink label={D.remove} question={D.removeQuestion} yes={D.removeYes} no={D.keep} onConfirm={() => void run("remove", () => remove({ skillId: skill.id, confirm: true }), TOASTS.skillRemoved)} /> : null}
         </View>
       </Card>
       <Accordion>
@@ -234,19 +293,20 @@ function SkillDetail({ hostId, skill, onBack }: { hostId: string; skill: Skill; 
             {!skill.can.remove && skill.can.removeReason && skill.can.removeReason !== skill.can.turnOffReason ? <Text style={t.text.body}>{say(skill.can.removeReason)}</Text> : null}
           </AccordionItem>
         ) : null}
-        {!plain ? (
-          <AccordionItem icon="FolderOpen" title={`Where it lives (${skill.locations.length})`}>
-            {skill.locations.map((location) => (
-              <View key={location.path} style={{ gap: t.space.hair }}>
-                <PathText path={location.path} style={t.text.mono} />
-                <Meta>{`${location.root}${location.link ? " · link" : ""}`}</Meta>
-              </View>
-            ))}
-            {skill.problems.slice(1).map((problem) => (
-              <Meta key={problem.code}>{problem.message}</Meta>
-            ))}
-          </AccordionItem>
-        ) : null}
+        {/* The full path, with Copy, folded away (0.6.0: in plain view too). */}
+        <AccordionItem icon="FolderOpen" title={plain ? D.whereSaved : `Where it lives (${skill.locations.length})`} {...(plain ? { summary: D.whereSavedSummary } : {})}>
+          {skill.locations.map((location) => (
+            <View key={location.path} style={{ gap: t.space.hair }}>
+              <PathText path={location.path} full />
+              {!plain ? <Meta>{`${location.root}${location.link ? " · link" : ""}`}</Meta> : null}
+            </View>
+          ))}
+          {!plain
+            ? skill.problems.slice(1).map((problem) => (
+                <Meta key={problem.code}>{problem.message}</Meta>
+              ))
+            : null}
+        </AccordionItem>
       </Accordion>
     </>
   );

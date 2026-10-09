@@ -23,6 +23,9 @@ const { splitSections } = await import("../shared/markdown");
 const { parseIndex } = await import("../shared/memory-index");
 const { parseMemoryFile, readFields } = await import("../shared/frontmatter");
 
+/** What the app hands back on Save: each previewed item's fingerprint (0.6.0). */
+const seenOf = (preview: { items: Array<{ id: string; fingerprint?: string }> }) => Object.fromEntries(preview.items.flatMap((item) => (item.fingerprint ? [[item.id, item.fingerprint]] : [])));
+
 async function fresh(options: Parameters<typeof makeSandbox>[0] = {}): Promise<Sandbox> {
   sb.cleanup();
   sb = await makeSandbox(options);
@@ -84,7 +87,7 @@ test("2: moving every section of a file removes them all, in one write", async (
   const from = splitSections(readFileSync(origin, "utf8")).map((section) => ({ sourceId: origin, key: section.key }));
   assert.ok(from.length >= 2);
   const preview = await importPreview(paseo, { from, target: { kind: "append", path: target } });
-  const moved = await importApply(paseo, { from, target: { kind: "append", path: target }, selected: preview.items.map((item) => item.id), expected: preview.target.stamp, move: true });
+  const moved = await importApply(paseo, { from, target: { kind: "append", path: target }, selected: preview.items.map((item) => item.id), expected: preview.target.stamp, move: true, seen: seenOf(preview) });
   assert.equal(moved.ok, true, moved.message);
   const left = readFileSync(origin, "utf8");
   assert.ok(!left.includes("## Testing") && !left.includes("# App"), `originals removed: ${JSON.stringify(left)}`);
@@ -103,7 +106,7 @@ test("2: Move is refused up front when an original cannot be removed, or into th
   ];
   for (const ref of cases) {
     const preview = await importPreview(paseo, { from: [ref], target: { kind: "append", path: target } });
-    const result = await importApply(paseo, { from: [ref], target: { kind: "append", path: target }, selected: preview.items.map((item) => item.id), expected: preview.target.stamp, move: true });
+    const result = await importApply(paseo, { from: [ref], target: { kind: "append", path: target }, selected: preview.items.map((item) => item.id), expected: preview.target.stamp, move: true, seen: seenOf(preview) });
     assert.equal(result.ok, false, ref.sourceId);
     assert.match(result.message, /copied but not moved/);
     assert.equal(readFileSync(target, "utf8"), before, `nothing written for ${ref.sourceId}`);
@@ -111,7 +114,7 @@ test("2: Move is refused up front when an original cannot be removed, or into th
   const self = join(sb.app, "CLAUDE.md");
   const ref = { sourceId: self, key: "1:testing" };
   const preview = await importPreview(paseo, { from: [ref], target: { kind: "append", path: self } });
-  const same = await importApply(paseo, { from: [ref], target: { kind: "append", path: self }, selected: preview.items.map((item) => item.id), expected: preview.target.stamp, move: true });
+  const same = await importApply(paseo, { from: [ref], target: { kind: "append", path: self }, selected: preview.items.map((item) => item.id), expected: preview.target.stamp, move: true, seen: seenOf(preview) });
   assert.equal(same.ok, false);
   assert.match(same.message, /already in/);
 });
@@ -123,19 +126,15 @@ test("2: an original that cannot be removed after the copy is a failure, said pl
   const target = join(sb.codex, "AGENTS.md");
   const from = [{ sourceId: origin, key: "1:testing" }];
   const preview = await importPreview(paseo, { from, target: { kind: "append", path: target } });
-  // Someone edits the origin while the copy is being saved.
-  const original = fsp.rename;
-  (fsp as unknown as { rename: unknown }).rename = async (a: unknown, b: unknown) => {
-    const out = await (original as (x: unknown, y: unknown) => Promise<void>)(a, b);
-    if (String(b) === target) appendFileSync(origin, "\nAn agent added this.\n");
-    return out;
-  };
+  // Someone edits the origin while the copy is being saved (0.6.0: right before the copy is put in place).
+  const { swapHooks } = await import("../server/write");
+  swapHooks.beforeInstall = (path) => void (path === target && appendFileSync(origin, "\nAn agent added this.\n"));
   try {
-    const result = await importApply(paseo, { from, target: { kind: "append", path: target }, selected: preview.items.map((item) => item.id), expected: preview.target.stamp, move: true });
+    const result = await importApply(paseo, { from, target: { kind: "append", path: target }, selected: preview.items.map((item) => item.id), expected: preview.target.stamp, move: true, seen: seenOf(preview) });
     assert.equal(result.ok, false);
     assert.match(result.message, /could not be removed, so it is now in both places/);
   } finally {
-    (fsp as unknown as { rename: unknown }).rename = original;
+    swapHooks.beforeInstall = undefined;
   }
   assert.ok(readFileSync(origin, "utf8").includes("## Testing"), "the original stays where it was");
 });

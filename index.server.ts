@@ -58,6 +58,7 @@ import { maskTextFields } from "./shared/secrets";
 import { skillDetail, skillsAdd, skillsAgent, skillsCatalog, skillsFix, skillsFixAll, skillsInventory, skillsLink, skillsPreview, skillsRemove, skillsToggle, skillsUsage, skillsWorkspace } from "./shared/skill-contracts";
 import { memoriesSettings } from "./shared/settings";
 import { readMemoriesSettings, adoptSettingsHandle } from "./server/settings";
+import { redactResult } from "./shared/redact";
 
 /** Slow enough to be worth a line in the daemon log. */
 const SLOW_RPC_MS = 5_000;
@@ -82,7 +83,8 @@ export default function contribute(server: PluginServerContext) {
       if (looking) markClientSeen();
       const began = Date.now();
       try {
-        const output = await handler(input, context);
+        // Result messages never carry a key, whatever the settings say (0.6.0).
+        const output = redactResult(await handler(input, context));
         const reveal = Boolean((input as { reveal?: unknown } | null)?.reveal);
         if (!maskOutput || reveal || !(await readMemoriesSettings()).maskSecrets) return output;
         return maskTextFields(output);

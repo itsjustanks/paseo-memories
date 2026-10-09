@@ -5,10 +5,11 @@ import { Text, View } from "react-native";
 import { findings, inventory, sourceDetail, type WriteResult } from "../shared/contracts";
 import { plainError } from "../shared/errors";
 import { PLAIN, plainMessage } from "../shared/plain";
+import { redactText } from "../shared/redact";
 import { clockTime } from "../shared/schedule";
 import { KEY, findingsKey, refreshAfterWrite, writeKey } from "./freshness";
 import { usePlain } from "./plain-context";
-import { ErrorText, Loading, Notice, StaleNote, Tag, useTokens } from "./ui";
+import { CopyLink, ErrorText, Loading, Notice, StaleNote, Tag, useTokens } from "./ui";
 
 /**
  * Shared queries and the three states every view has: loading, error, and
@@ -96,6 +97,24 @@ export function QueryState({ query, what, empty }: { query: UseQueryResult<unkno
   return null;
 }
 
+/** A version moved aside that couldn't go back (its name was taken): the full place, to copy (0.6.0). */
+function KeptAside({ result }: { result: WriteResult }) {
+  const t = useTokens();
+  // Every version the host found still on disk after the change (0.6.0), each to copy.
+  const kept = [...new Set(result.reports.flatMap((report) => report.kept ?? (report.keptAt ? [report.keptAt] : [])))];
+  if (!kept.length) return null;
+  return (
+    <View style={{ gap: t.space.xs }}>
+      {kept.map((path) => (
+        <View key={path} style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: t.space.sm }}>
+          <Text style={t.text.caption}>{!path.includes("/.memories-backup/") ? "What's at its name now" : path.endsWith(".paseo-new") ? "This change, kept in a backup folder" : "A version kept in a backup folder"}</Text>
+          <CopyLink text={path} label="Copy path" />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /** What a save did, per file: backup, read-back, errors. */
 export function WriteReportView({ result }: { result: WriteResult }) {
   const t = useTokens();
@@ -105,13 +124,14 @@ export function WriteReportView({ result }: { result: WriteResult }) {
     return (
       <Notice tone={result.ok ? "ok" : result.needsConfirm ? "attention" : "error"}>
         <View style={{ gap: t.space.xs }}>
-          <Text style={t.text.bodyStrong}>{plainMessage(result.message)}</Text>
-          {[...new Set(result.warnings.map(plainMessage))].map((warning) => (
+          <Text style={t.text.bodyStrong}>{redactText(plainMessage(result.message))}</Text>
+          {[...new Set(result.warnings.map((warning) => redactText(plainMessage(warning))))].map((warning) => (
             <Text key={warning} style={t.text.caption}>
               {warning}
             </Text>
           ))}
           {result.ok && result.reports.some((report) => report.backupPath) ? <Text style={t.text.caption}>{PLAIN.backupNote}</Text> : null}
+          <KeptAside result={result} />
         </View>
       </Notice>
     );
@@ -119,27 +139,28 @@ export function WriteReportView({ result }: { result: WriteResult }) {
   return (
     <Notice tone={result.ok ? "ok" : result.needsConfirm ? "attention" : "error"}>
       <View style={{ gap: t.space.xs }}>
-        <Text style={t.text.bodyStrong}>{result.message}</Text>
+        <Text style={t.text.bodyStrong}>{redactText(result.message)}</Text>
         {result.warnings.map((warning) => (
           <Text key={warning} style={t.text.caption}>
-            {warning}
+            {redactText(warning)}
           </Text>
         ))}
+        <KeptAside result={result} />
         {result.reports.map((report, index) => (
           <View key={`${report.target}-${index}`} style={{ gap: t.space.hair }}>
             <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "center", flexWrap: "wrap" }}>
               <Tag label={report.ok ? report.action : "failed"} tone={report.ok ? "ok" : "error"} />
-              <Text style={[t.text.mono, { flexShrink: 1 }]}>{report.target}</Text>
+              <Text style={[t.text.mono, { flexShrink: 1 }]}>{redactText(report.target)}</Text>
             </View>
             <Text style={t.text.caption}>
-              {[
+              {redactText([
                 report.readBack === "ok" ? "Read back and checked." : report.readBack === "mismatch" ? "Read back differently from what was written." : "",
                 report.backupPath ? `Backup: ${report.backupPath}` : report.action === "created" ? "New file, nothing to back up." : "",
                 report.versionControlled ? "In a git repository." : "",
                 report.error ?? "",
               ]
                 .filter(Boolean)
-                .join(" ")}
+                .join(" "))}
             </Text>
           </View>
         ))}

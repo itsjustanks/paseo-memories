@@ -3,22 +3,21 @@ import { useQuery } from "@tanstack/react-query";
 import React from "react";
 import { Text, View } from "react-native";
 import { skillsAgent, skillsWorkspace } from "../shared/skill-contracts";
-import { SKILLS_PLAIN as S, plainProvenance, plainWordsFromChars } from "../shared/skills-plain";
+import { SKILLS_PLAIN as S, plainWordsFromChars } from "../shared/skills-plain";
 import { KEY, QueryState } from "./data";
 import { usePlain } from "./mode";
 import { canOpenScreen } from "./screens";
 import { openSkills } from "./skills-nav";
-import { Card, Disclosure, Link, Meta, Row, Section, Tag, useTokens } from "./ui";
+import { Link, Meta, Section, Tag, useTokens } from "./ui";
 
 /**
- * The Skills part of the Memories panels: how many skills an agent here can
- * use and what that list costs at the start of every chat, which ones were
- * used (in this chat when Paseo says which chat it is, else in this folder),
- * and the full list folded away.
+ * The Skills part of the Memories panels: what the skill list costs at the
+ * start of every chat and which skills were used (in this chat when Paseo
+ * says which chat it is, else in this folder). Which skills an agent here
+ * has, by where they apply, is in the panel's scope sections (0.6.0).
  */
 
 type Used = Array<{ name: string; count: number; skillId?: string }>;
-type PanelSkill = { skillId: string; name: string; description: string; provenance: string; listingChars: number; state: string };
 
 function UsedList({ used }: { used: Used }) {
   const t = useTokens();
@@ -32,39 +31,32 @@ function UsedList({ used }: { used: Used }) {
   );
 }
 
-function AllSkills({ title, skills }: { title: string; skills: PanelSkill[] }) {
-  const plain = usePlain();
-  return (
-    <Disclosure quiet title={title}>
-      <Card padded={false}>
-        {skills.map((skill, index) => (
-          <Row
-            key={skill.skillId}
-            first={index === 0}
-            title={skill.name}
-            meta={<Meta>{plain ? plainProvenance(skill.provenance) : skill.provenance}</Meta>}
-            trailing={skill.state === "off" ? <Tag label="Off" /> : null}
-            {...(canOpenScreen() ? { onPress: () => openSkills({ tab: "skills", skillId: skill.skillId }) } : {})}
-          />
-        ))}
-      </Card>
-    </Disclosure>
-  );
-}
-
 function costLine(count: number, chars: number, plain: boolean): string {
   return plain ? S.panel.count(count, plainWordsFromChars(chars)) : `${count} skills · ${chars.toLocaleString("en-US")} characters listed at the start`;
 }
 
-export function WorkspaceSkills({ hostId, workspaceId }: { hostId: string; workspaceId: string }) {
-  const plain = usePlain();
+/** The skills agents in this workspace can use (shared with the panel's scope sections; one request). */
+export function useWorkspaceSkills(hostId: string, workspaceId: string) {
   const call = useRpc(skillsWorkspace);
-  const query = useQuery({ queryKey: [KEY, hostId, "skills", "workspace", workspaceId], queryFn: () => call({ workspaceId }), retry: 1, refetchOnMount: "always" });
+  return useQuery({ queryKey: [KEY, hostId, "skills", "workspace", workspaceId], queryFn: () => call({ workspaceId }), retry: 1, refetchOnMount: "always" });
+}
+
+export function useAgentSkills(hostId: string, workspaceId: string, provider: string | null, agentId: string) {
+  const call = useRpc(skillsAgent);
+  return useQuery({ queryKey: [KEY, hostId, "skills", "agent", workspaceId, provider, agentId], queryFn: () => call({ workspaceId, providerId: provider ?? "", agentId }), enabled: Boolean(provider), retry: 1, refetchOnMount: "always" });
+}
+
+/**
+ * Skill use in this workspace: what the skill list costs at the start of
+ * every chat, and which skills were used here lately. The skills themselves
+ * are listed by where they apply, in the panel's scope sections (0.6.0).
+ */
+export function WorkspaceSkillUse({ hostId, workspaceId }: { hostId: string; workspaceId: string }) {
+  const plain = usePlain();
+  const query = useWorkspaceSkills(hostId, workspaceId);
   const data = query.data;
-  const all = new Map<string, PanelSkill>();
-  for (const agent of data?.agents ?? []) for (const skill of agent.skills) all.set(skill.skillId, skill);
   return (
-    <Section title={S.panel.title} icon="Sparkles">
+    <Section title={S.panel.useTitle} icon="Sparkles">
       <QueryState query={query} what="the skills here" />
       {data ? (
         <>
@@ -74,7 +66,6 @@ export function WorkspaceSkills({ hostId, workspaceId }: { hostId: string; works
           {data.notes.map((line) => (
             <Meta key={line}>{line}</Meta>
           ))}
-          <AllSkills title={S.panel.all(all.size)} skills={[...all.values()].sort((a, b) => a.name.localeCompare(b.name))} />
           {canOpenScreen() ? <Link label={S.panel.open} onPress={() => openSkills()} /> : null}
         </>
       ) : null}
@@ -82,13 +73,12 @@ export function WorkspaceSkills({ hostId, workspaceId }: { hostId: string; works
   );
 }
 
-export function AgentSkills({ hostId, workspaceId, provider, agentId }: { hostId: string; workspaceId: string; provider: string | null; agentId: string }) {
+export function AgentSkillUse({ hostId, workspaceId, provider, agentId }: { hostId: string; workspaceId: string; provider: string | null; agentId: string }) {
   const plain = usePlain();
-  const call = useRpc(skillsAgent);
-  const query = useQuery({ queryKey: [KEY, hostId, "skills", "agent", workspaceId, provider, agentId], queryFn: () => call({ workspaceId, providerId: provider ?? "", agentId }), enabled: Boolean(provider), retry: 1, refetchOnMount: "always" });
+  const query = useAgentSkills(hostId, workspaceId, provider, agentId);
   const data = query.data;
   return (
-    <Section title={S.panel.title} icon="Sparkles">
+    <Section title={S.panel.useTitle} icon="Sparkles">
       <QueryState query={query} what="this agent's skills" />
       {data ? (
         <>
@@ -96,7 +86,6 @@ export function AgentSkills({ hostId, workspaceId, provider, agentId }: { hostId
           <PanelLabel>{data.chat.match === "folder-time" ? S.panel.usedChatGuess : S.panel.usedChat}</PanelLabel>
           {data.chat.match === "unknown" ? <Meta>{data.chat.note || S.panel.unknown}</Meta> : <UsedList used={data.chat.skills} />}
           {data.chat.match === "folder-time" && data.chat.note ? <Meta>{data.chat.note}</Meta> : null}
-          <AllSkills title={S.panel.allAgent(data.skills.length)} skills={data.skills} />
           {canOpenScreen() ? <Link label={S.panel.open} onPress={() => openSkills()} /> : null}
         </>
       ) : null}

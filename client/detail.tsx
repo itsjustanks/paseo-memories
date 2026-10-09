@@ -28,10 +28,11 @@ import { KEY, QueryState, WriteReportView, useInvalidate, useSourceDetail } from
 import { edit, isDirty, keepEditing, receive, reload, type Draft } from "./draft";
 import { usePlain, useSourceNames } from "./mode";
 import { removeSection, replaceSection, splitSections } from "../shared/markdown";
-import { MD_EDITOR } from "../shared/plain";
+import { MD_EDITOR, TOASTS } from "../shared/plain";
+import { scopeLabel as whereItApplies } from "../shared/scope";
 import { Markdown } from "./markdown";
 import { MarkdownEditor } from "./markdown-editor";
-import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmButton, ConfirmLink, Disclosure, Facts, Field, IconBadge, Loading, Notice, PathText, Row, Section, Segmented, Tag, useTokens } from "./ui";
+import { Accordion, AccordionItem, Button, Card, CodeBlock, ConfirmButton, ConfirmLink, Disclosure, Facts, Field, IconBadge, Loading, Notice, PathText, Row, Section, Segmented, Tag, useHostToast, useTokens } from "./ui";
 
 /**
  * One source: what it is, who reads it, and a viewer or editor. Read-only
@@ -80,7 +81,7 @@ function SourceHeader({ source }: { source: Source }) {
     <HeaderCard source={source}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
         <Text style={[t.text.section, { flexShrink: 1 }]}>{source.kind === "claude-auto-memory" ? `Claude memory · ${source.projectPath ? folderName(source.projectPath) : "project path unknown"}` : kindLabel(source.kind)}</Text>
-        <Tag label={scopeLabel(source.scope)} />
+        <Tag label={whereItApplies(source)} />
         {source.access === "editable" ? null : <Tag label={source.access === "online" ? "Stored online" : "Read-only"} tone="neutral" />}
         {source.exists ? null : <Tag label="Not there yet" tone="attention" />}
       </View>
@@ -189,6 +190,12 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
   const [fileName, setFileName] = useState(entryKey);
   const [result, setResult] = useState<WriteResult | null>(null);
   const [busy, setBusy] = useState(false);
+  // These three leave the editor, and its report with it, so the app's toast says it happened.
+  const toast = useHostToast();
+  const leave = (message: string, key: string | null) => {
+    toast.show(message, { variant: "success" });
+    onDone(key);
+  };
   // A memory opens to read; Change opens the editor (a new one starts in it).
   const [editing, setEditing] = useState(creating);
   useEffect(() => {
@@ -222,7 +229,7 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
   const stamp = draft?.stamp;
   const save = () =>
     creating
-      ? run(() => create({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), name: form.name, description: form.description, type: form.type, body: form.body }), () => onDone(null))
+      ? run(() => create({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), name: form.name, description: form.description, type: form.type, body: form.body }), () => leave(TOASTS.noteSaved, null))
       : run(() => {
           // Only what changed: an untouched field's frontmatter line stays byte-for-byte.
           const was = draft?.baseline ?? blank;
@@ -238,13 +245,13 @@ function MemoryEditor({ hostId, source, entryKey, workspaceId, onDone, onCopy }:
           });
         });
   if (!creating && !body.data) return <QueryState query={body} what="this memory" />;
-  const removeNote = () => void run(() => remove({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp! }), () => onDone(null));
+  const removeNote = () => void run(() => remove({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp! }), () => leave(TOASTS.noteRemoved, null));
   const renameRow = (
     <View style={{ flexDirection: "row", gap: t.space.sm, alignItems: "flex-end", flexWrap: "wrap" }}>
       <View style={{ flexGrow: 1, minWidth: 200 }}>
         <Field label={M.fileName} value={fileName} onChangeText={setFileName} />
       </View>
-      <Button label={M.rename} onPress={() => void run(() => update({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp!, rename: fileName }), (outcome) => outcome.ok && onDone(fileName))} disabled={!fileName || fileName === entryKey} />
+      <Button label={M.rename} onPress={() => void run(() => update({ sourceId: source.id, ...(workspaceId ? { workspaceId } : {}), key: entryKey, expected: stamp!, rename: fileName }), (outcome) => outcome.ok && leave(TOASTS.renamed, fileName))} disabled={!fileName || fileName === entryKey} />
     </View>
   );
   return (
@@ -523,6 +530,7 @@ function PlainHeader({ source, name }: { source: Source; name: string }) {
     <HeaderCard source={source}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: t.space.sm, flexWrap: "wrap" }}>
         <Text style={[t.text.section, { flexShrink: 1 }]}>{name}</Text>
+        <Tag label={whereItApplies(source)} />
         {source.access === "editable" ? null : <Tag label={source.access === "online" ? "Kept online" : "Can't be changed here"} tone="neutral" />}
         {source.exists ? null : <Tag label="Not written yet" tone="attention" />}
       </View>

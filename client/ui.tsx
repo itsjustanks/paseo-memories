@@ -1,8 +1,9 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import * as HostRN from "@getpaseo/plugin/client/react-native";
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Clipboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
 import { middlePath } from "../shared/labels";
+import { Once, makeCopy, makeUseToast, pickModal } from "./host-extras";
 
 /**
  * The plugin's design system.
@@ -121,6 +122,16 @@ export const RADIUS = { card: 16, control: 10, pill: 999 } as const;
 
 /** The app's icon component (Lucide names), when the host provides one; looked up at runtime so an app without it still renders. */
 export const HostIcon = (HostRN as unknown as { Icon?: React.ComponentType<{ name: string; size?: number; color?: string }> }).Icon;
+
+type HostExtras = Partial<{ useToast: unknown; copyText: unknown; Modal: typeof HostRN.Modal }>;
+const HOST = HostRN as unknown as HostExtras;
+
+export type { Toast } from "./host-extras";
+/** The app's toasts (Paseo 0.10+), redacted; a quiet no-op (`available: false`) elsewhere or outside its provider. */
+export const useHostToast = makeUseToast(HOST.useToast);
+
+/** The app's dialog (Paseo 0.10+); null on an app without one, where callers keep their in-place confirm. */
+export const HostModal = pickModal(HOST.Modal);
 
 // -------------------------------------------------------------------- tokens
 
@@ -737,18 +748,21 @@ export function ConfirmButton({
 }) {
   const t = useTokens();
   const [armed, setArmed] = useState(false);
-  if (!armed) return <Button label={label} variant={variant} onPress={() => setArmed(true)} />;
+  // Acts once per asking, even for two presses before the next render (0.6.0).
+  const once = useRef(new Once()).current;
+  if (!armed) return <Button label={label} variant={variant} onPress={() => (once.arm(), setArmed(true))} />;
   return (
     <View style={{ flexDirection: "row", gap: t.space.sm, flexWrap: "wrap" }}>
       <Button
         label={confirmLabel}
         variant="danger"
         onPress={() => {
+          if (!once.take()) return;
           setArmed(false);
           onConfirm();
         }}
       />
-      <Button label="Cancel" variant="ghost" onPress={() => setArmed(false)} />
+      <Button label="Cancel" variant="ghost" onPress={() => (once.take(), setArmed(false))} />
     </View>
   );
 }
@@ -760,7 +774,8 @@ export function ConfirmButton({
 export function ConfirmLink({ label, question, yes, no = "Keep it", onConfirm }: { label: string; question: string; yes: string; no?: string; onConfirm: () => void }) {
   const t = useTokens();
   const [armed, setArmed] = useState(false);
-  if (!armed) return <Button label={label} variant="quiet-danger" onPress={() => setArmed(true)} />;
+  const once = useRef(new Once()).current;
+  if (!armed) return <Button label={label} variant="quiet-danger" onPress={() => (once.arm(), setArmed(true))} />;
   return (
     <View style={{ flexBasis: "100%", gap: t.space.sm, paddingTop: t.space.xs }}>
       <Text style={t.text.body}>{question}</Text>
@@ -769,11 +784,12 @@ export function ConfirmLink({ label, question, yes, no = "Keep it", onConfirm }:
           label={yes}
           variant="danger"
           onPress={() => {
+            if (!once.take()) return;
             setArmed(false);
             onConfirm();
           }}
         />
-        <Button label={no} variant="ghost" onPress={() => setArmed(false)} />
+        <Button label={no} variant="ghost" onPress={() => (once.take(), setArmed(false))} />
       </View>
     </View>
   );
@@ -1021,36 +1037,31 @@ export function ComboBox({
 }
 
 /**
- * No RPC copies arbitrary text, so this goes through the host's clipboard —
- * which a host is free not to have. The caller says so rather than pretending
- * the copy happened; the text stays selectable either way.
+ * Copies through the app's clipboard: `copyText` on Paseo 0.10+ (it says when
+ * copying is refused), React Native's old clipboard before. False when the
+ * copy failed, so the caller says so; the text stays selectable either way.
  */
-export function copyToClipboard(text: string): boolean {
-  try {
-    Clipboard.setString(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
+export const copyToClipboard = makeCopy(HOST.copyText, (text) => Clipboard.setString(text));
 
-/** "Copy" as a small link that says "Copied" for a moment; nothing when the host has no clipboard. */
-export function CopyLink({ text, label = "Copy" }: { text: string; label?: string }) {
+/** "Copy" as a small link that says "Copied", or "Couldn't copy", in place for a moment. */
+export function CopyLink({ text, label = "Copy", accessibilityLabel }: { text: string; label?: string; accessibilityLabel?: string }) {
   const t = useTokens();
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const shown = state === "copied" ? "Copied" : state === "failed" ? "Couldn't copy" : label;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={copied ? "Copied to clipboard" : `${label} to clipboard`}
+      accessibilityLabel={state === "copied" ? "Copied to clipboard" : state === "failed" ? "Couldn't copy. Select the text instead." : (accessibilityLabel ?? `${label} to clipboard`)}
       hitSlop={t.control.hit}
       style={{ flexShrink: 0 }}
-      onPress={() => {
-        if (!copyToClipboard(text)) return;
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }}
+      onPress={() =>
+        void copyToClipboard(text).then((ok) => {
+          setState(ok ? "copied" : "failed");
+          setTimeout(() => setState("idle"), ok ? 1500 : 3000);
+        })
+      }
     >
-      <Text style={[t.text.caption, { fontWeight: "600", color: copied ? t.color.success : t.color.accent }]}>{copied ? "Copied" : label}</Text>
+      <Text style={[t.text.caption, { fontWeight: "600", color: state === "copied" ? t.color.success : state === "failed" ? t.color.danger : t.color.accent }]}>{shown}</Text>
     </Pressable>
   );
 }

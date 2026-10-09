@@ -8,17 +8,18 @@ import { groupFindings, groupTitle, type FindingGroup } from "../shared/finding-
 import { plainError } from "../shared/errors";
 import { formatBytes, formatTokens, plural } from "../shared/format";
 import { folderName, scopeLabel } from "../shared/labels";
-import { PLAIN, isCodexInternal, plainAgent, plainAgents, plainFinding, plainFindings, plainGroupedRow, plainNextStep, plainWords, scanProgressNote } from "../shared/plain";
+import { PLAIN, isCodexInternal, plainAgent, plainAgents, plainFinding, plainFindings, plainGroupedRow, plainNextStep, plainWords, scanProgressNote, TOASTS } from "../shared/plain";
 import { OverviewGuide } from "./about";
 import { KEY, QueryState, WriteReportView, useFindings, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
 import { placeCounts } from "../shared/source-groups";
+import { scopeLabel as whereItApplies } from "../shared/scope";
 import { GroupedFindings } from "./finding-groups";
 import { usePlain, useSourceNames } from "./mode";
 import type { SectionId } from "./navigation";
 import { clockTime } from "../shared/schedule";
 import { MarkdownLine } from "./markdown";
 import { canOpenScreen, openScreenById } from "./screens";
-import { Button, Card, Disclosure, ErrorText, Facts, Field, HeroCard, Link, Loading, Meta, PathText, QuietLine, Row, StatusLine, Tag, useTokens, type Status } from "./ui";
+import { Button, Card, Disclosure, ErrorText, Facts, Field, HeroCard, Link, Loading, Meta, PathText, QuietLine, Row, StatusLine, Tag, useHostToast, useTokens, type Status } from "./ui";
 
 /**
  * "What do my agents remember, and what needs tidying?" The hero says the
@@ -81,9 +82,11 @@ function CardFooter({ children }: { children: React.ReactNode }) {
   return <View style={{ gap: t.space.xs, paddingVertical: t.space.row, paddingHorizontal: t.compact ? t.space.row : t.space.md, borderTopWidth: 1, borderTopColor: t.color.borderSubtle }}>{children}</View>;
 }
 
-/** How Fix all's confirm names a note: its title, and where it is. */
-function confirmName(finding: Finding, nameOf: (sourceId: string) => string): string {
+/** How Fix all's confirm names a note: its title, and where it applies ("Testing rules · This project · acme-web"). */
+function confirmName(finding: Finding, nameOf: (sourceId: string) => string, sources: ReadonlyArray<{ id: string; scope: string; projectPath?: string | undefined }>): string {
   const words = plainGroupedRow(finding, nameOf);
+  const source = sources.find((entry) => entry.id === finding.sourceIds[0]);
+  if (source) return `${words.title} · ${whereItApplies(source)}`;
   return words.detail ? `${words.title} · ${words.detail}` : words.title;
 }
 
@@ -92,7 +95,9 @@ function TidyCard({ title, findings, none, notes, onOpen }: { title: string; fin
   const t = useTokens();
   const hostId = useHostId();
   const fixAll = useRpc(tidyFixAll);
+  const toast = useHostToast();
   const names = useSourceNames(hostId);
+  const sources = useInventory(hostId).data?.sources ?? [];
   const invalidate = useInvalidate(hostId);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<WriteResult | null>(null);
@@ -102,9 +107,14 @@ function TidyCard({ title, findings, none, notes, onOpen }: { title: string; fin
   const onFixAll = async (group: FindingGroup<Finding>, findingIds: string[]) => {
     setBusy(group.key);
     try {
-      setResult(await fixAll({ group: group.key, findingIds }));
+      const outcome = await fixAll({ group: group.key, findingIds });
+      setResult(outcome);
+      // The report lands above the card; the button may be far below it.
+      if (outcome.ok) toast.show(TOASTS.fixed, { variant: "success" });
+      else toast.error(TOASTS.notFixed);
     } catch (error) {
       setResult({ ok: false, message: plainError(error), reports: [], warnings: [] });
+      toast.error(TOASTS.notFixed);
     } finally {
       setBusy(null);
       void invalidate();
@@ -115,7 +125,7 @@ function TidyCard({ title, findings, none, notes, onOpen }: { title: string; fin
       {result ? <WriteReportView result={result} /> : null}
       <Card padded={false} title={title} icon="ListChecks" {...(findings ? { iconTone: tone } : {})} trailing={findings ? <Tag label={String(count)} tone={tone} /> : null}>
         {findings && count ? (
-          <GroupedFindings page="memories" findings={findings} busyGroup={busy} onFixAll={(group, ids) => void onFixAll(group, ids)} itemName={(finding) => confirmName(finding, names.byId)} renderRow={(finding, { grouped, first }) => <FindingRow finding={finding} first={first} grouped={grouped} onOpen={onOpen} />} />
+          <GroupedFindings page="memories" findings={findings} busyGroup={busy} onFixAll={(group, ids) => void onFixAll(group, ids)} itemName={(finding) => confirmName(finding, names.byId, sources)} renderRow={(finding, { grouped, first }) => <FindingRow finding={finding} first={first} grouped={grouped} onOpen={onOpen} />} />
         ) : null}
         {findings && !count ? (
           <View style={{ padding: t.compact ? t.space.row : t.space.md }}>

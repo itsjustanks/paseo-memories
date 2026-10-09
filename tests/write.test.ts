@@ -46,8 +46,10 @@ function tempFilesUnder(folder: string): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory()) walk(join(dir, entry.name));
-      else if (entry.name.startsWith(TEMP_PREFIX) || entry.name.includes(".bak")) out.push(join(dir, entry.name));
+      // 0.6.0: backups live in `.memories-backup/<time>/` beside the file, on purpose; anything else is a stray.
+      if (entry.isDirectory()) {
+        if (entry.name !== ".memories-backup") walk(join(dir, entry.name));
+      } else if (entry.name.startsWith(TEMP_PREFIX) || entry.name.includes(".bak") || entry.name.includes(".paseo-new")) out.push(join(dir, entry.name));
     }
   };
   walk(folder);
@@ -158,19 +160,20 @@ test("bad file names and paths outside the folder are refused", async () => {
 
 // ------------------------------------------------------------------ safety rules
 
-test("backups go under PASEO_HOME/plugin-data, never next to the file", async () => {
+test("backups go beside the file, in .memories-backup/<time>/<name>.bak (git-ignored), never loose next to it", async () => {
   await fresh();
   const paseo = fakePaseo(sb).api;
   const path = join(sb.appMemory, "flat.md");
   const original = readFileSync(path, "utf8");
+  const mode = statSync(path).mode & 0o777;
   const result = await claudeUpdate(paseo, { sourceId: sb.appMemory, key: "flat.md", expected: stampOf(path), body: "\nChanged.\n" });
   const backup = result.reports[0]!.backupPath!;
-  assert.ok(backup.startsWith(join(sb.paseoHome, "plugin-data", "paseo-memories", "backups")));
-  assert.equal(relative(backupsRoot(), backup).split("/").slice(1).join("/"), mirrored(path));
-  assert.equal(readFileSync(backup, "utf8"), original);
-  assert.equal(statSync(backup).mode & 0o777, 0o600);
-  assert.deepEqual(tempFilesUnder(sb.appMemory), [], "no .bak or temp file in the memory folder");
-  assert.deepEqual(readdirSync(sb.appMemory).filter((name) => !name.endsWith(".md")), []);
+  assert.ok(backup.startsWith(join(sb.appMemory, ".memories-backup") + "/") && backup.endsWith("/flat.md.bak"), backup);
+  assert.equal(readFileSync(backup, "utf8"), original, "the backup is the old file itself");
+  assert.equal(statSync(backup).mode & 0o777, mode);
+  assert.equal(readFileSync(join(sb.appMemory, ".memories-backup", ".gitignore"), "utf8"), "*\n");
+  assert.deepEqual(tempFilesUnder(sb.appMemory), [], "no .bak or temp file loose in the memory folder");
+  assert.deepEqual(readdirSync(sb.appMemory).filter((name) => !name.endsWith(".md") && name !== ".memories-backup"), []);
 });
 
 test("backups are pruned to the setting's count per file", async () => {
@@ -182,7 +185,8 @@ test("backups are pruned to the setting's count per file", async () => {
     const result = await claudeUpdate(paseo, { sourceId: sb.appMemory, key: "flat.md", expected: stampOf(path), body: `\nRound ${round}.\n` });
     assert.equal(result.ok, true, result.message);
   }
-  const copies = readdirSync(backupsRoot()).filter((stamp) => existsSync(join(backupsRoot(), stamp, mirrored(path))));
+  const root = join(sb.appMemory, ".memories-backup");
+  const copies = readdirSync(root).filter((stamp) => existsSync(join(root, stamp, "flat.md.bak")));
   assert.equal(copies.length, 2);
 });
 
@@ -195,7 +199,7 @@ test("writes are atomic, keep the file's mode, and leave no temp file behind", a
   const result = await instructionWrite(paseo, { path, text: "# App\n\nNew rules.\n", expected: stampOf(path) });
   assert.equal(result.ok, true, result.message);
   assert.equal(statSync(path).mode & 0o777, 0o640);
-  assert.notEqual(statSync(path).ino, inode, "replaced by rename, not rewritten in place");
+  assert.notEqual(statSync(path).ino, inode, "a new file put in place, not rewritten in place");
   assert.deepEqual(tempFilesUnder(sb.app), []);
   // A folder that cannot be written: the save fails cleanly and the file is untouched.
   const locked = join(sb.home, ".pi", "agent");

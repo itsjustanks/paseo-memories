@@ -1,19 +1,20 @@
 import { Markdown } from "./markdown";
 import { useRpc } from "@getpaseo/plugin/client";
-import { useToast } from "@getpaseo/plugin/client/react-native";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import type { output as ZodOutput } from "zod";
 import { exportMemories, importApply, importParse, importPreview, type Account, type Source, type WriteResult } from "../shared/contracts";
 import { plainError } from "../shared/errors";
 import { formatBytes, plural } from "../shared/format";
 import { folderName, targetTitle } from "../shared/labels";
-import { PLAIN, plainMessage, plainSourceName } from "../shared/plain";
+import { PLAIN, TOASTS, plainMessage, plainSourceName } from "../shared/plain";
+import { APP_SESSION, SaveTickets, saveOutcome } from "./host-extras";
+import { scopeLabel as whereItApplies, scopeMove } from "../shared/scope";
 import { moveBlocker, type ImportItem } from "../shared/transfer";
 import { QueryState, WriteReportView, useInvalidate, useInventory, useWorkspaceFolders } from "./data";
 import { projectNamer, usePlain } from "./mode";
 import type { Destination } from "./navigate";
-import { Button, Card, CodeBlock, ComboBox, Disclosure, ErrorText, Field, Notice, PathText, Row, Segmented, Tag, Toggle, copyToClipboard, useTokens, type Status } from "./ui";
+import { Button, Card, CodeBlock, ComboBox, Disclosure, ErrorText, Field, Notice, PathText, Row, Segmented, Tag, Toggle, copyToClipboard, useHostToast, useTokens, type Status } from "./ui";
 import { canDownload, canPickFiles, downloadText, pickTextFiles } from "./web";
 
 /**
@@ -102,6 +103,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
   const parse = useRpc(importParse);
   const previewRpc = useRpc(importPreview);
   const apply = useRpc(importApply);
+  const toast = useHostToast();
   const invalidate = useInvalidate(hostId);
   const [text, setText] = useState(destination?.text ?? "");
   const [files, setFiles] = useState<Array<{ name: string; text: string }>>([]);
@@ -117,6 +119,12 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
   const [result, setResult] = useState<WriteResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  // One Save per preview, even for two presses before the next render; the host answers a repeated id once (0.6.0).
+  const tickets = useRef(new SaveTickets()).current;
+  const receivePreview = (next: Preview) => {
+    tickets.issue();
+    setPreview(next);
+  };
 
   const targets = useMemo(
     () =>
@@ -164,7 +172,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
       setResult(null);
       if (thenPreview && targetInput && parsed.items.length) {
         const next = await previewRpc({ items: parsed.items, target: targetInput });
-        setPreview(next);
+        receivePreview(next);
         setSelected(new Set(next.items.filter((item) => item.duplicate === "none").map((item) => item.id)));
       }
     });
@@ -172,20 +180,34 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
     run("preview", async () => {
       if (!targetInput) return;
       const next = await previewRpc({ ...payload, target: targetInput });
-      setPreview(next);
+      receivePreview(next);
       setSelected(new Set(next.items.filter((item) => item.duplicate === "none").map((item) => item.id)));
       setResult(null);
     });
-  const save = () =>
-    run("save", async () => {
-      if (!targetInput || !preview) return;
-      const outcome = await apply({ ...payload, target: targetInput, selected: [...selected], ...(kind === "append" ? { expected: preview.target.stamp } : {}), ...(from.length && move && !moveBlocked ? { move: true } : {}) });
+  const save = () => {
+    if (!targetInput || !preview) return;
+    const requestId = tickets.take();
+    if (!requestId) return;
+    // Copies and moves act only on what this preview showed: each item's fingerprint goes back with the save.
+    const seen = from.length ? Object.fromEntries(preview.items.filter((item) => selected.has(item.id) && item.fingerprint).map((item) => [item.id, item.fingerprint!])) : undefined;
+    return run("save", async () => {
+      let outcome: WriteResult;
+      try {
+        outcome = await apply({ ...payload, target: targetInput, selected: [...selected], ...(kind === "append" ? { expected: preview.target.stamp } : {}), ...(from.length && move && !moveBlocked ? { move: true } : {}), ...(seen ? { seen } : {}), requestId, clientId: APP_SESSION });
+      } catch (failure) {
+        tickets.settle("retry");
+        throw failure;
+      }
+      tickets.settle(saveOutcome(outcome));
       setResult(outcome);
       if (outcome.ok) {
+        // The preview folds away, so the report may be out of view.
+        toast.show(TOASTS.imported(selected.size), { variant: "success" });
         setPreview(null);
         await invalidate();
       }
     });
+  };
 
   useEffect(() => {
     if (destination?.text) void read(Boolean(destination.preview));
@@ -195,6 +217,8 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
   }, []);
 
   const count = from.length || items.length;
+  // Both ends by where they apply (0.6.0): "From Everywhere → This project · project-hub".
+  const fromWhere = from.length ? [...new Set(from.map((ref) => sources.find((source) => source.id === ref.sourceId)).filter((source): source is Source => Boolean(source)).map((source) => whereItApplies(source, namer)))].join(" and ") || T.fromPicked : T.fromText;
   return (
     <View style={{ gap: t.space.row }}>
       <Card title={T.import} icon="FileInput">
@@ -252,6 +276,7 @@ function ImportPanel({ hostId, sources, accounts, destination }: { hostId: strin
                 }}
                 hint={plain ? (kind === "append" ? T.targetHintAppend : T.targetHintClaude) : kind === "append" ? "Each item is added as a section at the end. To copy into Codex, pick its AGENTS.md; Codex's generated memory is never a target." : "Each item becomes one memory file with its line in MEMORY.md."}
               />
+              {target ? <Text style={t.text.bodyStrong}>{scopeMove(fromWhere, whereItApplies(target, namer))}</Text> : null}
               <View style={{ flexDirection: "row" }}>
                 <Button label={plain ? T.preview : "Preview"} icon="Eye" onPress={() => void showPreview()} loading={busy === "preview"} disabled={!targetInput} />
               </View>
@@ -317,7 +342,7 @@ function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolea
   const t = useTokens();
   const plain = usePlain();
   const T = PLAIN.transfer;
-  const toast = useToast();
+  const toast = useHostToast();
   const call = useRpc(exportMemories);
   const [scope, setScope] = useState<"all" | "user" | "project">("all");
   const [project, setProject] = useState("");
@@ -365,7 +390,14 @@ function ExportPanel({ sources, initial }: { sources: Source[]; initial?: boolea
             </Text>
             {canDownload() && !plain ? <PathText path={`Saves as ${out.fileName}`} /> : null}
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: t.space.sm }}>
-              <Button label={T.copyButton} variant="primary" onPress={() => (copyToClipboard(out.text) ? toast.show(plain ? T.copied : "Copied the export.", { variant: "success" }) : toast.error(plain ? T.cantCopy : "This app cannot copy; select the text instead."))} />
+              <Button label={T.copyButton} variant="primary" onPress={() =>
+                  void copyToClipboard(out.text).then((ok) => {
+                    if (ok) toast.show(plain ? T.copied : "Copied the export.", { variant: "success" });
+                    // Said in place where the app has no toasts.
+                    else if (toast.available) toast.error(plain ? T.cantCopy : "Couldn't copy. Select the text instead.");
+                    else setError(plain ? T.cantCopy : "Couldn't copy. Select the text instead.");
+                  })
+                } />
               {canDownload() ? <Button label={T.download} variant="ghost" onPress={() => downloadText(out.fileName, out.text, format === "bundle" ? "application/json" : "text/markdown")} /> : null}
             </View>
             {plain ? <Disclosure title={PLAIN.technical}>{shownText}</Disclosure> : shownText}

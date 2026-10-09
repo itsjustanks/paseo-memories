@@ -126,7 +126,7 @@ test("edits: saved while free, refused while consolidating or unsure", async () 
   assert.equal(readFileSync(index(), "utf8"), text);
   assert.ok(ok.warnings.some((warning) => warning.includes("wording may change")));
   assert.ok(ok.warnings.some((warning) => warning.includes("consolidation")));
-  assert.ok(ok.reports[0]!.backupPath!.startsWith(join(sb.paseoHome, "plugin-data")));
+  assert.ok(ok.reports[0]!.backupPath!.includes("/.memories-backup/"), "the old version, beside it as .bak");
 
   for (const job of ["running", "running-expired", "no-db"] as const) {
     await fresh(job);

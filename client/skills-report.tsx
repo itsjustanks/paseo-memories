@@ -1,6 +1,7 @@
 import React from "react";
 import { Text, View } from "react-native";
 import type { WriteReport } from "../shared/contracts";
+import { redactText } from "../shared/redact";
 import { plainSkillMessage, reportLines, reportSummary } from "../shared/skills-plain";
 import { usePlain } from "./mode";
 import { useSkillsInventory } from "./skills-data";
@@ -21,7 +22,7 @@ export function SkillsResult({ hostId, result, onDismiss, children }: { hostId: 
   const home = useSkillsInventory(hostId).data?.home ?? "";
   const lines = reportLines(result.reports ?? [], plain, home);
   const failed = lines.some((line) => !line.ok);
-  const say = (text: string) => (plain ? plainSkillMessage(text) : text);
+  const say = (text: string) => redactText(plain ? plainSkillMessage(text) : text);
   const list = (
     <View style={{ gap: t.space.xs }}>
       {lines.map((line, index) => (

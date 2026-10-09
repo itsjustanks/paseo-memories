@@ -492,6 +492,8 @@ export const PLAIN = {
     preview: "Check it",
     copying: (count: number) => `Copying ${count === 1 ? "1 note" : `${count} notes`} you picked. Choose where they go, check, then save.`,
     moveInstead: "Move instead: remove the originals once the copies are saved",
+    fromText: "what you pasted",
+    fromPicked: "the notes you picked",
     noMove: "These can be copied but not moved.",
     importText: "Paste text instead",
     save: (count: number) => `Save ${count === 1 ? "1 note" : `${count} notes`}`,
@@ -513,7 +515,7 @@ export const PLAIN = {
     copyButton: "Copy",
     download: "Download",
     copied: "Copied.",
-    cantCopy: "This app can't copy; select the text instead.",
+    cantCopy: "Couldn't copy. Select the text instead.",
     project: "Project",
   },
 } as const;
@@ -529,7 +531,7 @@ export function plainMessage(message: string): string {
   if (/^No change/.test(message)) return PLAIN.nothingChanged;
   if (/Codex hasn't finished|clean-up/i.test(message)) return PLAIN.codexPending;
   if (/replaces pi's whole base prompt/i.test(message)) return PLAIN.replacesPi;
-  if (/MEMORY\.md could not be updated/i.test(message)) return "Claude's list of notes couldn't be updated, so this note was taken back out.";
+  if (/couldn't update the index/i.test(message)) return "The note was saved, but Claude's list of notes couldn't be updated, so Claude may not find it until its line is added.";
   if (/Codex reads AGENTS\.md as instructions/i.test(message)) return "Codex follows these as instructions; they don't become Codex's own notes.";
   if (/look like secrets/i.test(message)) return "Holds something that looks like a password or key; it is hidden here and saved as it is.";
   return message;
@@ -651,3 +653,20 @@ export const MD_EDITOR = {
   previewStart: "The preview shows the start of this note; everything you write is still saved.",
   displayStart: "This note is long, so only its start is shown here. Change it, or open the whole file, to see the rest.",
 };
+
+/**
+ * The app's short confirmations (0.6.0), one sentence each. Only for results
+ * that would otherwise go unseen: the page moved on (a removed note or skill)
+ * or the full report is above where the button was (Fix all, Import).
+ */
+export const TOASTS = {
+  noteRemoved: "Note removed. A copy of the old version is kept.",
+  noteSaved: "Note saved.",
+  renamed: "Renamed.",
+  skillRemoved: "Skill removed. A copy is in this plugin's backups.",
+  fixed: "Fix all is done. The details are at the top.",
+  imported: (count: number) => (count === 1 ? "Saved 1 note." : `Saved ${count} notes.`),
+  notFixed: "Fix all didn't finish. The details are at the top.",
+  linkCopied: "Couldn't open a browser, so the link was copied.",
+  linkFailed: "Couldn't open a browser for that link.",
+} as const;

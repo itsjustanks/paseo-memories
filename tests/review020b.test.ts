@@ -146,7 +146,7 @@ test("#3: a failed Claude note says so in plain words, per place", async () => {
   const paseo = fakePaseo(sb).api;
   const preview = await notePreview(paseo, { text: "Invoices go out on the 1st.", who: "all", workspaceId: "ws-app" });
   const saved = await noteAdd(paseo, { text: "Invoices go out on the 1st.", who: "all", workspaceId: "ws-app", expected: expectedOf(preview) });
-  assert.match(saved.message, /Couldn't save to Claude's notes for app: Claude's list of notes couldn't be updated, so this note was taken back out\./);
+  assert.match(saved.message, /Saved to Claude's notes for app, but Claude's list of notes couldn't be updated, so Claude may not find it until its line is added\./);
   assert.doesNotMatch(saved.message, /0 of 1|see the report/);
 });
 

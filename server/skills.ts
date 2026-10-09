@@ -477,6 +477,7 @@ export async function discoverSkills(paseo: Paseo | null, { refresh = false } = 
         bytes: stats.bytes,
         scripts: stats.scripts,
         ...(head.runs ? { runsCommands: head.runs } : {}),
+        ...(header.userInvocable === false ? { userInvocable: false } : {}),
         problems: skillProblems(header, folder),
         listing: { claude: 0, codex: 0 },
         state: {},

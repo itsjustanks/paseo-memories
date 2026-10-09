@@ -1,3 +1,5 @@
+import { redactText } from "./redact";
+
 /**
  * What went wrong, in words a person can act on. The daemon and the RPC layer
  * report failures in their own terms ("Plugin RPC timed out: paseo-memories.rpc");
@@ -24,5 +26,6 @@ export function plainError(error: unknown): string {
   if (/^\[\s*\{|invalid_type|Invalid input|Expected .* received/i.test(message)) {
     return "The Memories plugin answered in a shape this app does not understand; the app and the plugin on this host are probably different versions.";
   }
-  return message;
+  // Anything else is shown as it came, minus anything that looks like a key (0.6.0).
+  return redactText(message);
 }

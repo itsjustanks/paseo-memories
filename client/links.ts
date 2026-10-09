@@ -19,6 +19,6 @@ export async function openLink(url: string): Promise<"opened" | "copied" | "fail
     await openExternalUrl(url);
     return "opened";
   } catch {
-    return copyToClipboard(url) ? "copied" : "failed";
+    return (await copyToClipboard(url)) ? "copied" : "failed";
   }
 }

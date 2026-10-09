@@ -1,9 +1,11 @@
 /** Browser stand-in for @getpaseo/plugin: every Memories contract answered from fixtures. */
 import React, { useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Text, View, ScrollView as RNScrollView, TextInput as RNTextInput } from "react-native";
 import { compactDiff, lineDiff } from "../../shared/diff";
 import { maskSecrets } from "../../shared/secrets";
 import { asSection, parseImport } from "../../shared/transfer";
+import { friendlyRef, shadowsFor } from "../../shared/scope";
 
 export function defineRpc<T>(contract: T) { return contract; }
 export function defineSettings<T>(definition: T) { return definition; }
@@ -186,8 +188,20 @@ const skillsData: any[] = empty ? [] : [
   skillOf(9, { name: "paseo", description: "Paseo reference: workspaces, agents, schedules.", provenance: "paseo", access: "read-only", reason: "Paseo manages this skill and rewrites it every time it starts; edits here would be lost.", can: { turnOff: [], turnOffReason: "Paseo manages its own skills and puts them back when it starts; choose which ones agents get in Paseo's settings.", remove: false, removeReason: "Paseo manages this skill and rewrites it every time it starts; edits here would be lost." }, usage: { total: 4, lastUsed: ago(20), estimated: false } }),
   skillOf(10, { name: "toolkit:deploy", description: "Deploys the site.", provenance: "claude-plugin", provenanceDetail: "toolkit", scope: "plugin", access: "read-only", readBy: ["claude"], reason: "Part of a Claude Code plugin; manage it with the plugin.", can: { turnOff: [], turnOffReason: "Part of a Claude Code plugin; turn the plugin off in Claude Code instead.", remove: false, removeReason: "Part of a Claude Code plugin; manage it with the plugin." } }),
   skillOf(11, { name: "pdf", description: "Reads and fills in PDF forms.", provenance: "claude-ai", access: "read-only", readBy: ["claude"], reason: "Synced from your claude.ai account; change it there.", can: { turnOff: [], turnOffReason: "Synced from your claude.ai account; turn it off there.", remove: false } }),
+  // 0.6.0: the same name at both levels, so the panels and the list show which copy each agent uses.
+  skillOf(13, { name: "test-first", description: "acme-web's own take on test-first.", scope: "project", projectPath: APP, provenance: "project", readBy: ["claude"], locations: [{ path: `${APP}/.claude/skills/test-first`, root: "project-claude", link: false }], can: { turnOff: ["claude"], remove: true } }),
   skillOf(12, { name: "openai-docs", description: "Codex's own documentation skill.", provenance: "codex-builtin", access: "read-only", readBy: ["codex"], reason: "Built into Codex, which rewrites it when it updates.", can: { turnOff: [], turnOffReason: "Built into Codex.", remove: false } }),
 ];
+
+/** What the host sends the panels for one agent's skills (server/skill-handlers.ts panelSkill), worked out the same way. */
+function panelSkills(agent: string) {
+  const mine = skillsData.filter((s) => s.readBy.includes(agent));
+  const shadows = shadowsFor(mine);
+  return mine.map((s) => {
+    const path = (s.projectPath ? s.locations.find((l: { path: string }) => l.path.startsWith(`${s.projectPath}/`)) : s.locations[0])?.path ?? s.path;
+    return { skillId: s.id, name: s.name, description: s.description, provenance: s.provenance, scope: s.scope, listingChars: s.listing[agent] ?? 0, state: s.state[agent] ?? "on", ...(s.projectPath ? { projectPath: s.projectPath } : {}), path, where: friendlyRef(path, { home: H, projectPath: s.projectPath }), shadows: shadows.get(s.id) ?? [] };
+  });
+}
 const skillFindings: any[] = empty ? [] : [
   ...(groupsScenario ? ["brand-kit", "old-prompts", "design-assets", "slides-2025"].map((name, i) => ({ id: `stray-file:g${i}`, kind: "stray-file", severity: "info", sourceIds: [], message: `${name}.zip is a packed file in a skills folder; agents don't read it.`, detail: `${H}/.claude/skills/${name}.zip`, action: { label: "Move it to the backups", kind: "fix" } })) : []),
   { id: "broken-link:1", kind: "broken-link", severity: "warn", sourceIds: [], message: "gstack-review points to a skill that no longer exists.", detail: `${H}/.codex/skills/gstack-review`, action: { label: "Remove the broken link", kind: "fix" } },
@@ -252,8 +266,8 @@ function answer(name: string, input: any): unknown {
     case "skills-fix-all": fixAllCalls.push({ name, input }); return { ok: true, message: `Fixed all ${input.findingIds?.length ?? 0}. Anything taken out is in this plugin's backups.`, reports: [], warnings: [] };
     case "tidy-fix-all": fixAllCalls.push({ name, input }); return { ok: true, message: `Added ${input.findingIds?.length ?? 0} notes to Claude's list. The old list is in the backups.`, reports: [], warnings: [] };
     case "skills-fix": return { ok: true, message: "Done. Anything taken out is in this plugin's backups.", reports: [], warnings: [] };
-    case "skills-workspace": return { directory: APP, agents: [{ agent: "claude", skills: skillsData.filter((s) => s.readBy.includes("claude")).map((s) => ({ skillId: s.id, name: s.name, description: s.description, provenance: s.provenance, scope: s.scope, listingChars: s.listing.claude, state: s.state.claude ?? "on" })), cost: costs[0] }, { agent: "codex", skills: skillsData.filter((s) => s.readBy.includes("codex")).map((s) => ({ skillId: s.id, name: s.name, description: s.description, provenance: s.provenance, scope: s.scope, listingChars: s.listing.codex, state: s.state.codex ?? "on" })), cost: costs[1] }].filter((a) => a.cost), used: empty ? [] : [{ name: "acme-web-layout", count: 9, skillId: SK(8) }, { name: "test-first", count: 7, skillId: SK(1) }, { name: "browser-check", count: 3, skillId: SK(3) }], notes: [] };
-    case "skills-agent": { const agent = input.providerId === "codex" ? "codex" : "claude"; return { agent, directory: APP, skills: skillsData.filter((s) => s.readBy.includes(agent)).map((s) => ({ skillId: s.id, name: s.name, description: s.description, provenance: s.provenance, scope: s.scope, listingChars: s.listing[agent], state: s.state[agent] ?? "on" })), ...(costs.length ? { cost: costs[agent === "claude" ? 0 : 1] } : {}), chat: agent === "claude" ? { match: "exact", skills: empty ? [] : [{ name: "test-first", count: 2, skillId: SK(1) }, { name: "acme-web-layout", count: 1, skillId: SK(8) }], note: "" } : { match: "folder-time", skills: [{ name: "test-first", count: 1, skillId: SK(1) }], note: "Matched by this agent's folder and start time, so other chats in the same folder since then are counted too." }, notes: [] }; }
+    case "skills-workspace": return { directory: APP, agents: [{ agent: "claude", skills: panelSkills("claude"), cost: costs[0] }, { agent: "codex", skills: panelSkills("codex"), cost: costs[1] }].filter((a) => a.cost), used: empty ? [] : [{ name: "acme-web-layout", count: 9, skillId: SK(8) }, { name: "test-first", count: 7, skillId: SK(1) }, { name: "browser-check", count: 3, skillId: SK(3) }], notes: [] };
+    case "skills-agent": { const agent = input.providerId === "codex" ? "codex" : "claude"; return { agent, directory: APP, skills: panelSkills(agent), ...(costs.length ? { cost: costs[agent === "claude" ? 0 : 1] } : {}), chat: agent === "claude" ? { match: "exact", skills: empty ? [] : [{ name: "test-first", count: 2, skillId: SK(1) }, { name: "acme-web-layout", count: 1, skillId: SK(8) }], note: "" } : { match: "folder-time", skills: [{ name: "test-first", count: 1, skillId: SK(1) }], note: "Matched by this agent's folder and start time, so other chats in the same folder since then are counted too." }, notes: [] }; }
     case "inventory": return { checkedAt: new Date().toISOString(), accounts: empty ? accounts.slice(0, 2) : accounts, sources, groups: groupsOf(), counts: { claudeMemoryFolders: empty ? 0 : 9, claudeMemoryFiles: empty ? 0 : 48, codexHomes: 1, projects: empty ? 0 : 4, sources: sources.length, bytes: sources.reduce((a, s) => a + s.bytes, 0) }, findings: [], checked: [empty ? "Checked 0 Claude memory folders in 1 Claude config folder, 1 Codex home and 0 projects." : "Checked 9 Claude memory folders in 2 Claude config folders, 1 Codex home and 4 projects."], notes: empty ? [] : ['1 Claude memory folder is for projects whose path is not known here ("other projects").'] };
     case "findings": return { checkedAt: new Date().toISOString(), findings: findingsData, nextStep: findingsData.length ? { title: findingsData[0]!.action.label, detail: `${findingsData[0]!.message} ${findingsData.length - 1} more things to look at below.`, action: findingsData[0]!.action } : { title: "Nothing needs tidying", detail: "No duplicates, stale mentions, secrets or over-limit files were found." }, checked: ["Checked 120 memories and sections in 18 sources, and 64 path mentions."], notes: empty ? [] : ["Relative paths in 1 Claude memory folder whose project path is unknown were not checked; only absolute paths were."], symbolScan: { state: "done", asOf: new Date().toISOString(), note: "Code names checked against 4 projects." } };
     case "source": return detailOf(input.sourceId);
@@ -262,8 +276,8 @@ function answer(name: string, input: any): unknown {
       const masked = maskSecrets(hit.body);
       return { body: input.reveal ? hit.body : masked.text, ...(hit.fields ? { fields: hit.fields } : {}), masked: !input.reveal && masked.count > 0, secrets: masked.count, secretKinds: masked.kinds, stamp, path: input.sourceId };
     }
-    case "workspace-plan": return { directory: APP, plans: ["claude", "codex", "opencode", "copilot"].map(plan), checkedAt: new Date().toISOString() };
-    case "agent-plan": return { directory: APP, plan: plan(input.providerId || "codex"), checkedAt: new Date().toISOString() };
+    case "workspace-plan": return { directory: APP, plans: ["claude", "codex", "opencode", "copilot"].map(plan), checkedAt: new Date().toISOString(), home: H, projectRoot: APP };
+    case "agent-plan": return { directory: APP, plan: plan(input.providerId || "codex"), checkedAt: new Date().toISOString(), home: H, projectRoot: APP };
     case "search": if (long) return { query: input.query, total: 2, checked: `Checked 9 Claude projects, 1 Codex store and 14 other files.`, results: [
       { sourceId: appMemory, key: LONG_ENTRY.key, agent: "claude", scope: "project", projectPath: APP, title: LONG_ENTRY.title, snippet: `…${input.query}: retries follow ${URL_LONG} and hash ${TOKEN_LONG}…` },
       { sourceId: `${APP}/CLAUDE.md`, key: "", agent: "claude", scope: "project", projectPath: APP, title: `${tilde(APP)}/CLAUDE.md`, snippet: CODE_LONG },
@@ -319,6 +333,24 @@ export function useSettings(_definition: unknown) {
 }
 export function useToast() { return { show: (message: string) => console.info("[toast]", message), error: (message: string) => console.info("[toast:error]", message) }; }
 export async function copyText(_text: string) {}
+// Paseo 0.10+ apps have a dialog; ?nomodal stands in for an older app (Fix all then confirms in place).
+function PreviewModal({ title, open, onOpenChange, children }: { title: string; open: boolean; onOpenChange(open: boolean): void; children: React.ReactNode }) {
+  if (!open) return null;
+  return createPortal(
+    <View style={{ position: "fixed" as "absolute", inset: 0, backgroundColor: "#0008", alignItems: "center", justifyContent: "center", zIndex: 50 } as object}>
+      <View accessibilityRole={"dialog" as "none"} accessibilityLabel={title} style={{ width: "92%", maxWidth: 560, maxHeight: "80%", backgroundColor: params.has("dark") ? "#1c1c1f" : "#fff", borderRadius: 12, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", padding: 16, borderBottomWidth: 1, borderBottomColor: "#8884" }}>
+          <Text style={{ fontWeight: "700", fontSize: 16, color: params.has("dark") ? "#eee" : "#111" }}>{title}</Text>
+          <Text accessibilityRole="button" onPress={() => onOpenChange(false)} style={{ color: params.has("dark") ? "#eee" : "#111" }}>Close</Text>
+        </View>
+        {children}
+      </View>
+    </View>,
+    document.body,
+  );
+}
+PreviewModal.Content = ({ children }: { children: React.ReactNode }) => <RNScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ padding: 24, gap: 16 }}>{children}</RNScrollView>;
+export const Modal = params.has("nomodal") ? undefined : PreviewModal;
 // Paseo 0.10+ apps open links in the browser; ?nolinks stands in for an older app without it.
 export const openExternalUrl = params.has("nolinks") ? undefined : async (url: string) => { console.info("[open-url]", url); };
 export const ScrollView = RNScrollView;

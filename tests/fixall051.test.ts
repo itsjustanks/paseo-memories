@@ -223,5 +223,5 @@ test("README, manifest and CHANGELOG agree on the Paseo it needs", () => {
   const changelog = readFileSync(join(root, "CHANGELOG.md"), "utf8");
   const start = changelog.indexOf("\n## ");
   const current = changelog.slice(start, changelog.indexOf("\n## ", start + 1));
-  assert.match(current, /Needs Paseo 0\.9 or later now/);
+  assert.match(current, /Needs Paseo 0\.9 or later/);
 });
